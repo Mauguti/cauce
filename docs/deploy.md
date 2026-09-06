@@ -137,6 +137,7 @@ Edítalo (`sudo nano /etc/cauce.env`) con:
 ```
 CAUCE_API_KEY=<genera: openssl rand -hex 24>
 CAUCE_CRYPTO_KEY=<genera: openssl rand -hex 32>
+CAUCE_ADMIN_KEY=<genera: openssl rand -hex 24>
 CAUCE_CORS_ORIGENES=https://cauce-consola.web.app
 CAUCE_URL_WEBHOOKS=http://host.docker.internal:3001
 CAUCE_DATA_DIR=/var/lib/cauce
@@ -147,6 +148,32 @@ PORT=3001
 Sin `GOOGLE_APPLICATION_CREDENTIALS` (ni `FIRESTORE_PROJECT_ID`) el
 orquestador cae al repositorio en memoria y pierde el historial en cada
 reinicio; en producción esa variable es obligatoria.
+
+Variables nuevas del bloque 8:
+
+- `CAUCE_ADMIN_KEY` — protege el endpoint de cambio de plan
+  (`POST /api/admin/tenants/:id/plan`, header `x-admin-key`). Sin ella,
+  ese endpoint queda deshabilitado.
+- `CAUCE_API_KEY` sigue siendo la key del tenant `demo` (máquina a
+  máquina). Los clientes nuevos ya **no** usan API key: entran con
+  Firebase Auth y la consola manda el ID token.
+- **NO definir `CAUCE_AUTH_DEV` en producción.** Con `CAUCE_AUTH_DEV=1`
+  los ID tokens se aceptan sin verificar (solo desarrollo local). En
+  producción debe estar ausente para que el orquestador verifique los
+  tokens con el Admin SDK (usa `GOOGLE_APPLICATION_CREDENTIALS`).
+
+### Firebase Auth (login de usuarios)
+
+- El orquestador verifica los ID tokens con firebase-admin, usando las
+  credenciales de `GOOGLE_APPLICATION_CREDENTIALS` (la misma service
+  account de Firestore, proyecto `cauce-consola`).
+- **Habilitar los proveedores una vez** en la consola de Firebase
+  (Authentication → Sign-in method): Email/Password y Google. Es un paso
+  manual de UI; sin él, el login de la consola falla.
+- La consola de producción se compila **sin** `VITE_AUTH_DEV` y con
+  `VITE_CAUCE_API=https://<tu-dominio>`. Debe desplegarse **junto con**
+  esta versión del orquestador: la consola nueva llama
+  `POST /api/provisionar`, que no existe en orquestadores anteriores.
 
 ### `CAUCE_CRYPTO_KEY` — llave de cifrado de credenciales
 
