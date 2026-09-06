@@ -38,6 +38,18 @@ describe("orquestador", () => {
     }
   });
 
+  it("/health expone la versión desplegada (para detectar desfase)", async () => {
+    const repo = new RepositorioEnMemoria({ tenants: [] });
+    const server = crearApp(repo, undefined, { version: "abc1234" }).listen(0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const res = await fetch(`${base}/health`);
+      expect(await res.json()).toEqual({ ok: true, version: "abc1234" });
+    } finally {
+      server.close();
+    }
+  });
+
   it("lista solo instancias del tenant dueño de la key", async () => {
     const { base, cerrar } = levantar();
     try {

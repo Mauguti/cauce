@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, usarProveedorToken, type Yo, type Instance, type MondayVista } from "./api.ts";
+import {
+  api,
+  usarProveedorToken,
+  VERSION_CONSOLA,
+  type Yo,
+  type Instance,
+  type MondayVista,
+} from "./api.ts";
 import { observarSesion, type Sesion } from "./auth.ts";
 import { Login } from "./Login.tsx";
 import { Inicio } from "./Inicio.tsx";
@@ -22,6 +29,26 @@ export default function App() {
   const [instancias, setInstancias] = useState<Instance[]>([]);
   const [monday, setMonday] = useState<MondayVista | null>(null);
   const [hayAcciones, setHayAcciones] = useState(false);
+  const [desfase, setDesfase] = useState<{ orq: string } | null>(null);
+
+  // Detecta desfase consola↔orquestador comparando versiones (ver
+  // docs/deploy.md). Si difieren y ninguna es "dev", avisa: recargar
+  // trae la consola nueva; si es el orquestador el viejo, el aviso
+  // igual evita perseguir bugs fantasma.
+  useEffect(() => {
+    api
+      .salud()
+      .then((s) => {
+        if (
+          VERSION_CONSOLA !== "dev" &&
+          s.version !== "dev" &&
+          s.version !== VERSION_CONSOLA
+        ) {
+          setDesfase({ orq: s.version });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const cargarProgreso = useCallback(async (t: string) => {
     const [insts, mon, disp] = await Promise.all([
@@ -69,13 +96,27 @@ export default function App() {
     };
   }, [sesion, cargarProgreso]);
 
-  if (cargandoAuth) return null;
+  const banner = desfase ? (
+    <div className="banner-desfase" role="alert">
+      Hay una versión más reciente disponible. Recarga la página (⌘/Ctrl+R).
+      <span className="tenue"> consola {VERSION_CONSOLA} · orquestador {desfase.orq}</span>
+    </div>
+  ) : null;
 
-  if (!sesion) return <Login />;
+  if (cargandoAuth) return banner;
+
+  if (!sesion)
+    return (
+      <>
+        {banner}
+        <Login />
+      </>
+    );
 
   if (!yo) {
     return (
       <main className="consola consola--angosta">
+        {banner}
         <h1>Cauce</h1>
         <p className="consola__sub">
           {errorProv ?? "Preparando tu cuenta…"}
@@ -107,6 +148,7 @@ export default function App() {
 
   return (
     <div className="app">
+      {banner}
       <nav className="nav">
         <span className="nav__marca">Cauce</span>
         <div className="nav__links">

@@ -272,8 +272,34 @@ Debe responder `{"ok":true}`.
    (paso 1).
 2. Confirma que `CAUCE_CORS_ORIGENES` en `/etc/cauce.env` es
    exactamente la Hosting URL (sin barra final).
-3. Abre la consola, entra con `CAUCE_API_KEY`, crea una sesión y
-   escanea el QR.
+3. Abre la consola, entra con tu cuenta y crea una sesión.
+
+## 3. Despliegue sin desfase — `scripts/deploy.sh`
+
+Consola y orquestador se despliegan por separado; si quedan en
+versiones distintas, la consola llama rutas que el orquestador aún no
+tiene (o al revés) y aparecen bugs fantasma. Para evitarlo:
+
+- El orquestador expone su versión en `GET /health`
+  (`{"ok":true,"version":"<commit corto>"}`), tomada de `CAUCE_VERSION`.
+- La consola se compila con `VITE_CAUCE_VERSION` (mismo commit) y, al
+  arrancar, compara contra `/health`. Si difieren, muestra un aviso
+  visible: «Hay una versión más reciente disponible, recarga». No es una
+  falla silenciosa.
+- **`scripts/deploy.sh`** hace los dos pasos en orden (orquestador →
+  consola) con la MISMA versión y verifica al final que `/health` la
+  reporte:
+
+```bash
+CAUCE_SSH=ubuntu@<ip-ec2> CAUCE_API_URL=https://cauce.digsol.com.mx \
+  scripts/deploy.sh
+```
+
+El script exige el árbol limpio, hace `git checkout` del commit en la
+EC2, fija `CAUCE_VERSION` en `/etc/cauce.env`, reinicia el servicio,
+compila la consola con esa versión y `VITE_CAUCE_API`, la publica en
+Hosting, y al cierre confirma que `/health` reporta el commit desplegado.
+Flags: `--solo-consola`, `--solo-orquestador`.
 
 ---
 

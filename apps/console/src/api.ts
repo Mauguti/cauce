@@ -53,7 +53,17 @@ export interface Yo {
   pruebaVigente: boolean;
 }
 
+/** Versión con la que se compiló esta consola (la fija scripts/deploy.sh). */
+export const VERSION_CONSOLA =
+  (import.meta.env.VITE_CAUCE_VERSION as string | undefined) ?? "dev";
+
 export const api = {
+  /** /health del orquestador (sin auth): incluye su versión desplegada. */
+  salud: async (): Promise<{ ok: boolean; version: string }> => {
+    const res = await fetch(`${BASE}/health`);
+    return res.json();
+  },
+
   yo: () => llamar<Yo>("/api/me"),
 
   provisionar: () =>

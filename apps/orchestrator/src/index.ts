@@ -117,7 +117,8 @@ crearApp(repo, gestor, {
   motorEntrada,
   verificarToken,
   provisioning,
+  version: process.env.CAUCE_VERSION ?? "dev",
   ...(adminKey ? { adminKey } : {}),
 }).listen(puerto, () => {
-  console.log(`orquestador escuchando en :${puerto}`);
+  console.log(`orquestador escuchando en :${puerto} (versión ${process.env.CAUCE_VERSION ?? "dev"})`);
 });

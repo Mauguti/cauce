@@ -64,6 +64,8 @@ export interface AppOpciones {
   provisioning?: Provisioning;
   /** Clave del endpoint admin de cambio de plan. */
   adminKey?: string;
+  /** Versión desplegada (commit corto); se expone en /health. */
+  version?: string;
 }
 
 export function crearApp(
@@ -75,8 +77,11 @@ export function crearApp(
   app.use(express.json({ limit: "1mb" }));
   app.use(cors(opciones.corsOrigenes ?? []));
 
+  // /health expone la versión desplegada para que la consola detecte
+  // desfases consola↔orquestador (ver docs/deploy.md, scripts/deploy.sh).
+  const version = opciones.version ?? process.env.CAUCE_VERSION ?? "dev";
   app.get("/health", (_req, res) => {
-    res.json({ ok: true });
+    res.json({ ok: true, version });
   });
 
   /**
