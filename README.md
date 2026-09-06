@@ -19,10 +19,12 @@ y la respuesta vuelve escrita al registro que la originó.
 | `packages/ui` | Tokens del sistema visual y componentes base. |
 | `docs/adr` | Decisiones de arquitectura. |
 
-Las dos decisiones que gobiernan todo el código están en
+Las decisiones que gobiernan todo el código están en
 [docs/adr/0001](docs/adr/0001-transporte-intercambiable.md)
-(transporte intercambiable) y
-[docs/adr/0002](docs/adr/0002-multitenancy.md) (multitenancy).
+(transporte intercambiable),
+[docs/adr/0002](docs/adr/0002-multitenancy.md) (multitenancy) y
+[docs/adr/0003](docs/adr/0003-socket-docker.md) (acceso al socket de
+Docker y red de contenedores).
 
 ## Correr local
 
@@ -47,8 +49,22 @@ La consola corre en `http://localhost:5173`, alimentada por el
 npm run dev:orchestrator
 ```
 
-Queda en `http://localhost:3001` (`/health`,
-`/api/tenants/demo/instances`).
+Queda en `http://localhost:3001`. Rutas bajo
+`/api/tenants/:tenantId`: `POST /instances` (crea sesión),
+`GET /instances/:id` (estado), `GET /instances/:id/qr`,
+`POST /instances/:id/send`, `DELETE /instances/:id`. El webhook
+entrante de cada instancia es
+`POST /webhooks/:tenantId/:instanceId?token=…`.
+
+### Ciclo completo con WhatsApp real
+
+Requiere Docker corriendo (en macOS: `colima start`). Crea el
+contenedor de la sesión, muestra el QR en la terminal, espera el
+escaneo, envía un mensaje y imprime lo que responda el destinatario:
+
+```bash
+npx tsx scripts/prueba-ciclo.ts +5215512345678
+```
 
 La página de muestra del sistema visual es estática:
 `packages/ui/muestra.html`.

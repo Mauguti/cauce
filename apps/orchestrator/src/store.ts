@@ -1,4 +1,10 @@
-import type { Instance, InstanceId, Tenant, TenantId } from "@cauce/core";
+import type {
+  Instance,
+  InstanceId,
+  Message,
+  Tenant,
+  TenantId,
+} from "@cauce/core";
 
 /**
  * Repositorio scopeado por tenant. Toda operación exige `tenantId`;
@@ -13,13 +19,17 @@ export interface Repositorio {
   listInstances(tenantId: TenantId): Promise<Instance[]>;
   getInstance(tenantId: TenantId, instanceId: InstanceId): Promise<Instance | null>;
   saveInstance(instance: Instance): Promise<void>;
+  deleteInstance(tenantId: TenantId, instanceId: InstanceId): Promise<void>;
+  saveMessage(mensaje: Message): Promise<void>;
+  listMessages(tenantId: TenantId, instanceId?: InstanceId): Promise<Message[]>;
 }
 
 export class RepositorioEnMemoria implements Repositorio {
   #tenants = new Map<TenantId, Tenant>();
   #instances = new Map<TenantId, Map<InstanceId, Instance>>();
+  #messages = new Map<TenantId, Message[]>();
 
-  constructor(semilla?: { tenants: Tenant[]; instances: Instance[] }) {
+  constructor(semilla?: { tenants: Tenant[]; instances?: Instance[] }) {
     for (const t of semilla?.tenants ?? []) this.#tenants.set(t.id, t);
     for (const i of semilla?.instances ?? []) void this.saveInstance(i);
   }
@@ -46,5 +56,31 @@ export class RepositorioEnMemoria implements Repositorio {
       this.#instances.set(instance.tenantId, porTenant);
     }
     porTenant.set(instance.id, instance);
+  }
+
+  async deleteInstance(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+  ): Promise<void> {
+    this.#instances.get(tenantId)?.delete(instanceId);
+  }
+
+  async saveMessage(mensaje: Message): Promise<void> {
+    let porTenant = this.#messages.get(mensaje.tenantId);
+    if (!porTenant) {
+      porTenant = [];
+      this.#messages.set(mensaje.tenantId, porTenant);
+    }
+    porTenant.push(mensaje);
+  }
+
+  async listMessages(
+    tenantId: TenantId,
+    instanceId?: InstanceId,
+  ): Promise<Message[]> {
+    const todos = this.#messages.get(tenantId) ?? [];
+    return instanceId
+      ? todos.filter((m) => m.instanceId === instanceId)
+      : [...todos];
   }
 }

@@ -31,9 +31,8 @@ export type InstanceEstado = "pending" | "qr" | "connected" | "disconnected";
 
 /**
  * Identificador de la implementación de transporte (ver docs/adr/0001).
- * Hoy solo existe `mock`; las implementaciones reales se agregan aquí.
  */
-export type TransportType = "mock";
+export type TransportType = "mock" | "evolution";
 
 /** Documento en `tenants/{tenantId}/instances/{instanceId}` */
 export interface Instance {

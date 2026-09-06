@@ -50,10 +50,13 @@ export interface Sesion {
 export function crearSesionesDemo(): Sesion[] {
   return semilla.map((instancia, i) => ({
     instancia,
-    transporte: createTransport(instancia.transportType, {
-      // Ritmos distintos para ver el ciclo avanzar de forma escalonada.
-      qrDelayMs: 800 + i * 900,
-      scanDelayMs: 2600 + i * 1400,
+    transporte: createTransport({
+      tipo: "mock",
+      opciones: {
+        // Ritmos distintos para ver el ciclo avanzar de forma escalonada.
+        qrDelayMs: 800 + i * 900,
+        scanDelayMs: 2600 + i * 1400,
+      },
     }),
   }));
 }

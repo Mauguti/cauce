@@ -1,6 +1,7 @@
 import type {
   MessageTransport,
   OutgoingMessage,
+  QrPayload,
   SendReceipt,
   TransportStatus,
 } from "./transport.ts";
@@ -48,8 +49,9 @@ export class MockTransport implements MessageTransport {
     );
   }
 
-  async getQr(): Promise<string | null> {
-    return this.#estado === "qr" ? this.#qr : null;
+  async getQr(): Promise<QrPayload | null> {
+    if (this.#estado !== "qr" || this.#qr === null) return null;
+    return { codigo: this.#qr, imagenBase64: null };
   }
 
   async send(mensaje: OutgoingMessage): Promise<SendReceipt> {
@@ -75,7 +77,7 @@ export class MockTransport implements MessageTransport {
     this.#estado = "disconnected";
   }
 
-  status(): TransportStatus {
+  async status(): Promise<TransportStatus> {
     return this.#estado;
   }
 }

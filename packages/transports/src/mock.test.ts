@@ -11,22 +11,25 @@ describe("MockTransport", () => {
   });
 
   const nuevo = () =>
-    createTransport("mock", { qrDelayMs: 100, scanDelayMs: 200 });
+    createTransport({
+      tipo: "mock",
+      opciones: { qrDelayMs: 100, scanDelayMs: 200 },
+    });
 
-  it("arranca en pending", () => {
-    expect(nuevo().status()).toBe("pending");
+  it("arranca en pending", async () => {
+    expect(await nuevo().status()).toBe("pending");
   });
 
   it("recorre el ciclo pending → qr → connected", async () => {
     const t = nuevo();
     await t.connect();
-    expect(t.status()).toBe("pending");
+    expect(await t.status()).toBe("pending");
 
     await vi.advanceTimersByTimeAsync(100);
-    expect(t.status()).toBe("qr");
+    expect(await t.status()).toBe("qr");
 
     await vi.advanceTimersByTimeAsync(200);
-    expect(t.status()).toBe("connected");
+    expect(await t.status()).toBe("connected");
   });
 
   it("expone el QR solo mientras el estado es qr", async () => {
@@ -35,7 +38,7 @@ describe("MockTransport", () => {
 
     await t.connect();
     await vi.advanceTimersByTimeAsync(100);
-    expect(await t.getQr()).toMatch(/^cauce-mock-qr:/);
+    expect((await t.getQr())?.codigo).toMatch(/^cauce-mock-qr:/);
 
     await vi.advanceTimersByTimeAsync(200);
     expect(await t.getQr()).toBeNull();
@@ -73,11 +76,11 @@ describe("MockTransport", () => {
     await t.connect();
     await vi.advanceTimersByTimeAsync(100);
     await t.disconnect();
-    expect(t.status()).toBe("disconnected");
+    expect(await t.status()).toBe("disconnected");
 
     // El timer de escaneo quedó cancelado: no revive la sesión.
     await vi.advanceTimersByTimeAsync(1000);
-    expect(t.status()).toBe("disconnected");
+    expect(await t.status()).toBe("disconnected");
     expect(await t.getQr()).toBeNull();
   });
 
@@ -86,10 +89,10 @@ describe("MockTransport", () => {
     await t.connect();
     await vi.advanceTimersByTimeAsync(100);
     await t.connect();
-    expect(t.status()).toBe("qr");
+    expect(await t.status()).toBe("qr");
     await vi.advanceTimersByTimeAsync(200);
     await t.connect();
-    expect(t.status()).toBe("connected");
+    expect(await t.status()).toBe("connected");
   });
 
   it("permite reconectar después de disconnect", async () => {
@@ -100,6 +103,6 @@ describe("MockTransport", () => {
 
     await t.connect();
     await vi.advanceTimersByTimeAsync(300);
-    expect(t.status()).toBe("connected");
+    expect(await t.status()).toBe("connected");
   });
 });

@@ -19,7 +19,7 @@ interface Fila {
 export default function App() {
   const sesiones = useMemo(crearSesionesDemo, []);
   const [filas, setFilas] = useState<Fila[]>(() =>
-    sesiones.map((sesion) => ({ sesion, estado: sesion.transporte.status(), qr: null })),
+    sesiones.map((sesion) => ({ sesion, estado: "pending", qr: null })),
   );
 
   useEffect(() => {
@@ -28,8 +28,8 @@ export default function App() {
       const siguientes = await Promise.all(
         sesiones.map(async (sesion) => ({
           sesion,
-          estado: sesion.transporte.status(),
-          qr: await sesion.transporte.getQr(),
+          estado: await sesion.transporte.status(),
+          qr: (await sesion.transporte.getQr())?.codigo ?? null,
         })),
       );
       setFilas(siguientes);
