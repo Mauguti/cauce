@@ -69,6 +69,27 @@ npx tsx scripts/prueba-ciclo.ts +5215512345678
 La página de muestra del sistema visual es estática:
 `packages/ui/muestra.html`.
 
+## Cola y control de ritmo
+
+Todo envío pasa por una cola persistida en disco (`data/cola/`), con
+worker **por instancia** — el límite protege cada número por separado,
+nunca es global. `POST /send` responde 202 con el id; el estado del
+mensaje se consulta en `GET /instances/:id/messages`.
+
+Valores por defecto (en `COLA_DEFAULTS`, configurables por tenant vía
+`envioIntervaloMs`):
+
+| Parámetro | Valor | Por qué |
+|---|---|---|
+| Intervalo entre envíos | 45 s | Cobranza no es tiempo real; ~80 mensajes/hora por número queda muy por debajo de los umbrales reportados de baneo, y el destinatario ya es cliente. |
+| Jitter | +0–20 s uniforme | Cadencia perfectamente regular es señal de bot; el intervalo efectivo queda en 45–65 s. |
+| Reintentos | 3 intentos | Un fallo transitorio (reconexión de sesión) se recupera; más de 3 casi siempre es sesión caída y conviene fallar visible. |
+| Backoff | 60 s · 4ⁿ (1 min, 4 min, 16 min) | Da tiempo a que una reconexión termine antes de reintentar; no castiga la cola completa. |
+
+Un mensaje que estaba `enviando` al caer el proceso vuelve a
+`encolado` al arrancar: semántica al-menos-una-vez (en el peor caso
+ese envío se duplica).
+
 ## Stack
 
 Node 22 + Express + TypeScript · React 19 + Vite · Firestore ·

@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { Instance, InstanceId, TenantId } from "@cauce/core";
 import { createTransport, type MessageTransport } from "@cauce/transports";
+import type { ColaEnvios } from "./cola.ts";
 import { DockerManager, nombreContenedor } from "./docker/manager.ts";
 import type { Repositorio } from "./store.ts";
 
@@ -24,6 +25,7 @@ export class GestorSesiones {
   readonly #docker: DockerManager;
   readonly #repo: Repositorio;
   readonly #urlPublica: string;
+  readonly #cola: ColaEnvios | null;
   #sesiones = new Map<InstanceId, SesionActiva>();
 
   constructor(opciones: {
@@ -35,10 +37,27 @@ export class GestorSesiones {
      * http://host.docker.internal:<puerto>.
      */
     urlPublica: string;
+    /** Cola de envíos; opcional para pruebas que no envían. */
+    cola?: ColaEnvios;
   }) {
     this.#docker = opciones.docker;
     this.#repo = opciones.repo;
     this.#urlPublica = opciones.urlPublica.replace(/\/$/, "");
+    this.#cola = opciones.cola ?? null;
+  }
+
+  async #registrarEnCola(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    transport: MessageTransport,
+  ): Promise<void> {
+    if (!this.#cola) return;
+    const tenant = await this.#repo.getTenant(tenantId);
+    this.#cola.registrar(instanceId, transport, {
+      ...(tenant?.envioIntervaloMs !== undefined
+        ? { intervaloMs: tenant.envioIntervaloMs }
+        : {}),
+    });
   }
 
   obtener(instanceId: InstanceId): SesionActiva | null {
@@ -95,6 +114,11 @@ export class GestorSesiones {
         baseUrl: enDocker.baseUrl,
         webhookToken: enDocker.webhookToken,
       });
+      await this.#registrarEnCola(
+        enDocker.tenantId,
+        enDocker.instanceId,
+        transport,
+      );
       rehidratadas += 1;
     }
     return rehidratadas;
@@ -139,6 +163,7 @@ export class GestorSesiones {
       baseUrl: creada.baseUrl,
       webhookToken,
     });
+    await this.#registrarEnCola(tenantId, instanceId, transport);
     return instancia;
   }
 
@@ -161,6 +186,7 @@ export class GestorSesiones {
   }
 
   async eliminar(tenantId: TenantId, instanceId: InstanceId): Promise<void> {
+    this.#cola?.baja(instanceId, true);
     const sesion = this.#sesiones.get(instanceId);
     if (sesion) {
       try {

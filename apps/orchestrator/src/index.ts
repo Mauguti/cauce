@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { crearApp } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
+import { ColaEnvios } from "./cola.ts";
 import { DockerManager } from "./docker/manager.ts";
 import { GestorSesiones } from "./sesiones.ts";
 import { RepositorioEnMemoria } from "./store.ts";
@@ -28,9 +29,16 @@ const repo = new RepositorioEnMemoria({
 });
 
 const docker = new DockerManager();
+const cola = new ColaEnvios({
+  dir: process.env.CAUCE_DATA_DIR
+    ? `${process.env.CAUCE_DATA_DIR}/cola`
+    : new URL("../data/cola", import.meta.url).pathname,
+  repo,
+});
 const gestor = new GestorSesiones({
   docker,
   repo,
+  cola,
   // Cómo alcanzan los contenedores al orquestador (webhooks). En prod,
   // detrás de Caddy, será la URL interna del host.
   urlPublica:
@@ -48,6 +56,6 @@ if (await docker.disponible()) {
   console.warn("Docker no disponible; se arranca sin sesiones");
 }
 
-crearApp(repo, gestor, { corsOrigenes }).listen(puerto, () => {
+crearApp(repo, gestor, { corsOrigenes, cola }).listen(puerto, () => {
   console.log(`orquestador escuchando en :${puerto}`);
 });

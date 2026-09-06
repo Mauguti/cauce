@@ -4,6 +4,7 @@ import type { TenantId } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
 import type { GestorSesiones } from "./sesiones.ts";
 import { autenticar } from "./auth.ts";
+import type { ColaEnvios } from "./cola.ts";
 import { normalizarEntrante } from "./webhook.ts";
 
 declare global {
@@ -42,6 +43,8 @@ function cors(origenes: string[]) {
 export interface AppOpciones {
   /** Orígenes permitidos para CORS (la consola). */
   corsOrigenes?: string[];
+  /** Cola de envíos; sin ella POST /send responde 501. */
+  cola?: ColaEnvios;
 }
 
 export function crearApp(
@@ -132,32 +135,45 @@ export function crearApp(
     res.json({ codigo: qr.codigo, imagenBase64: qr.imagenBase64 });
   });
 
+  // Encola y responde 202 de inmediato; el envío real lo hace el worker
+  // de la cola respetando el ritmo por instancia.
   tenantRouter.post("/instances/:instanceId/send", async (req, res) => {
     const sesion = await sesionScopeada(req, res);
     if (!sesion) return;
+    if (!opciones.cola) {
+      res.status(501).json({ error: "orquestador sin cola de envíos" });
+      return;
+    }
     const { telefono, cuerpo } = req.body ?? {};
     if (typeof telefono !== "string" || typeof cuerpo !== "string") {
       res.status(400).json({ error: "se requieren telefono y cuerpo" });
       return;
     }
-    try {
-      const recibo = await sesion.transport.send({ telefono, cuerpo });
-      const mensaje = {
-        id: crypto.randomUUID(),
-        tenantId: req.tenantId!,
-        instanceId: req.params.instanceId!,
-        direccion: "out" as const,
-        telefono,
-        cuerpo,
-        estado: "enviado" as const,
-        externalId: recibo.externalId,
-        timestamp: recibo.timestamp,
-      };
-      await repo.saveMessage(mensaje);
-      res.status(201).json(mensaje);
-    } catch (err: any) {
-      res.status(502).json({ error: err?.message ?? "envío falló" });
+    const mensaje = {
+      id: crypto.randomUUID(),
+      tenantId: req.tenantId!,
+      instanceId: String(req.params.instanceId),
+      direccion: "out" as const,
+      telefono,
+      cuerpo,
+      estado: "encolado" as const,
+      externalId: null,
+      timestamp: new Date().toISOString(),
+    };
+    await opciones.cola.encolar(mensaje);
+    res.status(202).json({ id: mensaje.id, estado: mensaje.estado });
+  });
+
+  tenantRouter.get("/instances/:instanceId/messages", async (req, res) => {
+    const instanceId = String(req.params.instanceId);
+    const instancia = await repo.getInstance(req.tenantId!, instanceId);
+    if (!instancia) {
+      res.status(404).json({ error: "instancia no encontrada" });
+      return;
     }
+    const mensajes = await repo.listMessages(req.tenantId!, instanceId);
+    mensajes.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    res.json(mensajes);
   });
 
   tenantRouter.delete("/instances/:instanceId", async (req, res) => {

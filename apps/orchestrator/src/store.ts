@@ -70,13 +70,16 @@ export class RepositorioEnMemoria implements Repositorio {
     this.#instances.get(tenantId)?.delete(instanceId);
   }
 
+  /** Upsert por id: el ciclo de la cola reescribe el mismo mensaje. */
   async saveMessage(mensaje: Message): Promise<void> {
     let porTenant = this.#messages.get(mensaje.tenantId);
     if (!porTenant) {
       porTenant = [];
       this.#messages.set(mensaje.tenantId, porTenant);
     }
-    porTenant.push(mensaje);
+    const indice = porTenant.findIndex((m) => m.id === mensaje.id);
+    if (indice >= 0) porTenant[indice] = mensaje;
+    else porTenant.push(mensaje);
   }
 
   async listMessages(

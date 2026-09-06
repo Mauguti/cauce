@@ -15,6 +15,7 @@
 import qrcode from "qrcode-terminal";
 import { crearApp } from "../apps/orchestrator/src/app.ts";
 import { hashApiKey } from "../apps/orchestrator/src/auth.ts";
+import { ColaEnvios } from "../apps/orchestrator/src/cola.ts";
 import { DockerManager } from "../apps/orchestrator/src/docker/manager.ts";
 import { GestorSesiones } from "../apps/orchestrator/src/sesiones.ts";
 import { RepositorioEnMemoria } from "../apps/orchestrator/src/store.ts";
@@ -46,9 +47,18 @@ const repo = new RepositorioEnMemoria({
   ],
 });
 const docker = new DockerManager();
+const cola = new ColaEnvios({
+  dir: new URL("../data/cola", import.meta.url).pathname,
+  repo,
+  // El script es interactivo: ritmo corto para no esperar 45s el primer
+  // envío. En producción rigen los defaults conservadores.
+  intervaloMs: 2000,
+  jitterMaxMs: 1000,
+});
 const gestor = new GestorSesiones({
   docker,
   repo,
+  cola,
   urlPublica: `http://host.docker.internal:${PUERTO}`,
 });
 
@@ -83,7 +93,7 @@ if (!(await docker.disponible())) {
   process.exit(1);
 }
 
-const servidor = crearApp(repo, gestor).listen(PUERTO);
+const servidor = crearApp(repo, gestor, { cola }).listen(PUERTO);
 let instanceId: string | null = null;
 
 try {
@@ -127,10 +137,23 @@ try {
       cuerpo: `Prueba de ciclo Cauce · ${new Date().toLocaleTimeString("es-MX")}`,
     }),
   });
-  if (envio.status !== 201) {
+  if (envio.status !== 202) {
     throw new Error(`send → ${envio.status}: ${await envio.text()}`);
   }
-  const enviado = await envio.json();
+  const encolado = await envio.json();
+  console.log(`   encolado con id ${encolado.id}; esperando a la cola…`);
+  const enviado = await esperar("envío por la cola", 60_000, 1000, async () => {
+    const res = await api(`/instances/${instanceId}/messages`);
+    const mensajes = (await res.json()) as {
+      id: string;
+      estado: string;
+      externalId: string | null;
+    }[];
+    const mio = mensajes.find((m) => m.id === encolado.id);
+    if (!mio) return null;
+    if (mio.estado === "fallido") throw new Error("el envío quedó fallido");
+    return mio.estado === "enviado" ? mio : null;
+  });
   console.log(`   enviado, externalId=${enviado.externalId}`);
 
   paso("Esperando respuesta entrante (60s; responde desde el otro teléfono)…");
