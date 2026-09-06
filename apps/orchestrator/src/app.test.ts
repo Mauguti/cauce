@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
+import type { QrPayload } from "@cauce/transports";
 import { crearApp } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import { RepositorioEnMemoria } from "./store.ts";
+import type { GestorSesiones } from "./sesiones.ts";
 
 const KEY_A = "key-tenant-a-0000000000000000";
 const KEY_B = "key-tenant-b-1111111111111111";
@@ -109,6 +111,60 @@ describe("orquestador", () => {
         headers: { authorization: `Bearer ${KEY_A}` },
       });
       expect(res.status).toBe(200);
+    } finally {
+      cerrar();
+    }
+  });
+});
+
+describe("GET /instances/:id/qr", () => {
+  function levantarConQr(qr: QrPayload | null) {
+    const repo = new RepositorioEnMemoria({
+      tenants: [
+        { id: "a", nombre: "A", plan: "basico", estado: "activo", apiKeyHash: hashApiKey(KEY_A), creadoEn: "2026-09-05T00:00:00Z" },
+      ],
+      instances: [
+        { id: "i1", tenantId: "a", transportType: "evolution", contenedorId: "c1", numero: null, estado: "qr", ultimoHeartbeat: null },
+      ],
+    });
+    const gestor = {
+      obtener: (id: string) =>
+        id === "i1"
+          ? { transport: { getQr: async () => qr }, contenedorId: "c1", baseUrl: "", webhookToken: "t" }
+          : null,
+    } as unknown as GestorSesiones;
+    const server = crearApp(repo, gestor).listen(0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    return { base, cerrar: () => server.close() };
+  }
+
+  it("devuelve el QR con 200 cuando hay", async () => {
+    const { base, cerrar } = levantarConQr({ codigo: "2@abc", imagenBase64: "data:img" });
+    try {
+      const res = await fetch(`${base}/api/tenants/a/instances/i1/qr`, conKey(KEY_A));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ codigo: "2@abc", imagenBase64: "data:img" });
+    } finally {
+      cerrar();
+    }
+  });
+
+  it("responde 200 con QR nulo (no 404) cuando no hay QR en este estado", async () => {
+    const { base, cerrar } = levantarConQr(null);
+    try {
+      const res = await fetch(`${base}/api/tenants/a/instances/i1/qr`, conKey(KEY_A));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ codigo: null, imagenBase64: null });
+    } finally {
+      cerrar();
+    }
+  });
+
+  it("404 solo para instancia inexistente", async () => {
+    const { base, cerrar } = levantarConQr(null);
+    try {
+      const res = await fetch(`${base}/api/tenants/a/instances/nope/qr`, conKey(KEY_A));
+      expect(res.status).toBe(404);
     } finally {
       cerrar();
     }

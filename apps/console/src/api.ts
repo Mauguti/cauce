@@ -85,15 +85,14 @@ export const api = {
   },
 
   qr: async (tenantId: string, id: string) => {
-    // 404 = no hay QR en este estado (aún generándose, o ya conectada).
-    try {
-      return await llamar<{ codigo: string; imagenBase64: string | null }>(
-        `/api/tenants/${tenantId}/instances/${id}/qr`,
-      );
-    } catch (err) {
-      if (err instanceof ErrorNoAutorizado) throw err;
-      return null;
-    }
+    // El orquestador responde 200 con codigo:null cuando no hay QR en
+    // este estado (aún generándose, o ya conectada); un 404 real sería
+    // instancia inexistente y se propaga como error.
+    const qr = await llamar<{
+      codigo: string | null;
+      imagenBase64: string | null;
+    }>(`/api/tenants/${tenantId}/instances/${id}/qr`);
+    return qr.codigo ? qr : null;
   },
 
   mensajes: (tenantId: string, id: string) =>

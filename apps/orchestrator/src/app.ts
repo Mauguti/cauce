@@ -131,15 +131,19 @@ export function crearApp(
     res.json(instancia);
   });
 
+  // "No hay QR ahora mismo" (sesión pending o ya connected) es un estado
+  // válido, no un recurso ausente: se responde 200 con QR nulo. El 404
+  // queda reservado para instancia/sesión genuinamente inexistente
+  // (lo emite sesionScopeada). Antes esto devolvía 404 y el polling del
+  // modal ensuciaba la consola del navegador con 404 recurrentes.
   tenantRouter.get("/instances/:instanceId/qr", async (req, res) => {
     const sesion = await sesionScopeada(req, res);
     if (!sesion) return;
     const qr = await sesion.transport.getQr();
-    if (!qr) {
-      res.status(404).json({ error: "no hay QR disponible en este estado" });
-      return;
-    }
-    res.json({ codigo: qr.codigo, imagenBase64: qr.imagenBase64 });
+    res.json({
+      codigo: qr?.codigo ?? null,
+      imagenBase64: qr?.imagenBase64 ?? null,
+    });
   });
 
   // Encola y responde 202 de inmediato; el envío real lo hace el worker
