@@ -513,3 +513,19 @@
   border-left: 3px solid var(--estado-qr); background: var(--gris-1);
   padding: var(--esp-2) var(--esp-4); font-size: var(--texto-s);
 }
+
+/* ============ Bloque 11: onboarding a prueba de cliente ============ */
+.preparando { margin-bottom: var(--esp-4); }
+.barra { height: 6px; background: var(--gris-2); border-radius: 999px; overflow: hidden; margin-bottom: var(--esp-2); }
+.barra__relleno { height: 100%; background: var(--gris-7); transition: width 0.9s linear; }
+
+.modal--ancho { max-width: 440px; text-align: left; }
+.expectativa { display: flex; flex-direction: column; gap: var(--esp-3); }
+.expectativa p { margin: 0; }
+.pasos-punto { display: flex; gap: var(--esp-1); margin-bottom: var(--esp-3); }
+.punto { width: 24px; height: 4px; border-radius: 999px; background: var(--gris-3); }
+.punto--on { background: var(--gris-8); }
+.acepto {
+  border: var(--borde); border-radius: var(--radio); padding: var(--esp-3);
+  align-items: flex-start; gap: var(--esp-2); line-height: var(--interlineado-cuerpo);
+}

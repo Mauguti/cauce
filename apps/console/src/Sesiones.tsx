@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Instance, InstanceEstado } from "@cauce/core";
 import { api, type Yo } from "./api.ts";
+import { Expectativas } from "./Expectativas.tsx";
 
 const ETIQUETAS: Record<InstanceEstado, string> = {
   pending: "Iniciando",
@@ -17,19 +18,22 @@ export function Sesiones(props: {
   const { yo } = props;
   const [instancias, setInstancias] = useState<Instance[]>([]);
   const [creando, setCreando] = useState(false);
+  const [segundos, setSegundos] = useState(0);
   const [error, setError] = useState<string | null>(null);
   // Error de una ACCIÓN del usuario (crear/límite): el polling no lo pisa.
   const [accionError, setAccionError] = useState<string | null>(null);
   const [qrDe, setQrDe] = useState<string | null>(null);
   const [aEliminar, setAEliminar] = useState<Instance | null>(null);
   const [aDesconectar, setADesconectar] = useState<Instance | null>(null);
+  const [aceptado, setAceptado] = useState(yo.terminosAceptados);
+  const [mostrarExpectativas, setMostrarExpectativas] = useState(false);
 
   const refrescar = useCallback(async () => {
     try {
       setInstancias(await api.instancias(yo.tenantId));
       setError(null);
     } catch {
-      setError("Sin conexión con el orquestador.");
+      setError("Sin conexión con Cauce. Reintentando…");
     }
   }, [yo.tenantId]);
 
@@ -38,6 +42,28 @@ export function Sesiones(props: {
     const intervalo = setInterval(refrescar, 3000);
     return () => clearInterval(intervalo);
   }, [refrescar]);
+
+  // Contador de progreso mientras se prepara el número (~60s).
+  useEffect(() => {
+    if (!creando) return;
+    setSegundos(0);
+    const t = setInterval(() => setSegundos((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [creando]);
+
+  // Al pulsar "Conectar número": primero las expectativas (una vez).
+  const onConectar = () => {
+    if (aceptado) void crear();
+    else setMostrarExpectativas(true);
+  };
+
+  const aceptarYConectar = async () => {
+    await api.aceptarTerminos(yo.tenantId).catch(() => {});
+    setAceptado(true);
+    setMostrarExpectativas(false);
+    props.alCambiar();
+    void crear();
+  };
 
   const crear = async () => {
     setCreando(true);
@@ -49,7 +75,7 @@ export function Sesiones(props: {
       setQrDe(creada.id);
     } catch (err: any) {
       // Mensaje del servidor (p. ej. límite de plan), persistente.
-      setAccionError(err?.message ?? "No se pudo crear la sesión.");
+      setAccionError(err?.message ?? "No se pudo conectar el número. Intenta de nuevo.");
     } finally {
       setCreando(false);
     }
@@ -89,10 +115,10 @@ export function Sesiones(props: {
         </div>
         <button
           className="boton boton--primario"
-          onClick={crear}
+          onClick={onConectar}
           disabled={creando}
         >
-          {creando ? "Creando sesión…" : "Conectar número"}
+          {creando ? "Preparando…" : "Conectar número"}
         </button>
       </header>
 
@@ -106,9 +132,18 @@ export function Sesiones(props: {
       )}
       {error && <p className="mensaje-error">{error}</p>}
       {creando && (
-        <p className="consola__sub">
-          Levantando contenedor e instancia; toma alrededor de un minuto.
-        </p>
+        <div className="preparando">
+          <div className="barra">
+            <div
+              className="barra__relleno"
+              style={{ width: `${Math.min((segundos / 60) * 100, 96)}%` }}
+            />
+          </div>
+          <p className="consola__sub">
+            Preparando tu número… suele tardar alrededor de un minuto ({segundos}s).
+            En cuanto esté listo aparece el código QR para escanear.
+          </p>
+        </div>
       )}
 
       {instancias.length === 0 && !creando ? (
@@ -132,7 +167,7 @@ export function Sesiones(props: {
             {instancias.map((inst) => (
               <tr key={inst.id}>
                 <td className="celda-numero">
-                  {inst.numero ?? <span className="tenue">sin conectar · {inst.id}</span>}
+                  {inst.numero ?? <span className="tenue">Escanea el QR para vincular</span>}
                 </td>
                 <td>
                   <span className={`estado estado--${inst.estado}`}>
@@ -188,14 +223,15 @@ export function Sesiones(props: {
       {aEliminar && (
         <div className="modal-fondo" onClick={() => setAEliminar(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Eliminar sesión</h2>
+            <h2>Eliminar número</h2>
             <p>
-              Se destruyen el contenedor, el volumen y la base de datos de{" "}
-              <strong>{aEliminar.numero ?? aEliminar.id}</strong>.
+              Se borra el número{" "}
+              <strong>{aEliminar.numero ?? "sin conectar"}</strong> de Cauce y
+              todo su historial.
             </p>
             <p className="mensaje-error">
-              Se pierden la vinculación con el CRM y las conversaciones
-              asociadas. Esto no se puede deshacer.
+              Se pierden las conversaciones y la conexión con el CRM. Esto no se
+              puede deshacer. (Si solo quieres pausarlo, usa "Desconectar".)
             </p>
             <div className="modal__acciones">
               <button className="boton" onClick={() => setAEliminar(null)}>
@@ -218,13 +254,12 @@ export function Sesiones(props: {
             <h2>Desconectar WhatsApp</h2>
             <p>
               Cierra la sesión de WhatsApp de{" "}
-              <strong>{aDesconectar.numero ?? aDesconectar.id}</strong> (logout).
-              El número deja de enviar y recibir hasta que reconectes escaneando
-              el QR.
+              <strong>{aDesconectar.numero ?? "este número"}</strong>. Deja de
+              enviar y recibir hasta que lo reconectes escaneando el QR de nuevo.
             </p>
             <p className="consola__sub">
-              El contenedor, las conversaciones y la vinculación con el CRM se
-              conservan. No borra nada; es reversible.
+              Tus conversaciones y la conexión con el CRM se conservan. No borra
+              nada; es reversible.
             </p>
             <div className="modal__acciones">
               <button className="boton" onClick={() => setADesconectar(null)}>
@@ -239,6 +274,13 @@ export function Sesiones(props: {
             </div>
           </div>
         </div>
+      )}
+
+      {mostrarExpectativas && (
+        <Expectativas
+          alAceptar={aceptarYConectar}
+          alCancelar={() => setMostrarExpectativas(false)}
+        />
       )}
     </main>
   );

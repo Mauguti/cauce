@@ -207,8 +207,10 @@ function Salientes(props: {
       <div className="webhook">
         <h3>Conecta el disparo en monday</h3>
         <p className="consola__sub">
-          Copia esta URL y pégala en una automatización de tu board. monday
-          enviará aquí el item cuando se cumpla la condición que definas.
+          Un <em>webhook</em> es un aviso automático: cuando pasa algo en tu
+          board (p. ej. una fecha llega, un estatus cambia), monday le avisa a
+          Cauce enviando el item a una dirección web. Copia esta dirección y
+          pégala en una automatización de tu board.
         </p>
         <div className="fila-inline">
           <input className="campo webhook__url" readOnly value={url} />

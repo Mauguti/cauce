@@ -75,7 +75,10 @@ export default function App() {
     });
   }, []);
 
-  // Con sesión: provisiona (idempotente) y carga el tenant.
+  const [intentoProv, setIntentoProv] = useState(0);
+
+  // Con sesión: provisiona (idempotente) y carga el tenant. Reintentable
+  // con el botón (intentoProv) si falla la red al preparar la cuenta.
   useEffect(() => {
     if (!sesion) return;
     let vivo = true;
@@ -88,13 +91,16 @@ export default function App() {
         setYo(quien);
         await cargarProgreso(quien.tenantId);
       } catch {
-        if (vivo) setErrorProv("No se pudo preparar tu cuenta. Reintenta.");
+        if (vivo)
+          setErrorProv(
+            "No pudimos preparar tu cuenta. Revisa tu conexión e inténtalo de nuevo.",
+          );
       }
     })();
     return () => {
       vivo = false;
     };
-  }, [sesion, cargarProgreso]);
+  }, [sesion, cargarProgreso, intentoProv]);
 
   const banner = desfase ? (
     <div className="banner-desfase" role="alert">
@@ -118,13 +124,21 @@ export default function App() {
       <main className="consola consola--angosta">
         {banner}
         <h1>Cauce</h1>
-        <p className="consola__sub">
+        <p className={errorProv ? "mensaje-error" : "consola__sub"}>
           {errorProv ?? "Preparando tu cuenta…"}
         </p>
         {errorProv && (
-          <button className="boton" onClick={() => sesion.cerrar()}>
-            Salir
-          </button>
+          <div className="fila-inline">
+            <button
+              className="boton boton--primario"
+              onClick={() => setIntentoProv((n) => n + 1)}
+            >
+              Reintentar
+            </button>
+            <button className="boton" onClick={() => sesion.cerrar()}>
+              Salir
+            </button>
+          </div>
         )}
       </main>
     );
