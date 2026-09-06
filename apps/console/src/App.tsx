@@ -14,6 +14,8 @@ import { Sesiones } from "./Sesiones.tsx";
 import { Conexiones } from "./Conexiones.tsx";
 import { Acciones } from "./Acciones.tsx";
 import { Conversacion } from "./Conversacion.tsx";
+import { Cuenta } from "./Cuenta.tsx";
+import { etiquetaPlan } from "./plan.ts";
 import "./app.css";
 
 export type Seccion = "inicio" | "sesiones" | "conexiones" | "acciones";
@@ -25,6 +27,7 @@ export default function App() {
   const [errorProv, setErrorProv] = useState<string | null>(null);
   const [seccion, setSeccion] = useState<Seccion>("inicio");
   const [instanciaAbierta, setInstanciaAbierta] = useState<string | null>(null);
+  const [mostrarCuenta, setMostrarCuenta] = useState(false);
 
   const [instancias, setInstancias] = useState<Instance[]>([]);
   const [monday, setMonday] = useState<MondayVista | null>(null);
@@ -185,11 +188,13 @@ export default function App() {
           )}
         </div>
         <div className="nav__cuenta">
-          {yo.plan === "prueba" && (
-            <span className="nav__plan">
-              {yo.pruebaVigente ? "Prueba" : "Prueba vencida"}
-            </span>
-          )}
+          <button
+            className={`nav__plan${yo.plan === "prueba" && !yo.pruebaVigente ? " nav__plan--vencido" : ""}`}
+            onClick={() => setMostrarCuenta(true)}
+            title="Ver tu cuenta"
+          >
+            {etiquetaPlan(yo)}
+          </button>
           <span className="nav__tenant">{sesion.email ?? yo.nombre}</span>
           <button className="boton" onClick={() => sesion.cerrar()}>
             Salir
@@ -219,6 +224,15 @@ export default function App() {
           <Acciones yo={yo} monday={monday} alCambiar={refrescar} />
         )}
       </div>
+
+      {mostrarCuenta && (
+        <Cuenta
+          yo={yo}
+          lineasUsadas={instancias.length}
+          conectoresUsados={monday !== null ? 1 : 0}
+          alCerrar={() => setMostrarCuenta(false)}
+        />
+      )}
     </div>
   );
 }

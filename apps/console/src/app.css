@@ -423,9 +423,15 @@
 }
 
 .nav__plan {
-  font-size: var(--texto-xs); text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--texto-secundario); border: var(--borde); border-radius: var(--radio);
-  padding: 1px var(--esp-2);
+  font: inherit; font-size: var(--texto-xs); font-weight: var(--peso-medio);
+  color: var(--texto-secundario); background: none;
+  border: var(--borde); border-radius: var(--radio);
+  padding: 2px var(--esp-2); cursor: pointer;
+}
+.nav__plan:hover { background: var(--hover-fondo); color: var(--texto); }
+.nav__plan--vencido {
+  color: var(--error-texto); border-color: var(--estado-desconectada);
+  font-weight: var(--peso-semibold);
 }
 
 .aviso-prueba {
@@ -544,3 +550,19 @@
   margin-bottom: var(--esp-6); font-size: var(--texto-s);
   line-height: var(--interlineado-cuerpo);
 }
+
+/* ---- Vista de cuenta (badge de plan) ---- */
+.cuenta { gap: var(--esp-6); }
+.cuenta__plan { display: flex; flex-direction: column; gap: var(--esp-1); }
+.cuenta__plan-nombre { font-size: var(--texto-l); font-weight: var(--peso-semibold); }
+.cuenta__uso { margin: 0; display: flex; flex-direction: column; gap: var(--esp-2); }
+.cuenta__uso-fila {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: var(--esp-2) 0; border-bottom: var(--borde); font-size: var(--texto-s);
+}
+.cuenta__uso-fila dt { color: var(--texto-secundario); margin: 0; }
+.cuenta__uso-fila dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: var(--peso-medio); }
+.cuenta__uso-lleno { color: var(--error-texto); font-weight: var(--peso-semibold); }
+.cuenta__contratar { display: flex; flex-direction: column; gap: var(--esp-2); }
+.cuenta__contratar h3 { margin: 0; font-size: var(--texto-m); font-weight: var(--peso-semibold); }
+.cuenta__contratar .boton { text-decoration: none; text-align: center; }
