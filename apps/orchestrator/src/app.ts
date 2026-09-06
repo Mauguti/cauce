@@ -10,7 +10,7 @@ import type { MotorEntrada } from "./entrada/motor.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 import type { VerificadorToken } from "./firebase.ts";
 import type { Provisioning } from "./provisioning.ts";
-import { limitesTenant, pruebaVigente } from "@cauce/core";
+import { churnReciente, limitesTenant, pruebaVigente } from "@cauce/core";
 import { normalizarEntrante } from "./webhook.ts";
 
 declare global {
@@ -206,6 +206,8 @@ export function crearApp(
       pruebaExpiraEn: tenant.pruebaExpiraEn ?? null,
       pruebaVigente: pruebaVigente(tenant),
       terminosAceptados: Boolean(tenant.terminosAceptadosEn),
+      // Creó/borró sesiones en ráfaga: la consola avisa antes de recrear.
+      churnReciente: churnReciente(tenant),
     });
   });
 

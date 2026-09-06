@@ -52,6 +52,8 @@ export interface Yo {
   pruebaExpiraEn: string | null;
   pruebaVigente: boolean;
   terminosAceptados: boolean;
+  /** Creó/borró sesiones en ráfaga: avisar antes de recrear. */
+  churnReciente: boolean;
 }
 
 /** Versión con la que se compiló esta consola (la fija scripts/deploy.sh). */

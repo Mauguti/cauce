@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
-import type { Instance, Tenant } from "@cauce/core";
+import {
+  churnReciente,
+  registrarCreacionSesion,
+  SESIONES_RECIENTES_MAX,
+  type Instance,
+  type Tenant,
+} from "@cauce/core";
 import { crearApp } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import { RepositorioEnMemoria } from "./store.ts";
@@ -123,6 +129,55 @@ describe("límites por plan al crear sesión", () => {
       expect((await repo.getTenant("t1"))!.terminosAceptadosEn).toBe(primeraFecha);
     } finally {
       server.close();
+    }
+  });
+});
+
+describe("churn de sesiones", () => {
+  it("marca churn con >= 3 creaciones dentro de la ventana (el patrón real)", () => {
+    const ahora = new Date("2026-09-06T12:00:00Z");
+    // Crear/borrar el mismo número en ráfaga: tres creaciones en ~4 min.
+    const t = tenant({
+      sesionesRecientes: [
+        "2026-09-06T11:56:00Z",
+        "2026-09-06T11:58:00Z",
+        "2026-09-06T11:59:30Z",
+      ],
+    });
+    expect(churnReciente(t, ahora)).toBe(true);
+  });
+
+  it("no marca churn con creaciones espaciadas fuera de la ventana", () => {
+    const ahora = new Date("2026-09-06T12:00:00Z");
+    const t = tenant({
+      sesionesRecientes: [
+        "2026-09-06T10:00:00Z", // hace 2 h
+        "2026-09-06T11:00:00Z", // hace 1 h
+        "2026-09-06T11:59:00Z", // reciente, pero solo una en la ventana
+      ],
+    });
+    expect(churnReciente(t, ahora)).toBe(false);
+  });
+
+  it("registrarCreacionSesion agrega y acota el buffer", () => {
+    let t = tenant({});
+    for (let i = 0; i < SESIONES_RECIENTES_MAX + 5; i++) {
+      t = { ...t, sesionesRecientes: registrarCreacionSesion(t) };
+    }
+    expect(t.sesionesRecientes).toHaveLength(SESIONES_RECIENTES_MAX);
+  });
+
+  it("/api/me expone churnReciente del tenant", async () => {
+    const ahora = Date.now();
+    const recientes = [ahora - 60_000, ahora - 120_000, ahora - 180_000].map(
+      (ms) => new Date(ms).toISOString(),
+    );
+    const { base, cerrar } = levantar(tenant({ sesionesRecientes: recientes }));
+    try {
+      const yo = await (await fetch(`${base}/api/me`, conKey)).json();
+      expect(yo.churnReciente).toBe(true);
+    } finally {
+      cerrar();
     }
   });
 });

@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   pruebaVigente,
+  registrarCreacionSesion,
   type Instance,
   type InstanceId,
   type Message,
@@ -239,6 +240,15 @@ export class GestorSesiones {
       ultimoHeartbeat: null,
     };
     await this.#repo.saveInstance(instancia);
+    // Marca la creación para detectar churn (crear/borrar en ráfaga degrada
+    // el número). No bloquea el alta si el tenant no está.
+    const tenant = await this.#repo.getTenant(tenantId);
+    if (tenant) {
+      await this.#repo.saveTenant({
+        ...tenant,
+        sesionesRecientes: registrarCreacionSesion(tenant),
+      });
+    }
     this.#sesiones.set(instanceId, {
       transport,
       contenedorId: creada.contenedorId,

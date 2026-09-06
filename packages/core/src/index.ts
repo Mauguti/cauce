@@ -48,6 +48,12 @@ export interface Tenant {
    * (antes del jitter). Ausente = valor por defecto conservador.
    */
   envioIntervaloMs?: number;
+  /**
+   * ISO 8601 de las últimas creaciones de sesión (buffer acotado). Sirve
+   * para detectar churn: crear y borrar el mismo número en ráfaga deja
+   * claves Signal viejas que degradan el número. Ver `churnReciente`.
+   */
+  sesionesRecientes?: string[];
   /** ISO 8601 */
   creadoEn: string;
 }
@@ -80,6 +86,36 @@ export function limitesTenant(t: Tenant): {
 export function pruebaVigente(t: Tenant, ahora: Date = new Date()): boolean {
   if (t.plan !== "prueba" || !t.pruebaExpiraEn) return true;
   return ahora < new Date(t.pruebaExpiraEn);
+}
+
+/** Ventana y umbral para considerar que un tenant está haciendo churn. */
+export const CHURN_VENTANA_MS = 30 * 60_000;
+export const CHURN_UMBRAL = 3;
+/** Cuántas marcas de creación de sesión se conservan por tenant. */
+export const SESIONES_RECIENTES_MAX = 20;
+
+/**
+ * ¿El tenant creó sesiones en ráfaga hace poco? Crear y borrar el mismo
+ * número una y otra vez es lo que lo degrada; con esto la consola avisa
+ * antes de recrear. True si hubo >= CHURN_UMBRAL creaciones dentro de la
+ * ventana.
+ */
+export function churnReciente(t: Tenant, ahora: Date = new Date()): boolean {
+  const desde = ahora.getTime() - CHURN_VENTANA_MS;
+  const recientes = (t.sesionesRecientes ?? []).filter(
+    (iso) => new Date(iso).getTime() >= desde,
+  );
+  return recientes.length >= CHURN_UMBRAL;
+}
+
+/** Agrega una marca de creación de sesión, acotando el buffer. */
+export function registrarCreacionSesion(
+  t: Tenant,
+  ahora: Date = new Date(),
+): string[] {
+  return [...(t.sesionesRecientes ?? []), ahora.toISOString()].slice(
+    -SESIONES_RECIENTES_MAX,
+  );
 }
 
 /**

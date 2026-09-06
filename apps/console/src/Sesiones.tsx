@@ -27,6 +27,8 @@ export function Sesiones(props: {
   const [aDesconectar, setADesconectar] = useState<Instance | null>(null);
   const [aceptado, setAceptado] = useState(yo.terminosAceptados);
   const [mostrarExpectativas, setMostrarExpectativas] = useState(false);
+  const [mostrarChurn, setMostrarChurn] = useState(false);
+  const [churnConfirmado, setChurnConfirmado] = useState(false);
 
   const refrescar = useCallback(async () => {
     try {
@@ -51,10 +53,28 @@ export function Sesiones(props: {
     return () => clearInterval(t);
   }, [creando]);
 
-  // Al pulsar "Conectar número": primero las expectativas (una vez).
-  const onConectar = () => {
-    if (aceptado) void crear();
-    else setMostrarExpectativas(true);
+  // Al pulsar "Conectar número": primero las expectativas (una vez), y si
+  // el tenant viene creando/borrando en ráfaga, un aviso de churn antes de
+  // crear otro (recrear el mismo número una y otra vez es lo que lo daña).
+  const onConectar = async () => {
+    if (!aceptado) {
+      setMostrarExpectativas(true);
+      return;
+    }
+    if (!churnConfirmado) {
+      const fresco = await api.yo().catch(() => null);
+      if (fresco?.churnReciente) {
+        setMostrarChurn(true);
+        return;
+      }
+    }
+    void crear();
+  };
+
+  const crearTrasChurn = () => {
+    setChurnConfirmado(true);
+    setMostrarChurn(false);
+    void crear();
   };
 
   const aceptarYConectar = async () => {
@@ -230,25 +250,39 @@ export function Sesiones(props: {
       {aEliminar && (
         <div className="modal-fondo" onClick={() => setAEliminar(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Eliminar número</h2>
+            <h2>¿Eliminar o desconectar?</h2>
             <p>
-              Se borra el número{" "}
-              <strong>{aEliminar.numero ?? "sin conectar"}</strong> de Cauce y
-              todo su historial.
+              Casi siempre lo que quieres es <strong>Desconectar</strong>: pausa{" "}
+              <strong>{aEliminar.numero ?? "este número"}</strong> y lo
+              reconectas escaneando el QR, sin perder nada.
             </p>
             <p className="mensaje-error">
-              Se pierden las conversaciones y la conexión con el CRM. Esto no se
-              puede deshacer. (Si solo quieres pausarlo, usa "Desconectar".)
+              Eliminar borra el número de Cauce y todo su historial (no se puede
+              deshacer). Además, borrar y volver a crear el mismo número una y
+              otra vez hace que WhatsApp lo marque y deje de entregar tus
+              mensajes. Si dejó de funcionar, reconéctalo — no lo elimines.
             </p>
             <div className="modal__acciones">
               <button className="boton" onClick={() => setAEliminar(null)}>
                 Cancelar
               </button>
+              {aEliminar.estado !== "disconnected" && (
+                <button
+                  className="boton boton--primario"
+                  onClick={() => {
+                    const inst = aEliminar;
+                    setAEliminar(null);
+                    setADesconectar(inst);
+                  }}
+                >
+                  Mejor desconectar
+                </button>
+              )}
               <button
-                className="boton boton--primario"
+                className="boton boton--peligro"
                 onClick={() => eliminar(aEliminar.id)}
               >
-                Eliminar definitivamente
+                Eliminar de todos modos
               </button>
             </div>
           </div>
@@ -288,6 +322,33 @@ export function Sesiones(props: {
           alAceptar={aceptarYConectar}
           alCancelar={() => setMostrarExpectativas(false)}
         />
+      )}
+
+      {mostrarChurn && (
+        <div className="modal-fondo" onClick={() => setMostrarChurn(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>¿Seguro que quieres crear otro número?</h2>
+            <p>
+              Creaste y borraste números varias veces en poco rato. Cada vez que
+              eliminas uno y creas otro, <strong>WhatsApp puede marcar tu
+              número</strong> y dejar de entregar tus mensajes (se quedan
+              "pendientes" y nunca llegan).
+            </p>
+            <p className="consola__sub">
+              Si tu número dejó de funcionar, casi siempre es mejor{" "}
+              <strong>reconectarlo</strong> (escanear el QR de nuevo) que
+              eliminarlo y crear otro.
+            </p>
+            <div className="modal__acciones">
+              <button className="boton" onClick={() => setMostrarChurn(false)}>
+                Mejor reconecto
+              </button>
+              <button className="boton boton--peligro" onClick={crearTrasChurn}>
+                Crear de todos modos
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );

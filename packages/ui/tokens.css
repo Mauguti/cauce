@@ -139,6 +139,15 @@ body {
   color: var(--blanco);
 }
 
+/* Acción destructiva/desaconsejada (eliminar, forzar): contorno, no relleno,
+   para que nunca compita con la primaria recomendada. */
+.boton--peligro {
+  background: var(--fondo);
+  color: var(--error-texto);
+  border: 1px solid var(--estado-desconectada);
+}
+.boton--peligro:hover { background: var(--gris-1); }
+
 /* ---- Campos ---- */
 .campo {
   font: inherit;
