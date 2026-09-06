@@ -139,6 +139,11 @@ causa:
   esperar otro evento. Solo aparece cuando reintentar tiene sentido.
 - Si "monday nunca llamó", el problema está en la **automatización de
   monday**, no en Cauce: revisa el paso 6.
+- Si un mensaje sale como **Sin confirmar** (o el tablero avisa de una
+  **sesión degradada**): WhatsApp aceptó el envío pero no confirmó la
+  entrega. Casi siempre es un número quemado por crear/borrar sesiones en
+  ráfaga. **No lo elimines: desconéctalo y reconéctalo.** El detalle, en
+  [`docs/mensajes-pendientes.md`](mensajes-pendientes.md).
 
 ---
 
