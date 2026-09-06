@@ -35,6 +35,11 @@ export interface Repositorio {
   deleteInstance(tenantId: TenantId, instanceId: InstanceId): Promise<void>;
   saveMessage(mensaje: Message): Promise<void>;
   getMessage(tenantId: TenantId, messageId: string): Promise<Message | null>;
+  /** Busca un saliente por el id que le asignó el transporte (key.id). */
+  getMessagePorExternalId(
+    tenantId: TenantId,
+    externalId: string,
+  ): Promise<Message | null>;
   listMessages(tenantId: TenantId, instanceId?: InstanceId): Promise<Message[]>;
   // Conector monday: configuración por tenant.
   getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null>;
@@ -167,6 +172,17 @@ export class RepositorioEnMemoria implements Repositorio {
     return (
       (this.#messages.get(tenantId) ?? []).find((m) => m.id === messageId) ??
       null
+    );
+  }
+
+  async getMessagePorExternalId(
+    tenantId: TenantId,
+    externalId: string,
+  ): Promise<Message | null> {
+    return (
+      (this.#messages.get(tenantId) ?? []).find(
+        (m) => m.direccion === "out" && m.externalId === externalId,
+      ) ?? null
     );
   }
 

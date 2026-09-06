@@ -119,6 +119,59 @@ export function registrarCreacionSesion(
 }
 
 /**
+ * Un `enviado` sin confirmación pasado este tiempo se considera
+ * `no_confirmado`. El SERVER_ACK de WhatsApp llega en segundos; tres
+ * minutos sin él es señal fuerte de que no salió.
+ */
+export const UMBRAL_SIN_CONFIRMAR_MS = 3 * 60_000;
+
+/**
+ * ¿Este saliente aceptado por el transporte lleva demasiado sin que
+ * Evolution confirme su entrega? Solo aplica a `enviado` sin confirmar.
+ */
+export function envioSinConfirmar(
+  m: Message,
+  ahora: Date = new Date(),
+  umbralMs: number = UMBRAL_SIN_CONFIRMAR_MS,
+): boolean {
+  if (m.direccion !== "out" || m.estado !== "enviado" || m.confirmadoEn) {
+    return false;
+  }
+  return ahora.getTime() - new Date(m.timestamp).getTime() >= umbralMs;
+}
+
+/** Cuántos salientes sin confirmar seguidos delatan una sesión degradada. */
+export const SESION_DEGRADADA_UMBRAL = 3;
+
+/**
+ * ¿La sesión parece degradada? Mira los salientes recientes de una
+ * instancia (los que ya se intentaron: enviado/no_confirmado/fallido) y
+ * es cierto si al menos UMBRAL de los más recientes quedaron sin
+ * confirmar. Es justo el patrón del bug PENDING: Cauce acepta el envío y
+ * WhatsApp nunca lo entrega.
+ */
+export function sesionPareceDegradada(
+  mensajes: Message[],
+  umbral: number = SESION_DEGRADADA_UMBRAL,
+): boolean {
+  const intentados = mensajes
+    .filter(
+      (m) =>
+        m.direccion === "out" &&
+        (m.estado === "enviado" ||
+          m.estado === "no_confirmado" ||
+          m.estado === "fallido"),
+    )
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+    .slice(0, Math.max(umbral, 5));
+  if (intentados.length < umbral) return false;
+  const sinConfirmar = intentados.filter(
+    (m) => m.estado === "no_confirmado",
+  ).length;
+  return sinConfirmar >= umbral;
+}
+
+/**
  * Ciclo de vida de una sesión de mensajería:
  * pending → qr → connected → disconnected (y de vuelta a qr al re-escanear).
  */
@@ -147,12 +200,17 @@ export type MessageDireccion = "in" | "out";
 /**
  * Ciclo de vida de un mensaje saliente:
  * encolado → enviando → enviado | fallido (tras agotar reintentos).
- * Los entrantes nacen y mueren en `recibido`.
+ * `enviado` significa que el transporte lo aceptó (201), NO que WhatsApp
+ * lo entregó. Si tras un rato Evolution no confirma la entrega
+ * (SERVER_ACK), pasa a `no_confirmado`: señal de que la sesión puede
+ * estar degradada (el bug PENDING de Evolution/Baileys). Los entrantes
+ * nacen y mueren en `recibido`.
  */
 export type MessageEstado =
   | "encolado"
   | "enviando"
   | "enviado"
+  | "no_confirmado"
   | "fallido"
   | "recibido";
 
@@ -175,6 +233,12 @@ export interface Message {
   error?: string | null;
   /** Código de la causa, para decidir en la UI si el reintento aplica. */
   errorCodigo?: FalloEnvio | null;
+  /**
+   * ISO 8601 de cuándo Evolution confirmó la entrega (SERVER_ACK o más).
+   * Null/ausente = aún sin confirmar. Distingue "aceptado por el
+   * transporte" de "entregado de verdad".
+   */
+  confirmadoEn?: string | null;
   /** ISO 8601 */
   timestamp: string;
 }

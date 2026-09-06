@@ -120,6 +120,22 @@ export class RepositorioFirestore implements Repositorio {
     return doc.exists ? (doc.data() as Message) : null;
   }
 
+  async getMessagePorExternalId(
+    tenantId: TenantId,
+    externalId: string,
+  ): Promise<Message | null> {
+    // Índice de campo único (automático) por externalId; el filtro de
+    // dirección se aplica en memoria para no exigir un índice compuesto.
+    const snap = await this.#db
+      .collection(rutas.messages(tenantId))
+      .where("externalId", "==", externalId)
+      .get();
+    const m = snap.docs
+      .map((d) => d.data() as Message)
+      .find((x) => x.direccion === "out");
+    return m ?? null;
+  }
+
   async listMessages(
     tenantId: TenantId,
     instanceId?: InstanceId,

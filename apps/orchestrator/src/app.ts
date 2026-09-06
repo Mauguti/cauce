@@ -11,7 +11,7 @@ import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 import type { VerificadorToken } from "./firebase.ts";
 import type { Provisioning } from "./provisioning.ts";
 import { churnReciente, limitesTenant, pruebaVigente } from "@cauce/core";
-import { normalizarEntrante } from "./webhook.ts";
+import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
 
 declare global {
   namespace Express {
@@ -151,6 +151,33 @@ export function crearApp(
       res.status(404).json({ error: "instancia desconocida" });
       return;
     }
+    // Confirmación de entrega de un saliente (MESSAGES_UPDATE): registra la
+    // transición real. Sin SERVER_ACK, el barrido lo pasará a no_confirmado.
+    const actualizacion = normalizarActualizacion(req.body);
+    if (actualizacion) {
+      const m = await repo.getMessagePorExternalId(
+        tenantId!,
+        actualizacion.externalId,
+      );
+      if (m) {
+        await repo.saveMessage(
+          actualizacion.ack === "confirmado"
+            ? // Entregado: confirma y recupera si estaba no_confirmado.
+              {
+                ...m,
+                estado: "enviado",
+                confirmadoEn: new Date().toISOString(),
+                error: null,
+                errorCodigo: null,
+              }
+            : // WhatsApp reportó ERROR: no se entregó.
+              { ...m, estado: "no_confirmado", confirmadoEn: null },
+        );
+      }
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     // Responder rápido: normalizar y guardar es barato. El resto
     // (conversación, disparadores, write-back al CRM) lo hace el motor de
     // entrada sin bloquear el 200; un fallo suyo no rompe la recepción.

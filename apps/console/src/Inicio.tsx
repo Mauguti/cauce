@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Instance, Message, MessageEstado } from "@cauce/core";
+import {
+  sesionPareceDegradada,
+  type Instance,
+  type Message,
+  type MessageEstado,
+} from "@cauce/core";
 import { api, type Yo } from "./api.ts";
 import { PrimerosPasos } from "./PrimerosPasos.tsx";
 import type { Seccion } from "./App.tsx";
@@ -8,11 +13,12 @@ const ETIQUETA: Record<MessageEstado, string> = {
   encolado: "En cola",
   enviando: "Enviando",
   enviado: "Enviado",
+  no_confirmado: "Sin confirmar",
   fallido: "Fallido",
   recibido: "Recibido",
 };
 
-type Filtro = "todos" | "enviado" | "fallido" | "cola" | "recibido";
+type Filtro = "todos" | "enviado" | "sin_confirmar" | "fallido" | "cola" | "recibido";
 
 export function Inicio(props: {
   yo: Yo;
@@ -37,20 +43,34 @@ export function Inicio(props: {
   }, [props.yo.tenantId]);
 
   const conteos = useMemo(() => {
-    let enviado = 0, fallido = 0, cola = 0, recibido = 0;
+    let enviado = 0, sinConfirmar = 0, fallido = 0, cola = 0, recibido = 0;
     for (const m of mensajes) {
       if (m.estado === "enviado") enviado++;
+      else if (m.estado === "no_confirmado") sinConfirmar++;
       else if (m.estado === "fallido") fallido++;
       else if (m.estado === "encolado" || m.estado === "enviando") cola++;
       else if (m.estado === "recibido") recibido++;
     }
-    return { enviado, fallido, cola, recibido };
+    return { enviado, sinConfirmar, fallido, cola, recibido };
   }, [mensajes]);
+
+  // Instancias cuya sesión parece degradada (varios salientes sin confirmar
+  // seguidos): el patrón del bug PENDING. Se avisa con su número.
+  const degradadas = useMemo(
+    () =>
+      props.instancias.filter((inst) =>
+        sesionPareceDegradada(
+          mensajes.filter((m) => m.instanceId === inst.id),
+        ),
+      ),
+    [mensajes, props.instancias],
+  );
 
   const filtrados = mensajes.filter((m) => {
     if (filtro === "todos") return true;
     if (filtro === "cola") return m.estado === "encolado" || m.estado === "enviando";
     if (filtro === "enviado") return m.estado === "enviado";
+    if (filtro === "sin_confirmar") return m.estado === "no_confirmado";
     if (filtro === "fallido") return m.estado === "fallido";
     if (filtro === "recibido") return m.estado === "recibido";
     return true;
@@ -86,6 +106,21 @@ export function Inicio(props: {
         </p>
       )}
 
+      {degradadas.length > 0 && (
+        <div className="aviso-degradada" role="alert">
+          <strong>
+            Tu número{degradadas.length > 1 ? "s" : ""}{" "}
+            {degradadas.map((i) => i.numero ?? "conectado").join(", ")} puede
+            estar degradado.
+          </strong>{" "}
+          Varios mensajes salieron pero WhatsApp no confirmó que llegaran (se
+          quedan "sin confirmar"). Suele pasar cuando un número se creó y borró
+          muchas veces. Qué hacer: en Sesiones, <em>desconecta y reconéctalo</em>{" "}
+          escaneando el QR de nuevo. Si sigue igual, el número necesita
+          descansar unas horas antes de volver a usarlo.
+        </div>
+      )}
+
       <header className="seccion__cabecera">
         <h1>Hoy</h1>
         <p className="consola__sub">Qué pasó y qué falló.</p>
@@ -93,19 +128,26 @@ export function Inicio(props: {
 
       <div className="contadores">
         <Contador n={conteos.enviado} etq="Enviados" onClick={() => setFiltro("enviado")} activo={filtro === "enviado"} />
+        <Contador n={conteos.sinConfirmar} etq="Sin confirmar" onClick={() => setFiltro("sin_confirmar")} activo={filtro === "sin_confirmar"} destacado={conteos.sinConfirmar > 0} />
         <Contador n={conteos.fallido} etq="Con error" onClick={() => setFiltro("fallido")} activo={filtro === "fallido"} destacado={conteos.fallido > 0} />
         <Contador n={conteos.cola} etq="En cola" onClick={() => setFiltro("cola")} activo={filtro === "cola"} />
         <Contador n={conteos.recibido} etq="Recibidos" onClick={() => setFiltro("recibido")} activo={filtro === "recibido"} />
       </div>
 
       <div className="filtros">
-        {(["todos", "enviado", "fallido", "cola", "recibido"] as Filtro[]).map((f) => (
+        {(["todos", "enviado", "sin_confirmar", "fallido", "cola", "recibido"] as Filtro[]).map((f) => (
           <button
             key={f}
             className={`chip${filtro === f ? " chip--activo" : ""}`}
             onClick={() => setFiltro(f)}
           >
-            {f === "todos" ? "Todos" : f === "cola" ? "En cola" : ETIQUETA[f === "enviado" ? "enviado" : f === "fallido" ? "fallido" : "recibido"]}
+            {f === "todos"
+              ? "Todos"
+              : f === "cola"
+                ? "En cola"
+                : f === "sin_confirmar"
+                  ? "Sin confirmar"
+                  : ETIQUETA[f === "enviado" ? "enviado" : f === "fallido" ? "fallido" : "recibido"]}
           </button>
         ))}
       </div>

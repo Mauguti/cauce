@@ -5,6 +5,7 @@ import { hashApiKey } from "./auth.ts";
 import { ColaEnvios } from "./cola.ts";
 import { DockerManager } from "./docker/manager.ts";
 import { GestorSesiones } from "./sesiones.ts";
+import { barrerSinConfirmar } from "./confirmaciones.ts";
 import { RepositorioEnMemoria, type Repositorio } from "./store.ts";
 import { RepositorioFirestore } from "./store-firestore.ts";
 import { ConectorMonday } from "./monday/conector.ts";
@@ -109,6 +110,19 @@ const barrer = async () => {
 };
 void barrer();
 setInterval(barrer, 5 * 60_000);
+
+// Barrido de entregas sin confirmar: los `enviado` que Evolution nunca
+// confirmó pasan a `no_confirmado` (detecta el bug PENDING). Cada minuto.
+const barrerConfirmaciones = async () => {
+  try {
+    const n = await barrerSinConfirmar(repo);
+    if (n > 0) console.log(`envíos sin confirmar marcados: ${n}`);
+  } catch (err: any) {
+    console.warn(`barrido de confirmaciones falló: ${err?.message}`);
+  }
+};
+void barrerConfirmaciones();
+setInterval(barrerConfirmaciones, 60_000);
 
 crearApp(repo, gestor, {
   corsOrigenes,

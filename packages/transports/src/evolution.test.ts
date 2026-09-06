@@ -95,7 +95,7 @@ describe("EvolutionTransport", () => {
       webhook: {
         enabled: true,
         url: "http://host.docker.internal:3001/webhooks/demo/inst1?token=t1",
-        events: ["MESSAGES_UPSERT"],
+        events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE"],
         byEvents: false,
         base64: false,
       },

@@ -6,6 +6,7 @@ const GLIFO_ESTADO: Record<MessageEstado, string> = {
   encolado: "◌",
   enviando: "◌",
   enviado: "✓",
+  no_confirmado: "!",
   fallido: "✗",
   recibido: "",
 };

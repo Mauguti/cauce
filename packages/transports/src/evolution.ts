@@ -136,7 +136,9 @@ export class EvolutionTransport implements MessageTransport {
       webhook: {
         enabled: true,
         url: this.#webhookUrl,
-        events: ["MESSAGES_UPSERT"],
+        // UPSERT: entrantes. UPDATE: la entrega real de los salientes
+        // (SERVER_ACK…), con la que Cauce detecta envíos que no salieron.
+        events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE"],
         byEvents: false,
         base64: false,
       },

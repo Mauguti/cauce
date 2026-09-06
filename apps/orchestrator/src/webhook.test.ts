@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
+import type { Message } from "@cauce/core";
 import { crearApp } from "./app.ts";
 import { RepositorioEnMemoria } from "./store.ts";
-import { normalizarEntrante } from "./webhook.ts";
+import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
 import type { GestorSesiones } from "./sesiones.ts";
 
 const PAYLOAD_UPSERT = {
@@ -56,6 +57,26 @@ describe("normalizarEntrante", () => {
     delete extendido.data.message.conversation;
     extendido.data.message.extendedTextMessage = { text: "con formato" };
     expect(normalizarEntrante("a", "i1", extendido)?.cuerpo).toBe("con formato");
+  });
+});
+
+describe("normalizarActualizacion", () => {
+  const upd = (data: unknown) => ({ event: "messages.update", data });
+
+  it("confirma con SERVER_ACK y con estados posteriores (string o número)", () => {
+    expect(normalizarActualizacion(upd({ keyId: "X", status: "SERVER_ACK" }))).toEqual({ externalId: "X", ack: "confirmado" });
+    expect(normalizarActualizacion(upd({ keyId: "X", status: "READ" }))).toEqual({ externalId: "X", ack: "confirmado" });
+    expect(normalizarActualizacion(upd({ keyId: "X", status: 3 }))).toEqual({ externalId: "X", ack: "confirmado" });
+    // Distintas formas del id.
+    expect(normalizarActualizacion(upd({ key: { id: "Y" }, status: "DELIVERY_ACK" }))).toEqual({ externalId: "Y", ack: "confirmado" });
+  });
+
+  it("marca fallido en ERROR y ignora PENDING y payloads no útiles", () => {
+    expect(normalizarActualizacion(upd({ keyId: "X", status: "ERROR" }))).toEqual({ externalId: "X", ack: "fallido" });
+    expect(normalizarActualizacion(upd({ keyId: "X", status: 0 }))).toEqual({ externalId: "X", ack: "fallido" });
+    expect(normalizarActualizacion(upd({ keyId: "X", status: "PENDING" }))).toBeNull();
+    expect(normalizarActualizacion(upd({ status: "SERVER_ACK" }))).toBeNull(); // sin id
+    expect(normalizarActualizacion({ event: "messages.upsert", data: {} })).toBeNull();
   });
 });
 
@@ -148,6 +169,50 @@ describe("POST /webhooks/:tenantId/:instanceId", () => {
         body: JSON.stringify(PAYLOAD_UPSERT),
       });
       expect(res.status).toBe(404);
+    } finally {
+      cerrar();
+    }
+  });
+
+  it("messages.update confirma un saliente (SERVER_ACK) por su externalId", async () => {
+    const { repo, base, cerrar } = levantar();
+    const saliente: Message = {
+      id: "m1", tenantId: "a", instanceId: "i1", direccion: "out",
+      telefono: "+5215587654321", cuerpo: "recordatorio", estado: "enviado",
+      externalId: "3EB0ABCDEF", timestamp: "2026-09-06T00:00:00Z",
+    };
+    await repo.saveMessage(saliente);
+    try {
+      const res = await fetch(`${base}/webhooks/a/i1?token=secreto-i1`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "messages.update", data: { keyId: "3EB0ABCDEF", status: "SERVER_ACK" } }),
+      });
+      expect(res.status).toBe(200);
+      const m = await repo.getMessage("a", "m1");
+      expect(m!.estado).toBe("enviado");
+      expect(m!.confirmadoEn).toBeTruthy();
+    } finally {
+      cerrar();
+    }
+  });
+
+  it("messages.update con ERROR deja el saliente no_confirmado", async () => {
+    const { repo, base, cerrar } = levantar();
+    await repo.saveMessage({
+      id: "m2", tenantId: "a", instanceId: "i1", direccion: "out",
+      telefono: "+5215587654321", cuerpo: "x", estado: "enviado",
+      externalId: "KEY-ERR", timestamp: "2026-09-06T00:00:00Z",
+    });
+    try {
+      const res = await fetch(`${base}/webhooks/a/i1?token=secreto-i1`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "messages.update", data: { keyId: "KEY-ERR", status: "ERROR" } }),
+      });
+      expect(res.status).toBe(200);
+      const m = await repo.getMessage("a", "m2");
+      expect(m!.estado).toBe("no_confirmado");
     } finally {
       cerrar();
     }

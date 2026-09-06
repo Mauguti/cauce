@@ -529,3 +529,18 @@
   border: var(--borde); border-radius: var(--radio); padding: var(--esp-3);
   align-items: flex-start; gap: var(--esp-2); line-height: var(--interlineado-cuerpo);
 }
+
+/* ============ Bloque 12: endurecimiento operativo ============ */
+/* Saliente aceptado pero sin confirmación de entrega: anillo de aviso. */
+.estado-envio--no_confirmado { font-weight: var(--peso-semibold); }
+.estado-envio--no_confirmado::before {
+  background: none; width: 10px; height: 10px;
+  border: 2px solid var(--estado-qr); border-radius: 50%;
+}
+/* Aviso de sesión degradada (varios envíos sin confirmar seguidos). */
+.aviso-degradada {
+  border: var(--borde-fuerte); border-left: 4px solid var(--estado-desconectada);
+  border-radius: var(--radio); padding: var(--esp-4);
+  margin-bottom: var(--esp-6); font-size: var(--texto-s);
+  line-height: var(--interlineado-cuerpo);
+}
