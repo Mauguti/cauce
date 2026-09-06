@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Message } from "@cauce/core";
-import type { MessageTransport } from "@cauce/transports";
+import { createTransport, type MessageTransport } from "@cauce/transports";
 import { ColaEnvios } from "./cola.ts";
 import { RepositorioEnMemoria } from "./store.ts";
 
@@ -161,6 +161,60 @@ describe("ColaEnvios", () => {
     cola.baja("i1");
     const [m] = await repo.listMessages("a", "i1");
     expect(m!.estado).toBe("enviado");
+  });
+
+  it("un 404 de Evolution deja el mensaje fallido, jamás enviado", async () => {
+    // Regresión del bug de producción: sendText devolvía 404 (nombre de
+    // instancia equivocado) pero el mensaje se marcaba enviado. Con un
+    // EvolutionTransport real sobre un fetch que responde 404, el mensaje
+    // debe terminar fallido y con el cuerpo del error a la vista.
+    const dir = mkdtempSync(join(tmpdir(), "cauce-cola-"));
+    const repo = repoNuevo();
+    const cola = new ColaEnvios({
+      dir,
+      repo,
+      intervaloMs: 10,
+      jitterMaxMs: 5,
+      intentosMax: 1,
+    });
+    const fetchMock = async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/instance/connectionState/")) {
+        return { status: 200, json: async () => ({ instance: { state: "open" } }) } as Response;
+      }
+      if (u.includes("/message/sendText/")) {
+        return {
+          status: 404,
+          json: async () => ({ message: ['The "1989a8d9" instance does not exist'] }),
+        } as Response;
+      }
+      throw new Error(`llamada inesperada: ${u}`);
+    };
+    const transport = createTransport({
+      tipo: "evolution",
+      opciones: {
+        baseUrl: "http://127.0.0.1:9999",
+        apiKey: "k",
+        instanceName: "cauce-b6eba985-1989a8d9",
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      },
+    });
+    cola.registrar("i1", transport);
+    await cola.encolar(mensaje("m1"));
+
+    await esperarHasta(async () => {
+      const [m] = await repo.listMessages("a", "i1");
+      return m?.estado === "fallido";
+    }, 3000);
+    cola.baja("i1");
+
+    const [m] = await repo.listMessages("a", "i1");
+    expect(m!.estado).toBe("fallido");
+    expect(m!.externalId).toBeNull(); // nunca hubo recibo
+    // El 404 del transporte se traduce a una causa clara en el registro
+    // (el cuerpo crudo viaja en el Error lanzado; aquí queda la causa).
+    expect(m!.errorCodigo).toBe("transporte_rechazo");
+    expect(m!.error).toBeTruthy();
   });
 
   it("los pendientes sobreviven a un reinicio de la cola", async () => {

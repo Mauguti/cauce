@@ -72,6 +72,32 @@ export class GestorSesiones {
   }
 
   /**
+   * ÚNICO lugar que decide con qué nombre vive la instancia en Evolution
+   * y a qué webhook apunta. Creación y envío (y todo el ciclo de vida)
+   * comparten este transporte, así que no pueden divergir: el bug de
+   * "creada como cauce-{t}-{i} pero enviando a {i}" no puede reaparecer
+   * mientras el transporte se construya solo por aquí.
+   */
+  #construirTransporte(opciones: {
+    tenantId: TenantId;
+    instanceId: InstanceId;
+    baseUrl: string;
+    apiKey: string;
+    webhookToken: string;
+  }): MessageTransport {
+    const { tenantId, instanceId, baseUrl, apiKey, webhookToken } = opciones;
+    return createTransport({
+      tipo: "evolution",
+      opciones: {
+        baseUrl,
+        apiKey,
+        instanceName: nombreContenedor(tenantId, instanceId),
+        webhookUrl: `${this.#urlPublica}/webhooks/${tenantId}/${instanceId}?token=${webhookToken}`,
+      },
+    });
+  }
+
+  /**
    * Carril inmediato: envía SIN pasar por la cola ni su rate limiting.
    * Responder dentro de una conversación activa es seguro y debe ser
    * instantáneo; el espaciado de 45-65s solo protege envíos proactivos.
@@ -135,17 +161,12 @@ export class GestorSesiones {
         );
         continue;
       }
-      const transport = createTransport({
-        tipo: "evolution",
-        opciones: {
-          baseUrl: enDocker.baseUrl,
-          apiKey: enDocker.apiKey,
-          instanceName: nombreContenedor(
-            enDocker.tenantId,
-            enDocker.instanceId,
-          ),
-          webhookUrl: `${this.#urlPublica}/webhooks/${enDocker.tenantId}/${enDocker.instanceId}?token=${enDocker.webhookToken}`,
-        },
+      const transport = this.#construirTransporte({
+        tenantId: enDocker.tenantId,
+        instanceId: enDocker.instanceId,
+        baseUrl: enDocker.baseUrl,
+        apiKey: enDocker.apiKey,
+        webhookToken: enDocker.webhookToken,
       });
       const estado = await transport.status();
       await this.#repo.saveInstance({
@@ -178,21 +199,18 @@ export class GestorSesiones {
     const apiKey = randomBytes(24).toString("hex");
     const webhookToken = randomBytes(24).toString("hex");
 
-    const webhookUrl = `${this.#urlPublica}/webhooks/${tenantId}/${instanceId}?token=${webhookToken}`;
     const creada = await this.#docker.crear(tenantId, instanceId, {
       apiKey,
       webhookToken,
     });
     await this.#docker.esperarListo(creada.baseUrl);
 
-    const transport = createTransport({
-      tipo: "evolution",
-      opciones: {
-        baseUrl: creada.baseUrl,
-        apiKey,
-        instanceName: nombreContenedor(tenantId, instanceId),
-        webhookUrl,
-      },
+    const transport = this.#construirTransporte({
+      tenantId,
+      instanceId,
+      baseUrl: creada.baseUrl,
+      apiKey,
+      webhookToken,
     });
     await transport.connect();
 

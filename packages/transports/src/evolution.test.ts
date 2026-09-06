@@ -176,6 +176,81 @@ describe("EvolutionTransport", () => {
     expect(recibo.timestamp).toBe(new Date(1757100000 * 1000).toISOString());
   });
 
+  it("crea la instancia y le envía con EL MISMO nombre (regresión: 404 por nombre)", async () => {
+    // El bug de producción: la instancia quedaba registrada como
+    // cauce-{tenant}-{instance} pero sendText usaba solo el id corto,
+    // dando 404. Este test fija que el nombre de creación y el de envío
+    // sean idénticos y sean el configurado.
+    let nombreCreacion: string | undefined;
+    let nombreEnvio: string | undefined;
+    const fetchMock = vi.fn(
+      async (url: string | URL | Request, init?: RequestInit) => {
+        const u = String(url);
+        if (u.endsWith("/instance/create")) {
+          nombreCreacion = JSON.parse(String(init?.body)).instanceName;
+          return respuesta(201, { instance: { status: "connecting" } });
+        }
+        if (u.includes("/instance/connectionState/")) {
+          return respuesta(200, { instance: { state: "open" } });
+        }
+        if (u.includes("/message/sendText/")) {
+          nombreEnvio = u.split("/message/sendText/")[1];
+          return respuesta(201, { key: { id: "X" }, messageTimestamp: 1 });
+        }
+        throw new Error(`llamada inesperada: ${u}`);
+      },
+    );
+    const t = createTransport({
+      tipo: "evolution",
+      opciones: {
+        baseUrl: "http://127.0.0.1:9999",
+        apiKey: "clave-secreta",
+        instanceName: "cauce-b6eba985-1989a8d9",
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      },
+    });
+    await t.connect();
+    await t.send({ telefono: "+525512345678", cuerpo: "hola" });
+    expect(nombreCreacion).toBe("cauce-b6eba985-1989a8d9");
+    expect(nombreEnvio).toBe(nombreCreacion);
+  });
+
+  it("send lanza (jamás recibo) si Evolution responde 404", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/instance/connectionState/")) {
+        return respuesta(200, { instance: { state: "open" } });
+      }
+      if (u.includes("/message/sendText/")) {
+        return respuesta(404, {
+          message: ['The "1989a8d9" instance does not exist'],
+        });
+      }
+      throw new Error(`llamada inesperada: ${u}`);
+    });
+    const t = transporteConFetch(fetchMock as unknown as typeof fetch);
+    await expect(
+      t.send({ telefono: "+525512345678", cuerpo: "hola" }),
+    ).rejects.toThrow(/404.*does not exist/s);
+  });
+
+  it("send tampoco cuenta como enviado una respuesta 3xx (solo 2xx es éxito)", async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes("/instance/connectionState/")) {
+        return respuesta(200, { instance: { state: "open" } });
+      }
+      if (u.includes("/message/sendText/")) {
+        return respuesta(302, {});
+      }
+      throw new Error(`llamada inesperada: ${u}`);
+    });
+    const t = transporteConFetch(fetchMock as unknown as typeof fetch);
+    await expect(
+      t.send({ telefono: "+525512345678", cuerpo: "hola" }),
+    ).rejects.toThrow(/rechazó sendText \(302\)/);
+  });
+
   it("send rechaza cuando la sesión no está conectada", async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const u = String(url);

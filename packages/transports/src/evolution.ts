@@ -182,7 +182,11 @@ export class EvolutionTransport implements MessageTransport {
         text: mensaje.cuerpo,
       },
     );
-    if (res.status >= 400) {
+    // Un envío SOLO cuenta como enviado con un 2xx. Cualquier otra cosa
+    // (404 por nombre de instancia equivocado, 3xx, 5xx…) es fallo y se
+    // propaga con el cuerpo del error visible: que la petición no lanzara
+    // excepción de red no significa que WhatsApp lo haya aceptado.
+    if (res.status < 200 || res.status >= 300) {
       throw new Error(
         `Evolution rechazó sendText (${res.status}): ${JSON.stringify(res.json)}`,
       );
