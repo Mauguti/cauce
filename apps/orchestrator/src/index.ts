@@ -46,7 +46,8 @@ const gestor = new GestorSesiones({
 });
 
 const corsOrigenes = (
-  process.env.CAUCE_CORS_ORIGENES ?? "http://localhost:5173"
+  process.env.CAUCE_CORS_ORIGENES ??
+  "http://localhost:5173,https://cauce-consola.web.app"
 ).split(",");
 
 if (await docker.disponible()) {

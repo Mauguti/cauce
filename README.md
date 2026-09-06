@@ -19,6 +19,10 @@ y la respuesta vuelve escrita al registro que la originó.
 | `packages/ui` | Tokens del sistema visual y componentes base. |
 | `docs/adr` | Decisiones de arquitectura. |
 
+**Desplegado:** consola en https://cauce-consola.web.app (Firebase
+Hosting). El orquestador corre en EC2 detrás de Caddy —
+procedimiento en [docs/deploy.md](docs/deploy.md).
+
 Las decisiones que gobiernan todo el código están en
 [docs/adr/0001](docs/adr/0001-transporte-intercambiable.md)
 (transporte intercambiable),
