@@ -9,7 +9,7 @@ import {
   type TenantId,
 } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
-import type { ConfigMonday } from "./monday/conector.ts";
+import type { ConectorMondayDoc } from "./monday/conector.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 
 /**
@@ -99,16 +99,16 @@ export class RepositorioFirestore implements Repositorio {
     return snap.docs.map((d) => d.data() as Message);
   }
 
-  async getConectorMonday(tenantId: TenantId): Promise<ConfigMonday | null> {
+  async getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null> {
     const doc = await this.#db
       .doc(`${rutas.tenant(tenantId)}/conectores/monday`)
       .get();
-    return doc.exists ? (doc.data() as ConfigMonday) : null;
+    return doc.exists ? (doc.data() as ConectorMondayDoc) : null;
   }
 
   async saveConectorMonday(
     tenantId: TenantId,
-    config: ConfigMonday,
+    config: ConectorMondayDoc,
   ): Promise<void> {
     await this.#db
       .doc(`${rutas.tenant(tenantId)}/conectores/monday`)

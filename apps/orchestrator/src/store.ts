@@ -6,7 +6,7 @@ import type {
   Tenant,
   TenantId,
 } from "@cauce/core";
-import type { ConfigMonday } from "./monday/conector.ts";
+import type { ConectorMondayDoc } from "./monday/conector.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 
 /**
@@ -28,8 +28,8 @@ export interface Repositorio {
   saveMessage(mensaje: Message): Promise<void>;
   listMessages(tenantId: TenantId, instanceId?: InstanceId): Promise<Message[]>;
   // Conector monday: configuración por tenant.
-  getConectorMonday(tenantId: TenantId): Promise<ConfigMonday | null>;
-  saveConectorMonday(tenantId: TenantId, config: ConfigMonday): Promise<void>;
+  getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null>;
+  saveConectorMonday(tenantId: TenantId, config: ConectorMondayDoc): Promise<void>;
 
   // Conversaciones (identidad estable por instancia+teléfono).
   getConversacion(
@@ -136,17 +136,17 @@ export class RepositorioEnMemoria implements Repositorio {
       : [...todos];
   }
 
-  #conectorMonday = new Map<TenantId, ConfigMonday>();
+  #conectorMonday = new Map<TenantId, ConectorMondayDoc>();
   #conversaciones = new Map<string, Conversacion>();
   #disparadores = new Map<TenantId, DisparadorEntrada[]>();
 
-  async getConectorMonday(tenantId: TenantId): Promise<ConfigMonday | null> {
+  async getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null> {
     return this.#conectorMonday.get(tenantId) ?? null;
   }
 
   async saveConectorMonday(
     tenantId: TenantId,
-    config: ConfigMonday,
+    config: ConectorMondayDoc,
   ): Promise<void> {
     this.#conectorMonday.set(tenantId, config);
   }

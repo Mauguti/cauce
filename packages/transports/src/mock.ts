@@ -80,4 +80,8 @@ export class MockTransport implements MessageTransport {
   async status(): Promise<TransportStatus> {
     return this.#estado;
   }
+
+  async numero(): Promise<string | null> {
+    return this.#estado === "connected" ? "+520000000000" : null;
+  }
 }

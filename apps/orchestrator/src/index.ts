@@ -9,6 +9,7 @@ import { RepositorioEnMemoria, type Repositorio } from "./store.ts";
 import { RepositorioFirestore } from "./store-firestore.ts";
 import { ConectorMonday } from "./monday/conector.ts";
 import { MotorEntrada } from "./entrada/motor.ts";
+import { Cripto } from "./cripto.ts";
 
 const puerto = Number(process.env.PORT ?? 3001);
 
@@ -78,7 +79,7 @@ if (await docker.disponible()) {
   console.warn("Docker no disponible; se arranca sin sesiones");
 }
 
-const monday = new ConectorMonday({ repo, cola });
+const monday = new ConectorMonday({ repo, cola, cripto: new Cripto() });
 const motorEntrada = new MotorEntrada({
   repo,
   monday,

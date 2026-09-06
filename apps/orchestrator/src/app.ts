@@ -163,24 +163,76 @@ export function crearApp(
     res.json(await repo.listInstances(req.tenantId!));
   });
 
-  // Alta/edición de la config del conector monday del tenant.
+  // Vista de la config de monday: SIN secretos, solo la pista del token.
+  tenantRouter.get("/conectores/monday", async (req, res) => {
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    res.json(await opciones.monday.verConfig(req.tenantId!));
+  });
+
+  // Prueba de conexión: con el token del usuario, lista sus boards reales.
+  tenantRouter.post("/conectores/monday/probar", async (req, res) => {
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    const { apiToken } = req.body ?? {};
+    if (typeof apiToken !== "string" || !apiToken) {
+      res.status(400).json({ error: "se requiere apiToken" });
+      return;
+    }
+    try {
+      const boards = await opciones.monday.listarBoards(apiToken);
+      res.json({ ok: true, boards });
+    } catch (err: any) {
+      res.status(502).json({ ok: false, error: err?.message ?? "monday rechazó el token" });
+    }
+  });
+
+  // Columnas de un board (para mapear el teléfono e insertar variables).
+  tenantRouter.post("/conectores/monday/columnas", async (req, res) => {
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    const { apiToken, boardId } = req.body ?? {};
+    if (typeof apiToken !== "string" || typeof boardId !== "string") {
+      res.status(400).json({ error: "se requieren apiToken y boardId" });
+      return;
+    }
+    try {
+      res.json(await opciones.monday.listarColumnas(apiToken, boardId));
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "monday rechazó la consulta" });
+    }
+  });
+
+  // Alta/edición del conector: cifra credenciales en reposo.
   tenantRouter.put("/conectores/monday", async (req, res) => {
-    const { instanceId, apiToken, signingSecret, columnaTelefono, plantilla } =
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    const { instanceId, boardId, apiToken, signingSecret, columnaTelefono, plantilla } =
       req.body ?? {};
     if (
       typeof instanceId !== "string" ||
+      typeof boardId !== "string" ||
       typeof apiToken !== "string" ||
       typeof columnaTelefono !== "string" ||
       typeof plantilla !== "string"
     ) {
       res.status(400).json({
         error:
-          "se requieren instanceId, apiToken, columnaTelefono y plantilla",
+          "se requieren instanceId, boardId, apiToken, columnaTelefono y plantilla",
       });
       return;
     }
-    await repo.saveConectorMonday(req.tenantId!, {
+    await opciones.monday.guardarAlta(req.tenantId!, {
       instanceId,
+      boardId,
       apiToken,
       signingSecret: typeof signingSecret === "string" ? signingSecret : "",
       columnaTelefono,
@@ -268,6 +320,34 @@ export function crearApp(
       codigo: qr?.codigo ?? null,
       imagenBase64: qr?.imagenBase64 ?? null,
     });
+  });
+
+  // Desconectar: logout, conserva contenedor y registro para reconectar.
+  tenantRouter.post("/instances/:instanceId/disconnect", async (req, res) => {
+    if (!gestor) {
+      res.status(501).json({ error: "orquestador sin gestor de sesiones" });
+      return;
+    }
+    const instancia = await repo.getInstance(req.tenantId!, String(req.params.instanceId));
+    if (!instancia) {
+      res.status(404).json({ error: "instancia no encontrada" });
+      return;
+    }
+    res.json(await gestor.desconectar(req.tenantId!, String(req.params.instanceId)));
+  });
+
+  // Reconectar: vuelve a emitir QR para una sesión desconectada.
+  tenantRouter.post("/instances/:instanceId/connect", async (req, res) => {
+    if (!gestor) {
+      res.status(501).json({ error: "orquestador sin gestor de sesiones" });
+      return;
+    }
+    const instancia = await repo.getInstance(req.tenantId!, String(req.params.instanceId));
+    if (!instancia) {
+      res.status(404).json({ error: "instancia no encontrada" });
+      return;
+    }
+    res.json(await gestor.reconectar(req.tenantId!, String(req.params.instanceId)));
   });
 
   // Encola y responde 202 de inmediato; el envío real lo hace el worker

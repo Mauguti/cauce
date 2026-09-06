@@ -18,6 +18,17 @@ export interface ItemMonday {
   columnas: Record<string, ColumnaItem>;
 }
 
+export interface BoardMonday {
+  id: string;
+  name: string;
+}
+
+export interface ColumnaBoard {
+  id: string;
+  title: string;
+  type: string;
+}
+
 export class ClienteMonday {
   readonly #token: string;
   readonly #fetch: typeof fetch;
@@ -66,6 +77,30 @@ export class ClienteMonday {
       columnas[c.id] = { id: c.id, text: c.text ?? null, value: c.value ?? null };
     }
     return { id: String(item.id), name: item.name, columnas };
+  }
+
+  /** Lista los boards de la cuenta (para elegir de una lista, no IDs). */
+  async listarBoards(): Promise<BoardMonday[]> {
+    const data = await this.#graphql(
+      `query { boards (limit: 100, state: active) { id name } }`,
+      {},
+    );
+    return (data?.boards ?? []).map((b: any) => ({
+      id: String(b.id),
+      name: b.name,
+    }));
+  }
+
+  /** Lista las columnas de un board (para mapear teléfono y variables). */
+  async listarColumnas(boardId: string): Promise<ColumnaBoard[]> {
+    const data = await this.#graphql(
+      `query ($ids: [ID!]) {
+         boards (ids: $ids) { columns { id title type } }
+       }`,
+      { ids: [boardId] },
+    );
+    const cols = data?.boards?.[0]?.columns ?? [];
+    return cols.map((c: any) => ({ id: c.id, title: c.title, type: c.type }));
   }
 
   /** Publica un update (la nota/conversación del item). */

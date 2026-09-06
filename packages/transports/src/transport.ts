@@ -44,4 +44,9 @@ export interface MessageTransport {
   /** Cierra la sesión. Idempotente. */
   disconnect(): Promise<void>;
   status(): Promise<TransportStatus>;
+  /**
+   * Número (E.164) de la cuenta conectada, o null si no se conoce (sesión
+   * no conectada, o el transporte no lo expone).
+   */
+  numero(): Promise<string | null>;
 }

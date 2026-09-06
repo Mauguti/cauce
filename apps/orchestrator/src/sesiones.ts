@@ -213,13 +213,58 @@ export class GestorSesiones {
     const sesion = this.#sesiones.get(instanceId);
     if (!instancia || !sesion) return instancia;
     const estado = await sesion.transport.status();
+    // Al conectar, captura el número real una sola vez (no se conoce
+    // hasta que la sesión conecta); así la UI muestra el número, no el id.
+    let numero = instancia.numero;
+    if (estado === "connected" && !numero) {
+      numero = (await sesion.transport.numero()) ?? null;
+    }
     const actualizada: Instance = {
       ...instancia,
       estado,
+      numero,
       ultimoHeartbeat: new Date().toISOString(),
     };
     await this.#repo.saveInstance(actualizada);
     return actualizada;
+  }
+
+  /**
+   * Desconecta (logout de Evolution) conservando contenedor y registro,
+   * para poder reconectar sin recrear. El número se olvida: al reconectar
+   * podría vincularse otro.
+   */
+  async desconectar(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+  ): Promise<Instance | null> {
+    const instancia = await this.#repo.getInstance(tenantId, instanceId);
+    const sesion = this.#sesiones.get(instanceId);
+    if (!instancia || !sesion) return instancia;
+    await sesion.transport.disconnect();
+    const actualizada: Instance = {
+      ...instancia,
+      estado: "disconnected",
+      numero: null,
+      ultimoHeartbeat: new Date().toISOString(),
+    };
+    await this.#repo.saveInstance(actualizada);
+    return actualizada;
+  }
+
+  /**
+   * Reconecta una sesión desconectada: pide sesión de nuevo, lo que
+   * vuelve a emitir QR. El contenedor y el volumen ya existen.
+   */
+  async reconectar(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+  ): Promise<Instance | null> {
+    const instancia = await this.#repo.getInstance(tenantId, instanceId);
+    const sesion = this.#sesiones.get(instanceId);
+    if (!instancia || !sesion) return instancia;
+    await sesion.transport.connect();
+    return this.refrescar(tenantId, instanceId);
   }
 
   async eliminar(tenantId: TenantId, instanceId: InstanceId): Promise<void> {

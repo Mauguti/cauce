@@ -15,6 +15,7 @@ function transporteFalso(fallosIniciales = 0) {
     disconnect: async () => {},
     getQr: async () => null,
     status: async () => "connected",
+    numero: async () => null,
     send: async (m) => {
       if (fallos > 0) {
         fallos -= 1;
@@ -151,6 +152,7 @@ describe("ColaEnvios", () => {
       disconnect: async () => {},
       getQr: async () => null,
       status: async () => "connected",
+      numero: async () => null,
       send: () => new Promise(() => {}),
     };
     colaA.registrar("i1", colgado);

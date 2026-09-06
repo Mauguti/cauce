@@ -2,23 +2,19 @@ import jwt from "jsonwebtoken";
 import type { Message, TenantId } from "@cauce/core";
 import type { ColaEnvios } from "../cola.ts";
 import type { Repositorio } from "../store.ts";
-import { ClienteMonday, type ItemMonday } from "./cliente.ts";
+import { Cripto, pista } from "../cripto.ts";
+import { ClienteMonday, type BoardMonday, type ColumnaBoard, type ItemMonday } from "./cliente.ts";
 
 /**
- * Configuración del conector monday por tenant. Se guarda en el
- * repositorio; el apiToken y el signingSecret son secretos.
+ * Documento guardado del conector monday (por tenant). Las credenciales
+ * van CIFRADAS en reposo (ver cripto.ts); la API nunca las devuelve en
+ * claro, solo `apiTokenPista` (últimos caracteres) para reconocerlas.
  */
-export interface ConfigMonday {
+export interface ConectorMondayDoc {
   /** Instancia (número) desde la que se envían los mensajes del tenant. */
   instanceId: string;
-  /** API token de monday del tenant (para leer items y escribir updates). */
-  apiToken: string;
-  /**
-   * Signing Secret de la app de monday, para verificar el JWT que monday
-   * manda en el header authorization. Vacío = no se exige JWT (se
-   * confía solo en el token de path; ver más abajo).
-   */
-  signingSecret: string;
+  /** Board de monday elegido; contexto de las columnas de la plantilla. */
+  boardId: string;
   /** columnId de monday que contiene el teléfono del cliente. */
   columnaTelefono: string;
   /**
@@ -26,6 +22,22 @@ export interface ConfigMonday {
    * texto de esa columna, {{nombre}} por el nombre del item.
    */
   plantilla: string;
+  /** API token de monday, cifrado. */
+  apiTokenCifrado: string;
+  /** Signing Secret de la app de monday, cifrado ("" si no se configuró). */
+  signingSecretCifrado: string;
+  /** Últimos caracteres del API token, en claro, para la UI. */
+  apiTokenPista: string;
+}
+
+/** Datos en claro que la consola envía para dar de alta el conector. */
+export interface AltaConectorMonday {
+  instanceId: string;
+  boardId: string;
+  columnaTelefono: string;
+  plantilla: string;
+  apiToken: string;
+  signingSecret: string;
 }
 
 /** Reemplaza {{nombre}} y {{columnId}} por los valores del item. */
@@ -50,33 +62,84 @@ export interface ResultadoDisparo {
 export class ConectorMonday {
   readonly #repo: Repositorio;
   readonly #cola: ColaEnvios;
+  readonly #cripto: Cripto;
   readonly #clienteFactory: (token: string) => ClienteMonday;
 
   constructor(opciones: {
     repo: Repositorio;
     cola: ColaEnvios;
+    cripto?: Cripto;
     /** Inyectable para pruebas. */
     clienteFactory?: (token: string) => ClienteMonday;
   }) {
     this.#repo = opciones.repo;
     this.#cola = opciones.cola;
+    this.#cripto = opciones.cripto ?? new Cripto();
     this.#clienteFactory =
       opciones.clienteFactory ?? ((token) => new ClienteMonday(token));
   }
 
+  /** Cifra las credenciales del alta y las guarda. */
+  async guardarAlta(tenantId: TenantId, alta: AltaConectorMonday): Promise<void> {
+    await this.#repo.saveConectorMonday(tenantId, {
+      instanceId: alta.instanceId,
+      boardId: alta.boardId,
+      columnaTelefono: alta.columnaTelefono,
+      plantilla: alta.plantilla,
+      apiTokenCifrado: this.#cripto.cifrar(alta.apiToken),
+      signingSecretCifrado: this.#cripto.cifrar(alta.signingSecret),
+      apiTokenPista: pista(alta.apiToken),
+    });
+  }
+
+  /** Vista de la config para la UI: sin secretos, solo la pista del token. */
+  async verConfig(tenantId: TenantId): Promise<{
+    instanceId: string;
+    boardId: string;
+    columnaTelefono: string;
+    plantilla: string;
+    apiTokenPista: string;
+    tieneSigningSecret: boolean;
+  } | null> {
+    const doc = await this.#repo.getConectorMonday(tenantId);
+    if (!doc) return null;
+    return {
+      instanceId: doc.instanceId,
+      boardId: doc.boardId,
+      columnaTelefono: doc.columnaTelefono,
+      plantilla: doc.plantilla,
+      apiTokenPista: doc.apiTokenPista,
+      tieneSigningSecret: doc.signingSecretCifrado !== "",
+    };
+  }
+
+  /** Lista los boards reales de la cuenta con el token dado (setup). */
+  async listarBoards(apiToken: string): Promise<BoardMonday[]> {
+    return this.#clienteFactory(apiToken).listarBoards();
+  }
+
+  /** Lista las columnas de un board (para mapear teléfono y variables). */
+  async listarColumnas(
+    apiToken: string,
+    boardId: string,
+  ): Promise<ColumnaBoard[]> {
+    return this.#clienteFactory(apiToken).listarColumnas(boardId);
+  }
+
   /**
    * Verifica el JWT que monday manda en el header authorization, firmado
-   * con el Signing Secret del tenant. Devuelve true si es válido (o si
-   * el tenant no configuró signingSecret, en cuyo caso no se exige).
+   * con el Signing Secret del tenant. true si es válido (o si el tenant
+   * no configuró signingSecret, en cuyo caso no se exige).
    */
-  verificarFirma(config: ConfigMonday, authorization: unknown): boolean {
-    if (!config.signingSecret) return true; // gate por token de path
+  verificarFirma(doc: ConectorMondayDoc, authorization: unknown): boolean {
+    if (doc.signingSecretCifrado === "") return true;
     if (typeof authorization !== "string" || authorization.length === 0) {
       return false;
     }
+    const secreto = this.#cripto.descifrar(doc.signingSecretCifrado);
     const token = authorization.replace(/^Bearer /, "");
     try {
-      jwt.verify(token, config.signingSecret, { algorithms: ["HS256"] });
+      jwt.verify(token, secreto, { algorithms: ["HS256"] });
       return true;
     } catch {
       return false;
@@ -85,8 +148,8 @@ export class ConectorMonday {
 
   /**
    * Procesa un evento de monday: arma el mensaje desde las columnas del
-   * item y lo encola. Registra el vínculo teléfono→item para que la
-   * respuesta del cliente vuelva a ese item. No implementa condiciones:
+   * item y lo encola. Guarda el vínculo teléfono→item en la conversación
+   * para que la respuesta vuelva a ese item. No implementa condiciones:
    * la condición la armó el usuario en la automatización de monday.
    */
   async procesarEvento(
@@ -97,26 +160,26 @@ export class ConectorMonday {
     if (itemId === undefined || itemId === null) {
       throw new Error("evento de monday sin pulseId");
     }
-    const config = await this.#repo.getConectorMonday(tenantId);
-    if (!config) throw new Error("tenant sin conector monday configurado");
+    const doc = await this.#repo.getConectorMonday(tenantId);
+    if (!doc) throw new Error("tenant sin conector monday configurado");
 
-    const cliente = this.#clienteFactory(config.apiToken);
+    const cliente = this.#clienteFactory(this.#cripto.descifrar(doc.apiTokenCifrado));
     const item = await cliente.getItem(String(itemId));
     if (!item) throw new Error(`item ${itemId} no encontrado en monday`);
 
-    const telefonoTexto = item.columnas[config.columnaTelefono]?.text ?? "";
+    const telefonoTexto = item.columnas[doc.columnaTelefono]?.text ?? "";
     const telefono = soloDigitos(telefonoTexto);
     if (!telefono) {
       throw new Error(
-        `item ${itemId} sin teléfono en la columna ${config.columnaTelefono}`,
+        `item ${itemId} sin teléfono en la columna ${doc.columnaTelefono}`,
       );
     }
-    const cuerpo = renderPlantilla(config.plantilla, item);
+    const cuerpo = renderPlantilla(doc.plantilla, item);
 
     const mensaje: Message = {
       id: crypto.randomUUID(),
       tenantId,
-      instanceId: config.instanceId,
+      instanceId: doc.instanceId,
       direccion: "out",
       telefono: `+${telefono}`,
       cuerpo,
@@ -125,11 +188,9 @@ export class ConectorMonday {
       timestamp: new Date().toISOString(),
     };
     await this.#cola.encolar(mensaje);
-    // El vínculo con el item vive en la conversación (identidad estable):
-    // la respuesta desde este teléfono sabrá a qué item volver.
     await this.#repo.vincularMonday(
       tenantId,
-      config.instanceId,
+      doc.instanceId,
       telefono,
       String(itemId),
     );
@@ -145,9 +206,9 @@ export class ConectorMonday {
     itemId: string,
     cuerpo: string,
   ): Promise<void> {
-    const config = await this.#repo.getConectorMonday(tenantId);
-    if (!config) return;
-    const cliente = this.#clienteFactory(config.apiToken);
+    const doc = await this.#repo.getConectorMonday(tenantId);
+    if (!doc) return;
+    const cliente = this.#clienteFactory(this.#cripto.descifrar(doc.apiTokenCifrado));
     await cliente.crearUpdate(itemId, cuerpo);
   }
 }

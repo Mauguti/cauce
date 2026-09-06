@@ -229,4 +229,25 @@ export class EvolutionTransport implements MessageTransport {
     }
     return mapearEstadoEvolution(String(estado), false);
   }
+
+  async numero(): Promise<string | null> {
+    // El número de la cuenta conectada sale del ownerJid que reporta
+    // fetchInstances (p. ej. "5215512345678@s.whatsapp.net").
+    let res;
+    try {
+      res = await this.#llamar(
+        "GET",
+        `/instance/fetchInstances?instanceName=${encodeURIComponent(this.#instanceName)}`,
+      );
+    } catch {
+      return null;
+    }
+    if (res.status >= 400) return null;
+    const lista = Array.isArray(res.json) ? res.json : [res.json];
+    const jid: unknown =
+      lista[0]?.ownerJid ?? lista[0]?.instance?.owner ?? lista[0]?.owner;
+    if (typeof jid !== "string") return null;
+    const digitos = jid.split("@")[0]?.replace(/[^\d]/g, "");
+    return digitos ? `+${digitos}` : null;
+  }
 }
