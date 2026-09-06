@@ -232,3 +232,52 @@ describe("autenticación con ID token de Firebase", () => {
     }
   });
 });
+
+describe("POST /messages/:id/retry (reintento manual)", () => {
+  const KEY = "key-retry-0000000000000000000000";
+  function levantar(msg: any, sesionActiva = true) {
+    const repo = new RepositorioEnMemoria({
+      tenants: [{ id: "t", nombre: "T", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2026-09-06T00:00:00Z" }],
+      instances: [{ id: "i1", tenantId: "t", transportType: "evolution", contenedorId: "c", numero: null, estado: "connected", ultimoHeartbeat: null }],
+    });
+    void repo.saveMessage(msg);
+    const encolados: any[] = [];
+    const gestor = { obtener: (id: string) => (sesionActiva && id === "i1" ? {} : null) } as unknown as GestorSesiones;
+    const cola = { encolar: async (m: any) => encolados.push(m) } as any;
+    const server = crearApp(repo, gestor, { cola }).listen(0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    return { base, encolados, repo, cerrar: () => server.close() };
+  }
+  const msgFallido = (over: any = {}) => ({
+    id: "m1", tenantId: "t", instanceId: "i1", direccion: "out",
+    telefono: "+525512345678", cuerpo: "hola", estado: "fallido",
+    externalId: null, error: "x", errorCodigo: "sesion_desconectada",
+    timestamp: "2026-09-06T00:00:00Z", ...over,
+  });
+  const h = { headers: { "x-api-key": KEY } };
+
+  it("re-encola un fallido reintentable", async () => {
+    const { base, encolados, cerrar } = levantar(msgFallido());
+    try {
+      const res = await fetch(`${base}/api/tenants/t/messages/m1/retry`, { method: "POST", ...h });
+      expect(res.status).toBe(202);
+      expect(encolados[0]).toMatchObject({ id: "m1", estado: "encolado", error: null });
+    } finally { cerrar(); }
+  });
+
+  it("rechaza un fallo no reintentable (409)", async () => {
+    const { base, cerrar } = levantar(msgFallido({ errorCodigo: "telefono_vacio" }));
+    try {
+      const res = await fetch(`${base}/api/tenants/t/messages/m1/retry`, { method: "POST", ...h });
+      expect(res.status).toBe(409);
+    } finally { cerrar(); }
+  });
+
+  it("409 si la sesión no está activa", async () => {
+    const { base, cerrar } = levantar(msgFallido(), false);
+    try {
+      const res = await fetch(`${base}/api/tenants/t/messages/m1/retry`, { method: "POST", ...h });
+      expect(res.status).toBe(409);
+    } finally { cerrar(); }
+  });
+});

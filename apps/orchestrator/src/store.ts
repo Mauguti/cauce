@@ -34,6 +34,7 @@ export interface Repositorio {
   saveInstance(instance: Instance): Promise<void>;
   deleteInstance(tenantId: TenantId, instanceId: InstanceId): Promise<void>;
   saveMessage(mensaje: Message): Promise<void>;
+  getMessage(tenantId: TenantId, messageId: string): Promise<Message | null>;
   listMessages(tenantId: TenantId, instanceId?: InstanceId): Promise<Message[]>;
   // Conector monday: configuración por tenant.
   getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null>;
@@ -157,6 +158,16 @@ export class RepositorioEnMemoria implements Repositorio {
     const indice = porTenant.findIndex((m) => m.id === mensaje.id);
     if (indice >= 0) porTenant[indice] = mensaje;
     else porTenant.push(mensaje);
+  }
+
+  async getMessage(
+    tenantId: TenantId,
+    messageId: string,
+  ): Promise<Message | null> {
+    return (
+      (this.#messages.get(tenantId) ?? []).find((m) => m.id === messageId) ??
+      null
+    );
   }
 
   async listMessages(

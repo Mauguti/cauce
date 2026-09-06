@@ -535,6 +535,47 @@ export function crearApp(
     res.json(mensajes.slice(0, 200));
   });
 
+  // Reintento manual de un mensaje fallido: re-encola el MISMO mensaje
+  // (sin recrear la acción ni esperar otro evento). Solo si la causa era
+  // reintentable — un teléfono vacío no se arregla reintentando.
+  tenantRouter.post("/messages/:messageId/retry", async (req, res) => {
+    if (!opciones.cola) {
+      res.status(501).json({ error: "orquestador sin cola de envíos" });
+      return;
+    }
+    const mensaje = await repo.getMessage(req.tenantId!, String(req.params.messageId));
+    if (!mensaje) {
+      res.status(404).json({ error: "mensaje no encontrado" });
+      return;
+    }
+    if (mensaje.estado !== "fallido" || mensaje.direccion !== "out") {
+      res.status(409).json({ error: "solo se reintentan mensajes salientes fallidos" });
+      return;
+    }
+    const noReintentable = mensaje.errorCodigo === "telefono_vacio" ||
+      mensaje.errorCodigo === "telefono_invalido" ||
+      mensaje.errorCodigo === "item_incompleto";
+    if (noReintentable) {
+      res.status(409).json({
+        error: "Este fallo no se corrige reintentando; arregla el item o el teléfono y dispara de nuevo desde monday.",
+      });
+      return;
+    }
+    if (!gestor?.obtener(mensaje.instanceId)) {
+      res.status(409).json({ error: "la sesión no está activa; reconéctala en Sesiones y reintenta" });
+      return;
+    }
+    // Re-encola el mismo mensaje (mismo id → upsert; se limpia el error).
+    await opciones.cola.encolar({
+      ...mensaje,
+      estado: "encolado",
+      error: null,
+      errorCodigo: null,
+      timestamp: new Date().toISOString(),
+    });
+    res.status(202).json({ id: mensaje.id, estado: "encolado" });
+  });
+
   tenantRouter.get("/instances/:instanceId/messages", async (req, res) => {
     const instanceId = String(req.params.instanceId);
     const instancia = await repo.getInstance(req.tenantId!, instanceId);

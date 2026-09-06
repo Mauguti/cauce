@@ -117,6 +117,28 @@ describe("ColaEnvios", () => {
     // 3 intentos con backoff 40 + 80 entre ellos: al menos ~120ms.
     expect(Date.now() - inicio).toBeGreaterThanOrEqual(120);
     expect(cola.pendientes("i1")).toBe(0);
+    // La causa quedó guardada para el registro de envíos.
+    const [m] = await repo.listMessages("a", "i1");
+    expect(m!.error).toBeTruthy();
+    expect(m!.errorCodigo).toBe("desconocido");
+  });
+
+  it("teléfono inválido falla de una vez (no reintentable) con su causa", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cauce-cola-"));
+    const repo = repoNuevo();
+    const cola = new ColaEnvios({ dir, repo, intervaloMs: 10, jitterMaxMs: 5 });
+    const { transport, envios } = transporteFalso();
+    cola.registrar("i1", transport);
+    await cola.encolar({ ...mensaje("m1"), telefono: "123" });
+
+    await esperarHasta(async () => {
+      const [m] = await repo.listMessages("a", "i1");
+      return m?.estado === "fallido";
+    }, 3000);
+    cola.baja("i1");
+    const [m] = await repo.listMessages("a", "i1");
+    expect(m!.errorCodigo).toBe("telefono_invalido");
+    expect(envios).toHaveLength(0); // nunca llegó al transporte
   });
 
   it("un reintento posterior puede terminar en enviado", async () => {

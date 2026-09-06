@@ -126,9 +126,29 @@ export interface Message {
   estado: MessageEstado;
   /** Id que asigna el transporte al mensaje; null hasta que lo confirma. */
   externalId: string | null;
+  /**
+   * Causa del fallo (solo cuando estado = "fallido"): motivo entendible
+   * para el operador, listo para mostrar en el registro de envíos.
+   */
+  error?: string | null;
+  /** Código de la causa, para decidir en la UI si el reintento aplica. */
+  errorCodigo?: FalloEnvio | null;
   /** ISO 8601 */
   timestamp: string;
 }
+
+/**
+ * Causas distinguibles de un envío fallido. `reintentable` en la UI se
+ * decide por código: p. ej. una columna vacía no se corrige reintentando
+ * el mismo mensaje, sino arreglando el item.
+ */
+export type FalloEnvio =
+  | "sesion_desconectada"
+  | "telefono_vacio"
+  | "telefono_invalido"
+  | "item_incompleto"
+  | "transporte_rechazo"
+  | "desconocido";
 
 /**
  * Conversación con un número por instancia. Es la identidad estable de

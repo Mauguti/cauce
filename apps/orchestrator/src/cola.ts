@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { InstanceId, Message } from "@cauce/core";
 import type { MessageTransport } from "@cauce/transports";
 import type { Repositorio } from "./store.ts";
+import { diagnosticarEnvio, telefonoValido } from "./errores.ts";
 
 /**
  * Cola de envío por instancia, persistida en disco: un reinicio del
@@ -203,24 +204,38 @@ export class ColaEnvios {
       Date.now() + inst.intervaloMs + Math.floor(Math.random() * o.jitterMaxMs);
 
     try {
+      // Teléfono inválido: no lo mandes al transporte; es una causa
+      // distinguible y no reintentable sin corregir el dato.
+      if (!telefonoValido(p.mensaje.telefono)) {
+        throw new Error("teléfono inválido (formato)");
+      }
       const recibo = await inst.transport.send({
         telefono: p.mensaje.telefono,
         cuerpo: p.mensaje.cuerpo,
       });
       p.mensaje.estado = "enviado";
       p.mensaje.externalId = recibo.externalId;
+      p.mensaje.error = null;
+      p.mensaje.errorCodigo = null;
       p.mensaje.timestamp = recibo.timestamp;
       inst.pendientes = inst.pendientes.filter((x) => x !== p);
       this.#persistir(inst);
       await this.#repo.saveMessage({ ...p.mensaje });
-    } catch {
-      if (p.intentos >= o.intentosMax) {
+    } catch (err: any) {
+      const diag = diagnosticarEnvio(err?.message ?? String(err));
+      // Un teléfono inválido no mejora reintentando: falla de una vez.
+      const agota = p.intentos >= o.intentosMax || !diag.reintentable;
+      if (agota) {
         p.mensaje.estado = "fallido";
+        p.mensaje.error = diag.mensaje;
+        p.mensaje.errorCodigo = diag.codigo;
         inst.pendientes = inst.pendientes.filter((x) => x !== p);
         this.#persistir(inst);
         await this.#repo.saveMessage({ ...p.mensaje });
       } else {
         p.mensaje.estado = "encolado";
+        p.mensaje.error = diag.mensaje; // causa del último intento
+        p.mensaje.errorCodigo = diag.codigo;
         p.disponibleEn =
           Date.now() + o.backoffBaseMs * o.backoffFactor ** (p.intentos - 1);
         this.#persistir(inst);

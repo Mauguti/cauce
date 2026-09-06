@@ -127,32 +127,84 @@ export function Inicio(props: {
           </thead>
           <tbody>
             {filtrados.slice(0, 100).map((m) => (
-              <tr key={m.id}>
-                <td className="celda-heartbeat">{hora(m.timestamp)}</td>
-                <td className="celda-numero">{m.telefono}</td>
-                <td className="registro__cuerpo">{m.cuerpo}</td>
-                <td>
-                  <span className={`estado-envio estado-envio--${m.estado}`}>
-                    {ETIQUETA[m.estado]}
-                  </span>
-                </td>
-                <td className="celda-acciones">
-                  {m.estado === "fallido" && (
-                    <button
-                      className="boton"
-                      onClick={() => props.abrirInstancia(m.instanceId)}
-                      title="Ver la conversación y la causa"
-                    >
-                      Ver causa
-                    </button>
-                  )}
-                </td>
-              </tr>
+              <FilaMensaje
+                key={m.id}
+                m={m}
+                tenantId={props.yo.tenantId}
+                abrirInstancia={props.abrirInstancia}
+              />
             ))}
           </tbody>
         </table>
       )}
     </main>
+  );
+}
+
+// Los fallos que NO se corrigen reintentando el mismo mensaje.
+const NO_REINTENTABLE = new Set(["telefono_vacio", "telefono_invalido", "item_incompleto"]);
+
+function FilaMensaje(props: {
+  m: Message;
+  tenantId: string;
+  abrirInstancia: (id: string) => void;
+}) {
+  const { m } = props;
+  const [estado, setEstado] = useState<"idle" | "reintentando" | "reintentado" | "error">("idle");
+  const [errRetry, setErrRetry] = useState<string | null>(null);
+
+  const puedeReintentar =
+    m.estado === "fallido" && !NO_REINTENTABLE.has(m.errorCodigo ?? "");
+
+  const reintentar = async () => {
+    setEstado("reintentando");
+    setErrRetry(null);
+    try {
+      await api.reintentar(props.tenantId, m.id);
+      setEstado("reintentado");
+    } catch (e: any) {
+      setEstado("error");
+      setErrRetry(e?.message ?? "No se pudo reintentar.");
+    }
+  };
+
+  return (
+    <>
+      <tr>
+        <td className="celda-heartbeat">{hora(m.timestamp)}</td>
+        <td className="celda-numero">{m.telefono}</td>
+        <td className="registro__cuerpo">{m.cuerpo || <span className="tenue">(vacío)</span>}</td>
+        <td>
+          <span className={`estado-envio estado-envio--${m.estado}`}>
+            {ETIQUETA[m.estado]}
+          </span>
+        </td>
+        <td className="celda-acciones">
+          {m.estado === "fallido" && puedeReintentar && estado !== "reintentado" && (
+            <button className="boton" onClick={reintentar} disabled={estado === "reintentando"}>
+              {estado === "reintentando" ? "Reintentando…" : "Reintentar"}
+            </button>
+          )}
+          {estado === "reintentado" && <span className="tenue">Reencolado ✓</span>}
+        </td>
+      </tr>
+      {m.estado === "fallido" && (m.error || errRetry) && (
+        <tr className="fila-causa">
+          <td />
+          <td colSpan={4}>
+            <span className="causa">{errRetry ?? m.error}</span>
+            {!puedeReintentar && !errRetry && (
+              <button
+                className="boton mini-link"
+                onClick={() => props.abrirInstancia(m.instanceId)}
+              >
+                Ver conversación
+              </button>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 

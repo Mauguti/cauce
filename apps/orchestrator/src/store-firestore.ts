@@ -112,6 +112,14 @@ export class RepositorioFirestore implements Repositorio {
       .set(mensaje);
   }
 
+  async getMessage(
+    tenantId: TenantId,
+    messageId: string,
+  ): Promise<Message | null> {
+    const doc = await this.#db.doc(rutas.message(tenantId, messageId)).get();
+    return doc.exists ? (doc.data() as Message) : null;
+  }
+
   async listMessages(
     tenantId: TenantId,
     instanceId?: InstanceId,

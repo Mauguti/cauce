@@ -495,3 +495,21 @@
   text-align: center;
 }
 .banner-desfase .tenue { color: var(--gris-4); }
+
+/* ---- Causa de fallo + reintento en el registro (bloque 10) ---- */
+.fila-causa td { border-top: none; padding-top: 0; }
+.causa {
+  font-size: var(--texto-s); color: var(--error-texto);
+  font-weight: var(--error-peso); margin-right: var(--esp-3);
+}
+.mini-link {
+  border: none; background: none; text-decoration: underline;
+  color: var(--texto-secundario); padding: 0; font-size: var(--texto-s); cursor: pointer;
+}
+
+/* ---- Guía de monday / estado pendiente (bloque 10) ---- */
+.guia { margin: var(--esp-3) 0; padding-left: var(--esp-6); display: flex; flex-direction: column; gap: var(--esp-2); font-size: var(--texto-s); }
+.aviso-pendiente {
+  border-left: 3px solid var(--estado-qr); background: var(--gris-1);
+  padding: var(--esp-2) var(--esp-4); font-size: var(--texto-s);
+}

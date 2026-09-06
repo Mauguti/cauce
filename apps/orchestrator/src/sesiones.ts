@@ -7,6 +7,7 @@ import {
   type TenantId,
 } from "@cauce/core";
 import { createTransport, type MessageTransport } from "@cauce/transports";
+import { diagnosticarEnvio, telefonoValido } from "./errores.ts";
 import type { ColaEnvios } from "./cola.ts";
 import { DockerManager, nombreContenedor } from "./docker/manager.ts";
 import type { Repositorio } from "./store.ts";
@@ -96,12 +97,17 @@ export class GestorSesiones {
       timestamp: new Date().toISOString(),
     };
     try {
+      if (!telefonoValido(telefono)) {
+        throw new Error("teléfono inválido (formato)");
+      }
       const recibo = await sesion.transport.send({ telefono, cuerpo });
       mensaje.estado = "enviado";
       mensaje.externalId = recibo.externalId;
-      mensaje.timestamp = recibo.timestamp;
-    } catch {
+    } catch (err: any) {
+      const diag = diagnosticarEnvio(err?.message ?? String(err));
       mensaje.estado = "fallido";
+      mensaje.error = diag.mensaje;
+      mensaje.errorCodigo = diag.codigo;
     }
     await this.#repo.saveMessage(mensaje);
     return mensaje;

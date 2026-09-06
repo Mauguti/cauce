@@ -118,6 +118,12 @@ export const api = {
   mensajesTenant: (tenantId: string) =>
     llamar<Message[]>(`/api/tenants/${tenantId}/messages`),
 
+  reintentar: (tenantId: string, messageId: string) =>
+    llamar<{ id: string; estado: string }>(
+      `/api/tenants/${tenantId}/messages/${messageId}/retry`,
+      { method: "POST" },
+    ),
+
   enviar: (tenantId: string, id: string, telefono: string, cuerpo: string) =>
     llamar<{ id: string; estado: string }>(
       `/api/tenants/${tenantId}/instances/${id}/send`,

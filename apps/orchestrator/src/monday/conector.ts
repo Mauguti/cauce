@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import type { Message, TenantId } from "@cauce/core";
+import type { FalloEnvio, Message, TenantId } from "@cauce/core";
 import type { ColaEnvios } from "../cola.ts";
 import type { Repositorio } from "../store.ts";
 import { Cripto, pista } from "../cripto.ts";
@@ -270,12 +270,28 @@ export class ConectorMonday {
     const telefonoTexto = item.columnas[doc.columnaTelefono]?.text ?? "";
     const telefono = soloDigitos(telefonoTexto);
     if (!telefono) {
+      await this.#registrarFallido(
+        tenantId,
+        doc.instanceId,
+        "—",
+        "",
+        "telefono_vacio",
+        `El item "${item.name}" no tiene teléfono en la columna mapeada (${doc.columnaTelefono}). Llena esa columna en monday y vuelve a disparar.`,
+      );
       throw new Error(
         `el item no tiene teléfono en la columna mapeada (${doc.columnaTelefono})`,
       );
     }
     const cuerpo = renderPlantilla(doc.plantilla, item);
     if (!cuerpo.trim()) {
+      await this.#registrarFallido(
+        tenantId,
+        doc.instanceId,
+        `+${telefono}`,
+        "",
+        "item_incompleto",
+        `El item "${item.name}" no tiene los datos que usa la plantilla; el mensaje quedó vacío. Revisa las columnas del item en monday.`,
+      );
       throw new Error("la plantilla quedó vacía para este item");
     }
 
@@ -298,6 +314,30 @@ export class ConectorMonday {
       String(itemId),
     );
     return { itemId: String(itemId), telefono, mensajeId: mensaje.id };
+  }
+
+  /** Deja un mensaje `fallido` en el registro para que se vea en el dashboard. */
+  async #registrarFallido(
+    tenantId: TenantId,
+    instanceId: string,
+    telefono: string,
+    cuerpo: string,
+    codigo: FalloEnvio,
+    error: string,
+  ): Promise<void> {
+    await this.#repo.saveMessage({
+      id: crypto.randomUUID(),
+      tenantId,
+      instanceId,
+      direccion: "out",
+      telefono,
+      cuerpo,
+      estado: "fallido",
+      externalId: null,
+      error,
+      errorCodigo: codigo,
+      timestamp: new Date().toISOString(),
+    });
   }
 
   /** Registra que monday golpeó el webhook (para "¿ya me llamó?"). */
