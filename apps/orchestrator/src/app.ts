@@ -5,6 +5,7 @@ import type { Repositorio } from "./store.ts";
 import type { GestorSesiones } from "./sesiones.ts";
 import { autenticar } from "./auth.ts";
 import type { ColaEnvios } from "./cola.ts";
+import type { ConectorMonday } from "./monday/conector.ts";
 import { normalizarEntrante } from "./webhook.ts";
 
 declare global {
@@ -29,7 +30,7 @@ function cors(origenes: string[]) {
     if (typeof origen === "string" && origenes.includes(origen)) {
       res.setHeader("access-control-allow-origin", origen);
       res.setHeader("access-control-allow-headers", "content-type, x-api-key");
-      res.setHeader("access-control-allow-methods", "GET, POST, DELETE");
+      res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE");
       res.setHeader("vary", "origin");
     }
     if (req.method === "OPTIONS") {
@@ -45,6 +46,8 @@ export interface AppOpciones {
   corsOrigenes?: string[];
   /** Cola de envíos; sin ella POST /send responde 501. */
   cola?: ColaEnvios;
+  /** Conector monday; sin él la ruta /webhooks/monday responde 501. */
+  monday?: ConectorMonday;
 }
 
 export function crearApp(
@@ -58,6 +61,46 @@ export function crearApp(
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true });
+  });
+
+  /**
+   * Webhook nativo de monday. Va ANTES del webhook genérico de instancias
+   * porque `/webhooks/:tenantId/:instanceId` también casaría
+   * `/webhooks/monday/demo` (con tenantId="monday"); el orden lo evita.
+   * No pasa por la auth de tenant: monday no manda nuestra API key. Su
+   * seguridad es (1) el challenge de alta y (2) el JWT firmado con el
+   * Signing Secret del tenant. El tenantId viene en el path.
+   */
+  app.post("/webhooks/monday/:tenantId", async (req, res) => {
+    const tenantId = String(req.params.tenantId);
+    // 1. Handshake de verificación: monday manda {challenge} al registrar
+    //    el webhook y espera exactamente ese challenge de vuelta.
+    if (req.body?.challenge) {
+      res.status(200).json({ challenge: req.body.challenge });
+      return;
+    }
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    const config = await repo.getConectorMonday(tenantId);
+    if (!config) {
+      res.status(404).json({ error: "tenant sin conector monday" });
+      return;
+    }
+    // 2. Firma: JWT que monday envía en authorization.
+    if (!opciones.monday.verificarFirma(config, req.headers.authorization)) {
+      res.status(401).json({ error: "firma inválida" });
+      return;
+    }
+    // Responder rápido; el disparo (leer item, encolar envío) es trabajo
+    // que no debe hacer esperar a monday ni tumbar su reintento.
+    res.status(200).json({ ok: true });
+    opciones.monday
+      .procesarEvento(tenantId, req.body?.event)
+      .catch((err) =>
+        console.warn(`monday procesarEvento falló: ${err?.message}`),
+      );
   });
 
   /**
@@ -85,10 +128,21 @@ export function crearApp(
       res.status(404).json({ error: "instancia desconocida" });
       return;
     }
-    // Responder rápido: normalizar y guardar es barato; cualquier
-    // trabajo pesado futuro (escribir al CRM) se encola, no se hace aquí.
+    // Responder rápido: normalizar y guardar es barato.
     const mensaje = normalizarEntrante(tenantId!, instanceId!, req.body);
-    if (mensaje) await repo.saveMessage(mensaje);
+    if (mensaje) {
+      await repo.saveMessage(mensaje);
+      // Write-back al CRM: si el teléfono está vinculado a un item de
+      // monday, la respuesta vuelve como update. Best-effort: un fallo
+      // del CRM no debe romper la recepción.
+      if (opciones.monday) {
+        opciones.monday
+          .alRecibir(tenantId!, instanceId!, mensaje.telefono, mensaje.cuerpo)
+          .catch((err) =>
+            console.warn(`monday write-back falló: ${err?.message}`),
+          );
+      }
+    }
     res.status(200).json({ ok: true });
   });
 
@@ -104,6 +158,32 @@ export function crearApp(
 
   tenantRouter.get("/instances", async (req, res) => {
     res.json(await repo.listInstances(req.tenantId!));
+  });
+
+  // Alta/edición de la config del conector monday del tenant.
+  tenantRouter.put("/conectores/monday", async (req, res) => {
+    const { instanceId, apiToken, signingSecret, columnaTelefono, plantilla } =
+      req.body ?? {};
+    if (
+      typeof instanceId !== "string" ||
+      typeof apiToken !== "string" ||
+      typeof columnaTelefono !== "string" ||
+      typeof plantilla !== "string"
+    ) {
+      res.status(400).json({
+        error:
+          "se requieren instanceId, apiToken, columnaTelefono y plantilla",
+      });
+      return;
+    }
+    await repo.saveConectorMonday(req.tenantId!, {
+      instanceId,
+      apiToken,
+      signingSecret: typeof signingSecret === "string" ? signingSecret : "",
+      columnaTelefono,
+      plantilla,
+    });
+    res.status(204).end();
   });
 
   tenantRouter.post("/instances", async (req, res) => {

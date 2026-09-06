@@ -7,6 +7,7 @@ import { DockerManager } from "./docker/manager.ts";
 import { GestorSesiones } from "./sesiones.ts";
 import { RepositorioEnMemoria, type Repositorio } from "./store.ts";
 import { RepositorioFirestore } from "./store-firestore.ts";
+import { ConectorMonday } from "./monday/conector.ts";
 
 const puerto = Number(process.env.PORT ?? 3001);
 
@@ -76,6 +77,8 @@ if (await docker.disponible()) {
   console.warn("Docker no disponible; se arranca sin sesiones");
 }
 
-crearApp(repo, gestor, { corsOrigenes, cola }).listen(puerto, () => {
+const monday = new ConectorMonday({ repo, cola });
+
+crearApp(repo, gestor, { corsOrigenes, cola, monday }).listen(puerto, () => {
   console.log(`orquestador escuchando en :${puerto}`);
 });

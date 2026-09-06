@@ -5,6 +5,7 @@ import type {
   Tenant,
   TenantId,
 } from "@cauce/core";
+import type { ConfigMonday } from "./monday/conector.ts";
 
 /**
  * Repositorio scopeado por tenant. Toda operación exige `tenantId`;
@@ -24,6 +25,20 @@ export interface Repositorio {
   deleteInstance(tenantId: TenantId, instanceId: InstanceId): Promise<void>;
   saveMessage(mensaje: Message): Promise<void>;
   listMessages(tenantId: TenantId, instanceId?: InstanceId): Promise<Message[]>;
+  // Conector monday: configuración por tenant y vínculos teléfono→item.
+  getConectorMonday(tenantId: TenantId): Promise<ConfigMonday | null>;
+  saveConectorMonday(tenantId: TenantId, config: ConfigMonday): Promise<void>;
+  getVinculoMonday(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+  ): Promise<string | null>;
+  saveVinculoMonday(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    itemId: string,
+  ): Promise<void>;
 }
 
 export class RepositorioEnMemoria implements Repositorio {
@@ -95,5 +110,36 @@ export class RepositorioEnMemoria implements Repositorio {
     return instanceId
       ? todos.filter((m) => m.instanceId === instanceId)
       : [...todos];
+  }
+
+  #conectorMonday = new Map<TenantId, ConfigMonday>();
+  #vinculosMonday = new Map<string, string>();
+
+  async getConectorMonday(tenantId: TenantId): Promise<ConfigMonday | null> {
+    return this.#conectorMonday.get(tenantId) ?? null;
+  }
+
+  async saveConectorMonday(
+    tenantId: TenantId,
+    config: ConfigMonday,
+  ): Promise<void> {
+    this.#conectorMonday.set(tenantId, config);
+  }
+
+  async getVinculoMonday(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+  ): Promise<string | null> {
+    return this.#vinculosMonday.get(`${tenantId}/${instanceId}/${telefono}`) ?? null;
+  }
+
+  async saveVinculoMonday(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    itemId: string,
+  ): Promise<void> {
+    this.#vinculosMonday.set(`${tenantId}/${instanceId}/${telefono}`, itemId);
   }
 }

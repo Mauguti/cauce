@@ -8,6 +8,7 @@ import {
   type TenantId,
 } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
+import type { ConfigMonday } from "./monday/conector.ts";
 
 /**
  * Repositorio sobre Firestore. Usa exactamente las `rutas` de
@@ -94,5 +95,43 @@ export class RepositorioFirestore implements Repositorio {
       ? await col.where("instanceId", "==", instanceId).get()
       : await col.get();
     return snap.docs.map((d) => d.data() as Message);
+  }
+
+  async getConectorMonday(tenantId: TenantId): Promise<ConfigMonday | null> {
+    const doc = await this.#db
+      .doc(`${rutas.tenant(tenantId)}/conectores/monday`)
+      .get();
+    return doc.exists ? (doc.data() as ConfigMonday) : null;
+  }
+
+  async saveConectorMonday(
+    tenantId: TenantId,
+    config: ConfigMonday,
+  ): Promise<void> {
+    await this.#db
+      .doc(`${rutas.tenant(tenantId)}/conectores/monday`)
+      .set(config);
+  }
+
+  async getVinculoMonday(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+  ): Promise<string | null> {
+    const doc = await this.#db
+      .doc(`${rutas.tenant(tenantId)}/mondayVinculos/${instanceId}__${telefono}`)
+      .get();
+    return doc.exists ? (doc.data()!.itemId as string) : null;
+  }
+
+  async saveVinculoMonday(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    itemId: string,
+  ): Promise<void> {
+    await this.#db
+      .doc(`${rutas.tenant(tenantId)}/mondayVinculos/${instanceId}__${telefono}`)
+      .set({ instanceId, telefono, itemId });
   }
 }
