@@ -1,0 +1,71 @@
+.consola {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: var(--esp-12) var(--esp-6);
+}
+
+.consola__cabecera {
+  margin-bottom: var(--esp-8);
+}
+
+.consola__cabecera h1 {
+  font-size: var(--texto-xl);
+  font-weight: var(--peso-bold);
+  line-height: var(--interlineado-compacto);
+  margin: 0 0 var(--esp-1);
+}
+
+.consola__sub {
+  margin: 0;
+  font-size: var(--texto-s);
+  color: var(--texto-secundario);
+}
+
+.consola table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--texto-s);
+}
+
+.consola th {
+  text-align: left;
+  font-size: var(--texto-xs);
+  font-weight: var(--peso-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--texto-secundario);
+  padding: var(--esp-2) var(--esp-3);
+  border-bottom: var(--borde-fuerte);
+}
+
+.consola td {
+  padding: var(--esp-3);
+  border-bottom: var(--borde);
+  vertical-align: middle;
+}
+
+.consola tr:hover td {
+  background: var(--hover-fondo);
+}
+
+.celda-numero {
+  font-weight: var(--peso-medio);
+  font-variant-numeric: tabular-nums;
+}
+
+.celda-transporte,
+.celda-heartbeat {
+  color: var(--texto-secundario);
+  font-variant-numeric: tabular-nums;
+}
+
+.celda-qr {
+  display: block;
+  font-size: var(--texto-xs);
+  color: var(--texto-secundario);
+  margin-top: var(--esp-1);
+}
+
+.celda-acciones {
+  text-align: right;
+}

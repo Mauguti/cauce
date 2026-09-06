@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cauce — sistema visual</title>
+  <link rel="stylesheet" href="./tokens.css" />
+  <style>
+    main { max-width: 720px; margin: 0 auto; padding: var(--esp-16) var(--esp-6); }
+    section { margin-bottom: var(--esp-12); }
+    h1 { font-size: var(--texto-2xl); font-weight: var(--peso-bold); line-height: var(--interlineado-compacto); margin: 0 0 var(--esp-2); }
+    h2 { font-size: var(--texto-l); font-weight: var(--peso-semibold); margin: 0 0 var(--esp-4); padding-bottom: var(--esp-2); border-bottom: var(--borde); }
+    .sub { color: var(--texto-secundario); margin: 0 0 var(--esp-12); }
+    .fila { display: flex; gap: var(--esp-4); align-items: center; flex-wrap: wrap; margin-bottom: var(--esp-4); }
+    .gris { width: 56px; height: 56px; border: var(--borde); border-radius: var(--radio); }
+    .gris span { display: block; margin-top: 60px; font-size: var(--texto-xs); color: var(--texto-secundario); }
+    .tipo { margin: 0 0 var(--esp-3); }
+    .etiqueta { font-size: var(--texto-xs); color: var(--texto-secundario); display: block; }
+    .esp-bloque { background: var(--gris-2); height: 16px; }
+    table { border-collapse: collapse; width: 100%; font-size: var(--texto-s); }
+    th { text-align: left; font-weight: var(--peso-semibold); font-size: var(--texto-xs); text-transform: uppercase; letter-spacing: 0.04em; color: var(--texto-secundario); padding: var(--esp-2) var(--esp-3); border-bottom: var(--borde-fuerte); }
+    td { padding: var(--esp-3); border-bottom: var(--borde); }
+    tr:hover td { background: var(--hover-fondo); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Cauce</h1>
+    <p class="sub">Sistema visual · monocromático estricto · la jerarquía es peso, escala y espacio</p>
+
+    <section>
+      <h2>Grises — 8 pasos</h2>
+      <div class="fila">
+        <div class="gris" style="background: var(--blanco)"><span>blanco</span></div>
+        <div class="gris" style="background: var(--gris-1)"><span>1</span></div>
+        <div class="gris" style="background: var(--gris-2)"><span>2</span></div>
+        <div class="gris" style="background: var(--gris-3)"><span>3</span></div>
+        <div class="gris" style="background: var(--gris-4)"><span>4</span></div>
+        <div class="gris" style="background: var(--gris-5)"><span>5</span></div>
+        <div class="gris" style="background: var(--gris-6)"><span>6</span></div>
+        <div class="gris" style="background: var(--gris-7)"><span>7</span></div>
+        <div class="gris" style="background: var(--gris-8)"><span>8 · texto</span></div>
+        <div class="gris" style="background: var(--negro)"><span>negro · acción</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Tipografía — 6 tamaños, una familia</h2>
+      <p class="tipo" style="font-size: var(--texto-2xl); font-weight: var(--peso-bold); line-height: var(--interlineado-compacto);">Título de página<span class="etiqueta">2xl · 40 · bold</span></p>
+      <p class="tipo" style="font-size: var(--texto-xl); font-weight: var(--peso-semibold);">Título de sección<span class="etiqueta">xl · 28 · semibold</span></p>
+      <p class="tipo" style="font-size: var(--texto-l); font-weight: var(--peso-semibold);">Subtítulo<span class="etiqueta">l · 20 · semibold</span></p>
+      <p class="tipo" style="font-size: var(--texto-m);">Cuerpo de texto en gris 8, nunca negro puro.<span class="etiqueta">m · 16 · normal</span></p>
+      <p class="tipo" style="font-size: var(--texto-s);">Texto de tablas y controles.<span class="etiqueta">s · 14 · normal</span></p>
+      <p class="tipo" style="font-size: var(--texto-xs); color: var(--texto-secundario);">Metadatos y etiquetas.<span class="etiqueta">xs · 12 · gris 6</span></p>
+    </section>
+
+    <section>
+      <h2>Espaciado — escala de 4px</h2>
+      <div class="fila" style="align-items: flex-end;">
+        <div><div class="esp-bloque" style="width: 4px"></div><span class="etiqueta">4</span></div>
+        <div><div class="esp-bloque" style="width: 8px"></div><span class="etiqueta">8</span></div>
+        <div><div class="esp-bloque" style="width: 12px"></div><span class="etiqueta">12</span></div>
+        <div><div class="esp-bloque" style="width: 16px"></div><span class="etiqueta">16</span></div>
+        <div><div class="esp-bloque" style="width: 24px"></div><span class="etiqueta">24</span></div>
+        <div><div class="esp-bloque" style="width: 32px"></div><span class="etiqueta">32</span></div>
+        <div><div class="esp-bloque" style="width: 48px"></div><span class="etiqueta">48</span></div>
+        <div><div class="esp-bloque" style="width: 64px"></div><span class="etiqueta">64</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Acciones</h2>
+      <div class="fila">
+        <button class="boton boton--primario">Acción primaria</button>
+        <button class="boton">Secundaria</button>
+        <button class="boton" disabled>Deshabilitada</button>
+        <button class="boton boton--primario" disabled>Primaria deshabilitada</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Campos y error sin color</h2>
+      <div class="fila">
+        <input class="campo" placeholder="Número a conectar" />
+        <input class="campo" value="No editable" disabled />
+      </div>
+      <div>
+        <input class="campo campo--error" value="+52 55 no válido" />
+        <p class="mensaje-error">El número debe ir en formato internacional, p. ej. +525512345678.</p>
+      </div>
+    </section>
+
+    <section>
+      <h2>Estados de sesión — forma y peso, no color</h2>
+      <table>
+        <thead>
+          <tr><th>Número</th><th>Transporte</th><th>Estado</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>+52 55 1234 5678</td><td>mock</td><td><span class="estado estado--connected">Conectado</span></td></tr>
+          <tr><td>+52 81 9876 5432</td><td>mock</td><td><span class="estado estado--qr">Esperando QR</span></td></tr>
+          <tr><td>+52 33 5555 0101</td><td>mock</td><td><span class="estado estado--pending">Iniciando</span></td></tr>
+          <tr><td>+52 55 0000 1122</td><td>mock</td><td><span class="estado estado--disconnected">Desconectado</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

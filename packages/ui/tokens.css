@@ -1,0 +1,180 @@
+/*
+ * Cauce — tokens del sistema visual.
+ *
+ * Monocromático estricto: fondo blanco, negro para resaltar, cero color
+ * de acento. Toda la jerarquía sale de peso tipográfico, escala y
+ * espacio en blanco. Si un diseño "necesita" color, la jerarquía está
+ * mal resuelta, no faltan tokens.
+ */
+
+:root {
+  /* ---- Grises: 8 pasos entre blanco puro y negro puro ---- */
+  --blanco: #ffffff;
+  --gris-1: #f7f7f7;
+  --gris-2: #ededed;
+  --gris-3: #dfdfdf;
+  --gris-4: #c4c4c4;
+  --gris-5: #9b9b9b;
+  --gris-6: #6b6b6b;
+  --gris-7: #3f3f3f;
+  --gris-8: #191919;
+  --negro: #000000;
+
+  /*
+   * Uso del extremo oscuro:
+   * --negro   → SOLO acción primaria y énfasis puntual.
+   * --gris-8  → texto de cuerpo y titulares. Nunca #000 en texto corrido.
+   */
+  --texto: var(--gris-8);
+  --texto-secundario: var(--gris-6);
+  --texto-deshabilitado: var(--gris-5);
+  --fondo: var(--blanco);
+  --fondo-sutil: var(--gris-1);
+
+  /* ---- Tipografía: una sola familia sans ---- */
+  --fuente:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+
+  /* Escala de 6 tamaños */
+  --texto-xs: 0.75rem;   /* 12 — metadatos, etiquetas */
+  --texto-s: 0.875rem;   /* 14 — tablas, controles */
+  --texto-m: 1rem;       /* 16 — cuerpo */
+  --texto-l: 1.25rem;    /* 20 — subtítulos */
+  --texto-xl: 1.75rem;   /* 28 — títulos de sección */
+  --texto-2xl: 2.5rem;   /* 40 — título de página */
+
+  --peso-normal: 400;
+  --peso-medio: 500;
+  --peso-semibold: 600;
+  --peso-bold: 700;
+
+  --interlineado-compacto: 1.25;
+  --interlineado-cuerpo: 1.55;
+
+  /* ---- Espaciado: escala de 4px ---- */
+  --esp-1: 4px;
+  --esp-2: 8px;
+  --esp-3: 12px;
+  --esp-4: 16px;
+  --esp-6: 24px;
+  --esp-8: 32px;
+  --esp-12: 48px;
+  --esp-16: 64px;
+
+  /* ---- Bordes ---- */
+  --borde-color: var(--gris-3);
+  --borde: 1px solid var(--borde-color);
+  --borde-fuerte: 1px solid var(--gris-8);
+  --radio: 2px;
+  --radio-cero: 0;
+
+  /* ---- Estados interactivos, resueltos en gris ---- */
+  --hover-fondo: var(--gris-1);
+  --activo-fondo: var(--gris-2);
+  --foco-contorno: 2px solid var(--gris-8);
+  --deshabilitado-fondo: var(--gris-1);
+  --deshabilitado-texto: var(--gris-5);
+  /* Error: sin rojo. Borde oscuro + peso + texto explícito. */
+  --error-borde: 1px solid var(--gris-8);
+  --error-texto: var(--gris-8);
+  --error-peso: var(--peso-semibold);
+}
+
+/* ---- Base ---- */
+body {
+  margin: 0;
+  background: var(--fondo);
+  color: var(--texto);
+  font-family: var(--fuente);
+  font-size: var(--texto-m);
+  line-height: var(--interlineado-cuerpo);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- Botones ---- */
+.boton {
+  font: inherit;
+  font-size: var(--texto-s);
+  font-weight: var(--peso-medio);
+  padding: var(--esp-2) var(--esp-4);
+  border-radius: var(--radio);
+  cursor: pointer;
+  background: var(--fondo);
+  color: var(--texto);
+  border: var(--borde);
+}
+.boton:hover { background: var(--hover-fondo); }
+.boton:active { background: var(--activo-fondo); }
+.boton:focus-visible { outline: var(--foco-contorno); outline-offset: 1px; }
+.boton:disabled {
+  background: var(--deshabilitado-fondo);
+  color: var(--deshabilitado-texto);
+  border-color: var(--gris-2);
+  cursor: not-allowed;
+}
+
+/* Acción primaria: el único lugar donde vive el negro puro. */
+.boton--primario {
+  background: var(--negro);
+  color: var(--blanco);
+  border: 1px solid var(--negro);
+}
+.boton--primario:hover { background: var(--gris-7); border-color: var(--gris-7); }
+.boton--primario:active { background: var(--gris-8); border-color: var(--gris-8); }
+.boton--primario:disabled {
+  background: var(--gris-4);
+  border-color: var(--gris-4);
+  color: var(--blanco);
+}
+
+/* ---- Campos ---- */
+.campo {
+  font: inherit;
+  font-size: var(--texto-s);
+  padding: var(--esp-2) var(--esp-3);
+  border: var(--borde);
+  border-radius: var(--radio);
+  background: var(--fondo);
+  color: var(--texto);
+}
+.campo::placeholder { color: var(--gris-5); }
+.campo:focus-visible { outline: var(--foco-contorno); outline-offset: -1px; }
+.campo:disabled {
+  background: var(--deshabilitado-fondo);
+  color: var(--deshabilitado-texto);
+}
+.campo--error { border: var(--error-borde); }
+.mensaje-error {
+  font-size: var(--texto-xs);
+  font-weight: var(--error-peso);
+  color: var(--error-texto);
+}
+
+/*
+ * ---- Estados de sesión, sin color ----
+ * connected    → punto sólido oscuro + etiqueta en semibold
+ * disconnected → aro vacío + etiqueta normal
+ * qr           → aro punteado (esperando escaneo)
+ * pending      → punto sólido gris claro
+ */
+.estado {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--esp-2);
+  font-size: var(--texto-s);
+}
+.estado::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+.estado--connected { font-weight: var(--peso-semibold); }
+.estado--connected::before { background: var(--gris-8); }
+.estado--disconnected { color: var(--texto-secundario); }
+.estado--disconnected::before { border: 1.5px solid var(--gris-5); }
+.estado--qr::before { border: 1.5px dashed var(--gris-7); }
+.estado--pending { color: var(--texto-secundario); }
+.estado--pending::before { background: var(--gris-4); }
