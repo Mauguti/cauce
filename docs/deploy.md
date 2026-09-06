@@ -136,6 +136,7 @@ Edítalo (`sudo nano /etc/cauce.env`) con:
 
 ```
 CAUCE_API_KEY=<genera: openssl rand -hex 24>
+CAUCE_CRYPTO_KEY=<genera: openssl rand -hex 32>
 CAUCE_CORS_ORIGENES=https://cauce-consola.web.app
 CAUCE_URL_WEBHOOKS=http://host.docker.internal:3001
 CAUCE_DATA_DIR=/var/lib/cauce
@@ -146,6 +147,30 @@ PORT=3001
 Sin `GOOGLE_APPLICATION_CREDENTIALS` (ni `FIRESTORE_PROJECT_ID`) el
 orquestador cae al repositorio en memoria y pierde el historial en cada
 reinicio; en producción esa variable es obligatoria.
+
+### `CAUCE_CRYPTO_KEY` — llave de cifrado de credenciales
+
+Cifra en reposo los tokens que los clientes conectan (API token y
+signing secret de monday; AES-256-GCM). **Es tan sensible como los
+tokens que protege.**
+
+- **Generarla:** `openssl rand -hex 32` (cualquier cadena sirve; se
+  deriva con scrypt, pero usa una larga y aleatoria).
+- **Perderla = perder acceso a las credenciales guardadas.** Los tokens
+  cifrados en Firestore quedan ilegibles: el conector no podrá leer ni
+  escribir en monday y cada cliente tendrá que **volver a pegar** su
+  token en Conexiones. No hay recuperación; la llave no vive en ningún
+  otro lado.
+- **No rotarla sin recapturar los tokens.** Cambiar la llave invalida
+  todo lo ya cifrado. Si necesitas rotarla: cámbiala, reinicia, y pide a
+  cada cliente que reingrese su token (o guárdalos de nuevo por API).
+  Una rotación con solapamiento (descifrar con la vieja, recifrar con la
+  nueva) es un TODO, no está implementada.
+- **Respáldala** junto con —pero por separado de— el snapshot de
+  Firestore. Sin la llave, el backup de credenciales no sirve.
+- Si la variable falta, el orquestador arranca con una llave de
+  desarrollo **insegura** y lo advierte en el log; nunca dejes producción
+  así.
 
 ```bash
 sudo mkdir -p /var/lib/cauce && sudo chown ubuntu:ubuntu /var/lib/cauce
@@ -233,7 +258,10 @@ Debe responder `{"ok":true}`.
   mano.
 - **Backups**: el estado que importa vive en los volúmenes Docker
   `cauce-db-data` (Postgres) y `cauce-auth-*` (sesiones), más
-  `/var/lib/cauce` (cola). Inclúyelos en el snapshot del EBS.
+  `/var/lib/cauce` (cola) y Firestore. Inclúyelos en el snapshot del EBS.
+  Respalda `CAUCE_CRYPTO_KEY` por separado: sin ella, las credenciales
+  cifradas en Firestore son irrecuperables (ver arriba).
 - **Rotar la API key**: cambia `CAUCE_API_KEY` en `/etc/cauce.env` y
   `sudo systemctl restart cauce`. (Rotación con solapamiento: TODO,
-  junto con Secret Manager.)
+  junto con Secret Manager.) Para `CAUCE_CRYPTO_KEY` la rotación exige
+  recapturar los tokens de cada cliente — no la cambies a la ligera.
