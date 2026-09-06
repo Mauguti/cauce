@@ -75,6 +75,16 @@ Si `docker ps` responde sin sudo, dockerode funcionará. Si da
 `permission denied`, el servicio también fallará: no sigas hasta
 resolverlo.
 
+> **No crees `cauce-db` a mano.** El orquestador levanta él solo el
+> contenedor Postgres compartido `cauce-db` con el usuario `cauce`, una
+> base de datos por instancia, y guarda el password generado en el
+> label `cauce.db.password` de ese contenedor. Las instancias de
+> Evolution leen el password de ahí. Si creas `cauce-db` manualmente
+> (otro usuario, otro password, sin el label), las instancias no podrán
+> conectarse a su base y el arranque de cada sesión fallará. Si necesitas
+> empezar de cero: `docker rm -f cauce-db && docker volume rm
+> cauce-db-data` y deja que el orquestador lo recree.
+
 ### 2.3 Node 22 y el código
 
 ```bash
