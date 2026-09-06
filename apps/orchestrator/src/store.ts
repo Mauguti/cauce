@@ -21,6 +21,14 @@ export interface Repositorio {
   getTenant(tenantId: TenantId): Promise<Tenant | null>;
   listTenants(): Promise<Tenant[]>;
   saveTenant(tenant: Tenant): Promise<void>;
+  /** tenantId asociado a un usuario de Firebase, o null. */
+  getTenantIdDeUsuario(uid: string): Promise<TenantId | null>;
+  /**
+   * Get-or-create ATÓMICO del tenant de un usuario: si ya hay un tenant
+   * para `uid` lo devuelve; si no, crea `fabrica()` y lo asocia. Dos
+   * requests concurrentes del mismo uid resultan en UN solo tenant.
+   */
+  provisionarTenant(uid: string, fabrica: () => Tenant): Promise<Tenant>;
   listInstances(tenantId: TenantId): Promise<Instance[]>;
   getInstance(tenantId: TenantId, instanceId: InstanceId): Promise<Instance | null>;
   saveInstance(instance: Instance): Promise<void>;
@@ -72,10 +80,32 @@ export class RepositorioEnMemoria implements Repositorio {
   #tenants = new Map<TenantId, Tenant>();
   #instances = new Map<TenantId, Map<InstanceId, Instance>>();
   #messages = new Map<TenantId, Message[]>();
+  #usuarios = new Map<string, TenantId>();
 
   constructor(semilla?: { tenants: Tenant[]; instances?: Instance[] }) {
     for (const t of semilla?.tenants ?? []) this.#tenants.set(t.id, t);
     for (const i of semilla?.instances ?? []) void this.saveInstance(i);
+  }
+
+  async getTenantIdDeUsuario(uid: string): Promise<TenantId | null> {
+    return this.#usuarios.get(uid) ?? null;
+  }
+
+  async provisionarTenant(
+    uid: string,
+    fabrica: () => Tenant,
+  ): Promise<Tenant> {
+    // Sin `await` entre la lectura y las escrituras: atómico frente a
+    // otras llamadas concurrentes en el modelo de un solo hilo de JS.
+    const existente = this.#usuarios.get(uid);
+    if (existente) {
+      const t = this.#tenants.get(existente);
+      if (t) return t;
+    }
+    const tenant = fabrica();
+    this.#tenants.set(tenant.id, tenant);
+    this.#usuarios.set(uid, tenant.id);
+    return tenant;
   }
 
   async getTenant(tenantId: TenantId): Promise<Tenant | null> {

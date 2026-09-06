@@ -1,5 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Instance, InstanceId, Message, TenantId } from "@cauce/core";
+import {
+  pruebaVigente,
+  type Instance,
+  type InstanceId,
+  type Message,
+  type TenantId,
+} from "@cauce/core";
 import { createTransport, type MessageTransport } from "@cauce/transports";
 import type { ColaEnvios } from "./cola.ts";
 import { DockerManager, nombreContenedor } from "./docker/manager.ts";
@@ -281,5 +287,30 @@ export class GestorSesiones {
       this.#sesiones.delete(instanceId);
     }
     await this.#repo.deleteInstance(tenantId, instanceId);
+  }
+
+  /**
+   * Vence las pruebas caducadas: DESCONECTA (logout) las sesiones aún
+   * vivas de tenants con prueba vencida, SIN destruir contenedor, volumen
+   * ni datos. Un cliente que paga tarde no pierde su vinculación ni sus
+   * conversaciones. Idempotente: solo toca sesiones no-desconectadas.
+   * Devuelve cuántas sesiones desconectó.
+   */
+  async vencerPruebas(): Promise<number> {
+    let desconectadas = 0;
+    for (const tenant of await this.#repo.listTenants()) {
+      if (pruebaVigente(tenant)) continue;
+      for (const inst of await this.#repo.listInstances(tenant.id)) {
+        if (inst.estado === "disconnected") continue;
+        if (!this.#sesiones.has(inst.id)) continue;
+        try {
+          await this.desconectar(tenant.id, inst.id);
+          desconectadas += 1;
+        } catch {
+          // El contenedor puede estar caído; se reintenta en el próximo barrido.
+        }
+      }
+    }
+    return desconectadas;
   }
 }

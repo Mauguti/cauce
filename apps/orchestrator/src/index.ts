@@ -10,6 +10,8 @@ import { RepositorioFirestore } from "./store-firestore.ts";
 import { ConectorMonday } from "./monday/conector.ts";
 import { MotorEntrada } from "./entrada/motor.ts";
 import { Cripto } from "./cripto.ts";
+import { crearVerificadorToken } from "./firebase.ts";
+import { Provisioning } from "./provisioning.ts";
 
 const puerto = Number(process.env.PORT ?? 3001);
 
@@ -31,7 +33,7 @@ const usaFirestore = Boolean(
 const tenantDemo: Tenant = {
   id: "demo",
   nombre: "Tenant demo",
-  plan: "basico",
+  plan: "base",
   estado: "activo",
   apiKeyHash: hashApiKey(apiKey),
   creadoEn: new Date().toISOString(),
@@ -88,9 +90,34 @@ const motorEntrada = new MotorEntrada({
     gestor.enviarDirecto(t, i, tel, cuerpo),
 });
 
-crearApp(repo, gestor, { corsOrigenes, cola, monday, motorEntrada }).listen(
-  puerto,
-  () => {
-    console.log(`orquestador escuchando en :${puerto}`);
-  },
-);
+const verificarToken = crearVerificadorToken();
+const provisioning = new Provisioning(repo);
+const adminKey = process.env.CAUCE_ADMIN_KEY;
+if (!adminKey) {
+  console.warn("CAUCE_ADMIN_KEY sin definir: el endpoint admin de plan queda deshabilitado");
+}
+
+// Barrido de pruebas vencidas: desconecta (sin destruir) las sesiones de
+// tenants cuya prueba caducó. Cada 5 min; idempotente.
+const barrer = async () => {
+  try {
+    const n = await gestor.vencerPruebas();
+    if (n > 0) console.log(`pruebas vencidas: ${n} sesiones desconectadas`);
+  } catch (err: any) {
+    console.warn(`barrido de pruebas falló: ${err?.message}`);
+  }
+};
+void barrer();
+setInterval(barrer, 5 * 60_000);
+
+crearApp(repo, gestor, {
+  corsOrigenes,
+  cola,
+  monday,
+  motorEntrada,
+  verificarToken,
+  provisioning,
+  ...(adminKey ? { adminKey } : {}),
+}).listen(puerto, () => {
+  console.log(`orquestador escuchando en :${puerto}`);
+});

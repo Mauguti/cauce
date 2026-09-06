@@ -63,7 +63,7 @@ describe("POST /webhooks/:tenantId/:instanceId", () => {
   function levantar() {
     const repo = new RepositorioEnMemoria({
       tenants: [
-        { id: "a", nombre: "A", plan: "basico", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z" },
+        { id: "a", nombre: "A", plan: "base", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z" },
       ],
       instances: [
         { id: "i1", tenantId: "a", transportType: "evolution", contenedorId: "c1", numero: null, estado: "connected", ultimoHeartbeat: null },

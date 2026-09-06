@@ -10,7 +10,11 @@ export type TenantId = string;
 export type InstanceId = string;
 export type MessageId = string;
 
-export type TenantPlan = "basico" | "pro";
+/**
+ * Planes (ver bloque 8). `prueba` caduca; `base` es el pago mínimo;
+ * `extras` lleva límites contratados explícitos.
+ */
+export type TenantPlan = "prueba" | "base" | "extras";
 export type TenantEstado = "activo" | "suspendido";
 
 /** Documento en `tenants/{tenantId}` */
@@ -24,6 +28,15 @@ export interface Tenant {
    * guarda; el tenant se deriva de la key presentada, no del path.
    */
   apiKeyHash: string;
+  /** Máximo de líneas (instancias). Ausente → según plan. */
+  limiteLineas?: number;
+  /** Máximo de conectores CRM. Ausente → según plan. */
+  limiteConectores?: number;
+  /**
+   * Fin de la prueba (ISO 8601). Solo aplica al plan `prueba`;
+   * null/ausente = sin caducidad.
+   */
+  pruebaExpiraEn?: string | null;
   /**
    * Milisegundos entre envíos de la cola de cada instancia del tenant
    * (antes del jitter). Ausente = valor por defecto conservador.
@@ -31,6 +44,36 @@ export interface Tenant {
   envioIntervaloMs?: number;
   /** ISO 8601 */
   creadoEn: string;
+}
+
+/** Límites por plan. `extras` se sobreescribe con los campos del tenant. */
+export const LIMITES_PLAN: Record<
+  TenantPlan,
+  { lineas: number; conectores: number }
+> = {
+  prueba: { lineas: 1, conectores: 1 },
+  base: { lineas: 1, conectores: 1 },
+  extras: { lineas: 99, conectores: 99 },
+};
+
+/** Duración de la prueba, en días. */
+export const DIAS_PRUEBA = 14;
+
+/** Límites efectivos del tenant (campos explícitos o los del plan). */
+export function limitesTenant(t: Tenant): {
+  lineas: number;
+  conectores: number;
+} {
+  return {
+    lineas: t.limiteLineas ?? LIMITES_PLAN[t.plan].lineas,
+    conectores: t.limiteConectores ?? LIMITES_PLAN[t.plan].conectores,
+  };
+}
+
+/** ¿El tenant está vigente? Falso solo si su prueba ya caducó. */
+export function pruebaVigente(t: Tenant, ahora: Date = new Date()): boolean {
+  if (t.plan !== "prueba" || !t.pruebaExpiraEn) return true;
+  return ahora < new Date(t.pruebaExpiraEn);
 }
 
 /**

@@ -15,6 +15,7 @@
     "@google-cloud/firestore": "^7.11.6",
     "dockerode": "^4.0.2",
     "express": "^5.1.0",
+    "firebase-admin": "^13.10.0",
     "jsonwebtoken": "^9.0.3"
   },
   "devDependencies": {

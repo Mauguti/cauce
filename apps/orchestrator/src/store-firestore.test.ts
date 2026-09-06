@@ -14,7 +14,7 @@ const hayEmulador = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const tenant: Tenant = {
   id: "t-fs",
   nombre: "Firestore test",
-  plan: "basico",
+  plan: "base",
   estado: "activo",
   apiKeyHash: "a".repeat(64),
   creadoEn: "2026-09-06T00:00:00Z",
@@ -177,4 +177,29 @@ describe.skipIf(!hayEmulador)("RepositorioFirestore", () => {
     expect(lista).toHaveLength(1);
     expect(lista[0]).toMatchObject({ id: "a", tipo: "cualquiera" });
   });
+
+  it("provisionarTenant es idempotente bajo concurrencia real (transacción)", async () => {
+    const repo = new RepositorioFirestore(db);
+    const uid = `uid-conc-${Date.now()}`;
+    let fabricado = 0;
+    const fabrica = () => {
+      fabricado += 1;
+      return {
+        id: `${uid}-${fabricado}-${Math.random().toString(36).slice(2, 6)}`,
+        nombre: "Concurrente",
+        plan: "prueba" as const,
+        estado: "activo" as const,
+        apiKeyHash: "b".repeat(64),
+        pruebaExpiraEn: new Date(Date.now() + 1e9).toISOString(),
+        creadoEn: new Date().toISOString(),
+      };
+    };
+    // 5 altas concurrentes del MISMO uid.
+    const resultados = await Promise.all(
+      Array.from({ length: 5 }, () => repo.provisionarTenant(uid, fabrica)),
+    );
+    const ids = new Set(resultados.map((t) => t.id));
+    expect(ids.size).toBe(1); // todos apuntan al mismo tenant
+    expect(await repo.getTenantIdDeUsuario(uid)).toBe([...ids][0]);
+  }, 30_000);
 });

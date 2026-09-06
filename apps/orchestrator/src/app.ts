@@ -8,6 +8,9 @@ import type { ColaEnvios } from "./cola.ts";
 import type { ConectorMonday } from "./monday/conector.ts";
 import type { MotorEntrada } from "./entrada/motor.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
+import type { VerificadorToken } from "./firebase.ts";
+import type { Provisioning } from "./provisioning.ts";
+import { limitesTenant, pruebaVigente } from "@cauce/core";
 import { normalizarEntrante } from "./webhook.ts";
 
 declare global {
@@ -52,6 +55,12 @@ export interface AppOpciones {
   monday?: ConectorMonday;
   /** Motor de entrada; procesa cada mensaje entrante (conversación + disparadores). */
   motorEntrada?: MotorEntrada;
+  /** Verificador de ID tokens de Firebase (login de la consola). */
+  verificarToken?: VerificadorToken;
+  /** Provisioning autoservicio de tenants. */
+  provisioning?: Provisioning;
+  /** Clave del endpoint admin de cambio de plan. */
+  adminKey?: string;
 }
 
 export function crearApp(
@@ -151,15 +160,48 @@ export function crearApp(
     res.status(200).json({ ok: true });
   });
 
-  // Identidad del tenant dueño de la key; es lo único que la consola
-  // necesita para construir el resto de las rutas.
-  app.get("/api/me", autenticar(repo), async (req, res) => {
-    const tenant = await repo.getTenant(req.tenantId!);
-    res.json({ tenantId: tenant!.id, nombre: tenant!.nombre });
+  // Alta autoservicio: la consola llama tras el login con el ID token de
+  // Firebase. "Dame mi tenant, créalo si no existe" — idempotente.
+  app.post("/api/provisionar", async (req, res) => {
+    const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+    if (!bearer || !opciones.verificarToken || !opciones.provisioning) {
+      res.status(401).json({ error: "no autorizado" });
+      return;
+    }
+    let identidad;
+    try {
+      identidad = await opciones.verificarToken(bearer);
+    } catch {
+      res.status(401).json({ error: "token inválido" });
+      return;
+    }
+    const { tenant, apiKey } = await opciones.provisioning.provisionar(identidad);
+    res.status(200).json({
+      tenantId: tenant.id,
+      nombre: tenant.nombre,
+      plan: tenant.plan,
+      // apiKey solo en el alta nueva; después null.
+      apiKey,
+    });
+  });
+
+  // Identidad + plan del tenant autenticado; lo que la consola necesita
+  // para construir el resto de las rutas y mostrar límites/vigencia.
+  app.get("/api/me", autenticar(repo, opciones.verificarToken), async (req, res) => {
+    const tenant = (await repo.getTenant(req.tenantId!))!;
+    const limites = limitesTenant(tenant);
+    res.json({
+      tenantId: tenant.id,
+      nombre: tenant.nombre,
+      plan: tenant.plan,
+      limites,
+      pruebaExpiraEn: tenant.pruebaExpiraEn ?? null,
+      pruebaVigente: pruebaVigente(tenant),
+    });
   });
 
   const tenantRouter = express.Router({ mergeParams: true });
-  tenantRouter.use(autenticar(repo));
+  tenantRouter.use(autenticar(repo, opciones.verificarToken));
 
   tenantRouter.get("/instances", async (req, res) => {
     res.json(await repo.listInstances(req.tenantId!));
@@ -281,6 +323,21 @@ export function crearApp(
       });
       return;
     }
+    // Límite de conectores: solo aplica al DAR DE ALTA uno nuevo (editar
+    // el existente no cuenta). Hoy monday es el único tipo, así que el
+    // conteo es 0 o 1; el guard queda listo para Bitrix/Pipedrive.
+    const yaExiste = (await opciones.monday.verConfig(req.tenantId!)) !== null;
+    if (!yaExiste) {
+      const tenant = (await repo.getTenant(req.tenantId!))!;
+      const limite = limitesTenant(tenant).conectores;
+      const conectoresActuales = 0; // monday es el único tipo; ninguno aún
+      if (conectoresActuales + 1 > limite) {
+        res.status(403).json({
+          error: `Tu plan permite ${limite} ${limite === 1 ? "conector" : "conectores"}. Contrata más para agregar otro.`,
+        });
+        return;
+      }
+    }
     try {
       await opciones.monday.guardarAlta(req.tenantId!, {
         instanceId,
@@ -352,6 +409,23 @@ export function crearApp(
   tenantRouter.post("/instances", async (req, res) => {
     if (!gestor) {
       res.status(501).json({ error: "orquestador sin gestor de sesiones" });
+      return;
+    }
+    // Límites por plan: validados en el servidor, con mensaje claro.
+    const tenant = (await repo.getTenant(req.tenantId!))!;
+    if (!pruebaVigente(tenant)) {
+      res.status(403).json({
+        error:
+          "Tu prueba terminó. Contrata un plan para conectar números; tus datos y conversaciones siguen guardados.",
+      });
+      return;
+    }
+    const limites = limitesTenant(tenant);
+    const actuales = await repo.listInstances(req.tenantId!);
+    if (actuales.length >= limites.lineas) {
+      res.status(403).json({
+        error: `Tu plan permite ${limites.lineas} ${limites.lineas === 1 ? "línea" : "líneas"}. Elimina una o contrata más para agregar otra.`,
+      });
       return;
     }
     try {
@@ -492,6 +566,37 @@ export function crearApp(
   }
 
   app.use("/api/tenants/:tenantId", tenantRouter);
+
+  // Cambio de plan MANUAL (Stripe va en otro bloque). Autenticado con
+  // CAUCE_ADMIN_KEY, no con credenciales de tenant. Sube a plan pagado
+  // (limpia la caducidad) o ajusta límites contratados ("extras").
+  app.post("/api/admin/tenants/:tenantId/plan", async (req, res) => {
+    const admin = req.headers["x-admin-key"];
+    if (!opciones.adminKey || admin !== opciones.adminKey) {
+      res.status(401).json({ error: "no autorizado" });
+      return;
+    }
+    const tenant = await repo.getTenant(String(req.params.tenantId));
+    if (!tenant) {
+      res.status(404).json({ error: "tenant no encontrado" });
+      return;
+    }
+    const { plan, limiteLineas, limiteConectores } = req.body ?? {};
+    if (plan !== "prueba" && plan !== "base" && plan !== "extras") {
+      res.status(400).json({ error: "plan inválido (prueba|base|extras)" });
+      return;
+    }
+    const actualizado = {
+      ...tenant,
+      plan,
+      // Al pasar a un plan pagado se limpia la caducidad de prueba.
+      pruebaExpiraEn: plan === "prueba" ? tenant.pruebaExpiraEn ?? null : null,
+      ...(typeof limiteLineas === "number" ? { limiteLineas } : {}),
+      ...(typeof limiteConectores === "number" ? { limiteConectores } : {}),
+    };
+    await repo.saveTenant(actualizado);
+    res.json({ tenantId: actualizado.id, plan: actualizado.plan });
+  });
 
   return app;
 }

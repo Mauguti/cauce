@@ -52,6 +52,33 @@ export class RepositorioFirestore implements Repositorio {
     await this.#db.doc(rutas.tenant(tenant.id)).set(tenant);
   }
 
+  async getTenantIdDeUsuario(uid: string): Promise<TenantId | null> {
+    const doc = await this.#db.doc(`usuarios/${uid}`).get();
+    return doc.exists ? (doc.data()!.tenantId as TenantId) : null;
+  }
+
+  async provisionarTenant(
+    uid: string,
+    fabrica: () => Tenant,
+  ): Promise<Tenant> {
+    const refUsuario = this.#db.doc(`usuarios/${uid}`);
+    // Transacción: dos altas concurrentes del mismo uid se serializan y
+    // Firestore reintenta la perdedora, que ya ve usuarios/{uid} → un
+    // solo tenant. Mismo patrón que registrarEntrante.
+    return this.#db.runTransaction(async (tx) => {
+      const snap = await tx.get(refUsuario);
+      if (snap.exists) {
+        const tenantId = snap.data()!.tenantId as TenantId;
+        const t = await tx.get(this.#db.doc(rutas.tenant(tenantId)));
+        if (t.exists) return t.data() as Tenant;
+      }
+      const tenant = fabrica();
+      tx.set(this.#db.doc(rutas.tenant(tenant.id)), tenant);
+      tx.set(refUsuario, { tenantId: tenant.id, creadoEn: tenant.creadoEn });
+      return tenant;
+    });
+  }
+
   async listInstances(tenantId: TenantId): Promise<Instance[]> {
     const snap = await this.#db.collection(rutas.instances(tenantId)).get();
     return snap.docs.map((d) => d.data() as Instance);
