@@ -1,31 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
-import {
-  api,
-  apiKeyGuardada,
-  guardarApiKey,
-  olvidarApiKey,
-  ErrorNoAutorizado,
-  type Yo,
-  type Instance,
-  type MondayVista,
-} from "./api.ts";
+import { api, usarProveedorToken, type Yo, type Instance, type MondayVista } from "./api.ts";
+import { observarSesion, type Sesion } from "./auth.ts";
+import { Login } from "./Login.tsx";
+import { Inicio } from "./Inicio.tsx";
 import { Sesiones } from "./Sesiones.tsx";
 import { Conexiones } from "./Conexiones.tsx";
 import { Acciones } from "./Acciones.tsx";
 import { Conversacion } from "./Conversacion.tsx";
-import { PrimerosPasos } from "./PrimerosPasos.tsx";
 import "./app.css";
 
-type Seccion = "inicio" | "sesiones" | "conexiones" | "acciones";
+export type Seccion = "inicio" | "sesiones" | "conexiones" | "acciones";
 
 export default function App() {
+  const [sesion, setSesion] = useState<Sesion | null>(null);
+  const [cargandoAuth, setCargandoAuth] = useState(true);
   const [yo, setYo] = useState<Yo | null>(null);
-  const [probando, setProbando] = useState(true);
-  const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [errorProv, setErrorProv] = useState<string | null>(null);
   const [seccion, setSeccion] = useState<Seccion>("inicio");
   const [instanciaAbierta, setInstanciaAbierta] = useState<string | null>(null);
 
-  // Progreso de onboarding, para el estado vacío y los primeros pasos.
   const [instancias, setInstancias] = useState<Instance[]>([]);
   const [monday, setMonday] = useState<MondayVista | null>(null);
   const [hayAcciones, setHayAcciones] = useState(false);
@@ -41,68 +34,57 @@ export default function App() {
     setHayAcciones((disp?.length ?? 0) > 0 || mon !== null);
   }, []);
 
+  // Observa la sesión de Firebase y fija el proveedor de token.
   useEffect(() => {
-    const key = apiKeyGuardada();
-    if (!key) {
-      setProbando(false);
-      return;
-    }
-    api
-      .yo(key)
-      .then((quien) => {
-        setYo(quien);
-        return cargarProgreso(quien.tenantId);
-      })
-      .catch(() => olvidarApiKey())
-      .finally(() => setProbando(false));
-  }, [cargarProgreso]);
+    return observarSesion((s) => {
+      setSesion(s);
+      usarProveedorToken(s ? () => s.idToken() : null);
+      setCargandoAuth(false);
+      if (!s) {
+        setYo(null);
+        setInstancias([]);
+        setMonday(null);
+      }
+    });
+  }, []);
 
-  const entrar = useCallback(
-    async (key: string) => {
-      setErrorKey(null);
+  // Con sesión: provisiona (idempotente) y carga el tenant.
+  useEffect(() => {
+    if (!sesion) return;
+    let vivo = true;
+    (async () => {
+      setErrorProv(null);
       try {
-        const quien = await api.yo(key);
-        guardarApiKey(key);
+        await api.provisionar();
+        const quien = await api.yo();
+        if (!vivo) return;
         setYo(quien);
         await cargarProgreso(quien.tenantId);
-      } catch (err) {
-        setErrorKey(
-          err instanceof ErrorNoAutorizado
-            ? "La key no es válida."
-            : "No se pudo contactar al orquestador.",
-        );
+      } catch {
+        if (vivo) setErrorProv("No se pudo preparar tu cuenta. Reintenta.");
       }
-    },
-    [cargarProgreso],
-  );
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [sesion, cargarProgreso]);
 
-  if (probando) return null;
+  if (cargandoAuth) return null;
+
+  if (!sesion) return <Login />;
 
   if (!yo) {
     return (
       <main className="consola consola--angosta">
         <h1>Cauce</h1>
-        <p className="consola__sub">Ingresa la API key de tu cuenta.</p>
-        <form
-          className="key-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const key = new FormData(e.currentTarget).get("key");
-            if (typeof key === "string" && key.trim()) void entrar(key.trim());
-          }}
-        >
-          <input
-            className={`campo${errorKey ? " campo--error" : ""}`}
-            name="key"
-            type="password"
-            placeholder="API key"
-            autoFocus
-          />
-          <button className="boton boton--primario" type="submit">
-            Entrar
+        <p className="consola__sub">
+          {errorProv ?? "Preparando tu cuenta…"}
+        </p>
+        {errorProv && (
+          <button className="boton" onClick={() => sesion.cerrar()}>
+            Salir
           </button>
-        </form>
-        {errorKey && <p className="mensaje-error">{errorKey}</p>}
+        )}
       </main>
     );
   }
@@ -117,8 +99,11 @@ export default function App() {
     );
   }
 
-  const hayNumeroConectado = instancias.some((i) => i.estado === "connected");
   const refrescar = () => cargarProgreso(yo.tenantId);
+  const pasosCompletos =
+    instancias.some((i) => i.estado === "connected") &&
+    monday !== null &&
+    hayAcciones;
 
   return (
     <div className="app">
@@ -144,14 +129,13 @@ export default function App() {
           )}
         </div>
         <div className="nav__cuenta">
-          <span className="nav__tenant">{yo.nombre}</span>
-          <button
-            className="boton"
-            onClick={() => {
-              olvidarApiKey();
-              setYo(null);
-            }}
-          >
+          {yo.plan === "prueba" && (
+            <span className="nav__plan">
+              {yo.pruebaVigente ? "Prueba" : "Prueba vencida"}
+            </span>
+          )}
+          <span className="nav__tenant">{sesion.email ?? yo.nombre}</span>
+          <button className="boton" onClick={() => sesion.cerrar()}>
             Salir
           </button>
         </div>
@@ -159,19 +143,18 @@ export default function App() {
 
       <div className="app__cuerpo">
         {seccion === "inicio" && (
-          <PrimerosPasos
-            hayNumeroConectado={hayNumeroConectado}
+          <Inicio
+            yo={yo}
+            instancias={instancias}
             hayConexion={monday !== null}
             hayAcciones={hayAcciones}
+            pasosCompletos={pasosCompletos}
             irA={setSeccion}
+            abrirInstancia={setInstanciaAbierta}
           />
         )}
         {seccion === "sesiones" && (
-          <Sesiones
-            yo={yo}
-            alAbrir={setInstanciaAbierta}
-            alCambiar={refrescar}
-          />
+          <Sesiones yo={yo} alAbrir={setInstanciaAbierta} alCambiar={refrescar} />
         )}
         {seccion === "conexiones" && (
           <Conexiones yo={yo} instancias={instancias} alCambiar={refrescar} />

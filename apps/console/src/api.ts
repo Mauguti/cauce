@@ -9,40 +9,23 @@ export type { Instance, Message } from "@cauce/core";
 const BASE = (import.meta.env.VITE_CAUCE_API as string | undefined) ??
   "http://localhost:3001";
 
-const CLAVE_STORAGE = "cauce.apiKey";
-
-export function apiKeyGuardada(): string | null {
-  try {
-    return localStorage.getItem(CLAVE_STORAGE);
-  } catch {
-    return null;
-  }
+/**
+ * Proveedor del ID token de Firebase (lo fija App tras el login). Cada
+ * llamada lo pide fresco: Firebase rota el token y getIdToken() lo
+ * refresca solo. La consola ya no maneja API keys.
+ */
+let proveedorToken: (() => Promise<string | null>) | null = null;
+export function usarProveedorToken(p: (() => Promise<string | null>) | null) {
+  proveedorToken = p;
 }
 
-export function guardarApiKey(key: string): void {
-  try {
-    localStorage.setItem(CLAVE_STORAGE, key);
-  } catch {
-    // Sin storage (modo privado): la sesión vive lo que viva la página.
-  }
-}
-
-export function olvidarApiKey(): void {
-  try {
-    localStorage.removeItem(CLAVE_STORAGE);
-  } catch {}
-}
-
-async function llamar<T>(
-  ruta: string,
-  init: RequestInit = {},
-  key = apiKeyGuardada(),
-): Promise<T> {
+async function llamar<T>(ruta: string, init: RequestInit = {}): Promise<T> {
+  const token = proveedorToken ? await proveedorToken() : null;
   const res = await fetch(`${BASE}${ruta}`, {
     ...init,
     headers: {
       ...(init.headers ?? {}),
-      ...(key ? { "x-api-key": key } : {}),
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...(init.body ? { "content-type": "application/json" } : {}),
     },
   });
@@ -57,17 +40,27 @@ async function llamar<T>(
 
 export class ErrorNoAutorizado extends Error {
   constructor() {
-    super("API key inválida");
+    super("no autorizado");
   }
 }
 
 export interface Yo {
   tenantId: string;
   nombre: string;
+  plan: "prueba" | "base" | "extras";
+  limites: { lineas: number; conectores: number };
+  pruebaExpiraEn: string | null;
+  pruebaVigente: boolean;
 }
 
 export const api = {
-  yo: (key: string) => llamar<Yo>("/api/me", {}, key),
+  yo: () => llamar<Yo>("/api/me"),
+
+  provisionar: () =>
+    llamar<{ tenantId: string; nombre: string; plan: string; apiKey: string | null }>(
+      "/api/provisionar",
+      { method: "POST" },
+    ),
 
   instancias: (tenantId: string) =>
     llamar<Instance[]>(`/api/tenants/${tenantId}/instances`),
@@ -78,13 +71,10 @@ export const api = {
   crearInstancia: (tenantId: string) =>
     llamar<Instance>(`/api/tenants/${tenantId}/instances`, { method: "POST" }),
 
-  eliminarInstancia: async (tenantId: string, id: string) => {
-    const res = await fetch(`${BASE}/api/tenants/${tenantId}/instances/${id}`, {
+  eliminarInstancia: (tenantId: string, id: string) =>
+    llamar<void>(`/api/tenants/${tenantId}/instances/${id}`, {
       method: "DELETE",
-      headers: { "x-api-key": apiKeyGuardada() ?? "" },
-    });
-    if (!res.ok && res.status !== 204) throw new Error(`error ${res.status}`);
-  },
+    }),
 
   desconectarInstancia: (tenantId: string, id: string) =>
     llamar<Instance>(`/api/tenants/${tenantId}/instances/${id}/disconnect`, {
@@ -114,6 +104,9 @@ export const api = {
 
   mensajes: (tenantId: string, id: string) =>
     llamar<Message[]>(`/api/tenants/${tenantId}/instances/${id}/messages`),
+
+  mensajesTenant: (tenantId: string) =>
+    llamar<Message[]>(`/api/tenants/${tenantId}/messages`),
 
   enviar: (tenantId: string, id: string, telefono: string, cuerpo: string) =>
     llamar<{ id: string; estado: string }>(

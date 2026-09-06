@@ -34,7 +34,10 @@ function cors(origenes: string[]) {
     const origen = req.headers.origin;
     if (typeof origen === "string" && origenes.includes(origen)) {
       res.setHeader("access-control-allow-origin", origen);
-      res.setHeader("access-control-allow-headers", "content-type, x-api-key");
+      res.setHeader(
+        "access-control-allow-headers",
+        "content-type, x-api-key, authorization",
+      );
       res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE");
       res.setHeader("vary", "origin");
     }
@@ -518,6 +521,13 @@ export function crearApp(
     };
     await opciones.cola.encolar(mensaje);
     res.status(202).json({ id: mensaje.id, estado: mensaje.estado });
+  });
+
+  // Todos los mensajes del tenant (dashboard): recientes primero.
+  tenantRouter.get("/messages", async (req, res) => {
+    const mensajes = await repo.listMessages(req.tenantId!);
+    mensajes.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+    res.json(mensajes.slice(0, 200));
   });
 
   tenantRouter.get("/instances/:instanceId/messages", async (req, res) => {

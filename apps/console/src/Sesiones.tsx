@@ -18,6 +18,8 @@ export function Sesiones(props: {
   const [instancias, setInstancias] = useState<Instance[]>([]);
   const [creando, setCreando] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Error de una ACCIÓN del usuario (crear/límite): el polling no lo pisa.
+  const [accionError, setAccionError] = useState<string | null>(null);
   const [qrDe, setQrDe] = useState<string | null>(null);
   const [aEliminar, setAEliminar] = useState<Instance | null>(null);
   const [aDesconectar, setADesconectar] = useState<Instance | null>(null);
@@ -39,14 +41,15 @@ export function Sesiones(props: {
 
   const crear = async () => {
     setCreando(true);
-    setError(null);
+    setAccionError(null);
     try {
       const creada = await api.crearInstancia(yo.tenantId);
       await refrescar();
       props.alCambiar();
       setQrDe(creada.id);
     } catch (err: any) {
-      setError(err?.message ?? "No se pudo crear la sesión.");
+      // Mensaje del servidor (p. ej. límite de plan), persistente.
+      setAccionError(err?.message ?? "No se pudo crear la sesión.");
     } finally {
       setCreando(false);
     }
@@ -93,6 +96,14 @@ export function Sesiones(props: {
         </button>
       </header>
 
+      {accionError && (
+        <p className="mensaje-error">
+          {accionError}{" "}
+          <button className="mini-cerrar" onClick={() => setAccionError(null)} aria-label="Cerrar">
+            ×
+          </button>
+        </p>
+      )}
       {error && <p className="mensaje-error">{error}</p>}
       {creando && (
         <p className="consola__sub">

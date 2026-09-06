@@ -412,3 +412,62 @@
   /* Cruz sin color: aspa con borde. */
   border: 1.5px solid var(--gris-8); border-radius: 0; transform: rotate(45deg);
 }
+
+/* ============ Bloque 8: login, dashboard, plan ============ */
+.login { display: flex; flex-direction: column; gap: var(--esp-2); margin: var(--esp-4) 0 var(--esp-2); }
+.login__google { width: 100%; margin-top: var(--esp-2); }
+.login__cambiar {
+  background: none; border: none; color: var(--texto-secundario);
+  font: inherit; font-size: var(--texto-s); cursor: pointer;
+  text-decoration: underline; margin-top: var(--esp-3); padding: 0;
+}
+
+.nav__plan {
+  font-size: var(--texto-xs); text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--texto-secundario); border: var(--borde); border-radius: var(--radio);
+  padding: 1px var(--esp-2);
+}
+
+.aviso-prueba {
+  border: var(--error-borde); border-radius: var(--radio);
+  padding: var(--esp-3) var(--esp-4); font-weight: var(--peso-medio);
+  margin-bottom: var(--esp-6);
+}
+
+.pasos-colapsado {
+  display: flex; justify-content: space-between; align-items: center;
+  width: 100%; font: inherit; font-size: var(--texto-s);
+  padding: var(--esp-3) var(--esp-4); margin-bottom: var(--esp-6);
+  border: var(--borde); border-radius: var(--radio);
+  background: var(--gris-1); cursor: pointer;
+}
+.pasos-envoltura { margin-bottom: var(--esp-8); }
+
+/* Contadores del dashboard */
+.contadores { display: flex; gap: var(--esp-3); margin-bottom: var(--esp-4); flex-wrap: wrap; }
+.contador {
+  flex: 1; min-width: 120px; text-align: left;
+  display: flex; flex-direction: column; gap: var(--esp-1);
+  padding: var(--esp-4); border: var(--borde); border-radius: var(--radio);
+  background: var(--fondo); cursor: pointer; font: inherit;
+}
+.contador:hover { background: var(--hover-fondo); }
+.contador--activo { border: var(--borde-fuerte); }
+.contador--alerta { border-color: var(--estado-desconectada); }
+.contador__n { font-size: var(--texto-2xl); font-weight: var(--peso-bold); line-height: 1; }
+.contador__etq { font-size: var(--texto-s); color: var(--texto-secundario); }
+
+.filtros { display: flex; gap: var(--esp-1); margin-bottom: var(--esp-4); flex-wrap: wrap; }
+.chip--activo { background: var(--gris-8); color: var(--blanco); border-color: var(--gris-8); }
+
+/* Estados de mensaje en tablas (dashboard + registro): color tenue */
+.estado-envio--enviado::before { background: var(--estado-conectada); box-shadow: inset 0 0 0 1px var(--gris-6); }
+.estado-envio--fallido { color: var(--error-texto); }
+.estado-envio--fallido::before { border-color: var(--estado-desconectada); }
+.estado-envio--encolado::before,
+.estado-envio--enviando::before { border-color: var(--estado-qr); }
+.estado-envio--recibido::before { background: var(--gris-5); }
+.mini-cerrar {
+  background: none; border: none; cursor: pointer; font: inherit;
+  color: var(--texto-secundario); padding: 0 var(--esp-1); font-size: var(--texto-m);
+}

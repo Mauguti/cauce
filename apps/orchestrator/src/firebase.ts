@@ -20,17 +20,34 @@ export function pareceJwt(token: string): boolean {
 
 function verificadorDev(): VerificadorToken {
   return async (idToken: string) => {
-    // Formato: dev:<uid>[:<email>]
-    const partes = idToken.replace(/^dev:/, "").split(":");
-    const uid = partes[0];
-    if (!idToken.startsWith("dev:") || !uid) {
-      throw new Error("token dev inválido");
+    // Forma A (curl): dev:<uid>[:<email>]
+    if (idToken.startsWith("dev:")) {
+      const partes = idToken.slice(4).split(":");
+      const uid = partes[0];
+      if (!uid) throw new Error("token dev inválido");
+      return { uid, email: partes[1] ?? null, nombre: partes[1]?.split("@")[0] ?? null };
     }
-    return {
-      uid,
-      email: partes[1] ?? null,
-      nombre: partes[1]?.split("@")[0] ?? null,
-    };
+    // Forma B (consola): JWT SIN FIRMAR; se decodifica el payload sin
+    // verificar (solo válido en modo dev). uid = sub.
+    const seg = idToken.split(".");
+    if (seg.length === 3 && seg[1]) {
+      try {
+        const payload = JSON.parse(
+          Buffer.from(seg[1], "base64url").toString("utf8"),
+        );
+        const uid = payload.sub ?? payload.user_id ?? payload.uid;
+        if (uid) {
+          return {
+            uid: String(uid),
+            email: payload.email ?? null,
+            nombre: payload.name ?? payload.email?.split("@")[0] ?? null,
+          };
+        }
+      } catch {
+        // cae al throw de abajo
+      }
+    }
+    throw new Error("token dev inválido");
   };
 }
 
