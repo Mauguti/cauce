@@ -1,107 +1,95 @@
-import { useEffect, useMemo, useState } from "react";
-import type { InstanceEstado } from "@cauce/core";
-import { crearSesionesDemo, TENANT_DEMO, type Sesion } from "./sesiones.ts";
+import { useCallback, useEffect, useState } from "react";
+import {
+  api,
+  apiKeyGuardada,
+  guardarApiKey,
+  olvidarApiKey,
+  ErrorNoAutorizado,
+  type Yo,
+} from "./api.ts";
+import { Sesiones } from "./Sesiones.tsx";
+import { Conversacion } from "./Conversacion.tsx";
 import "./app.css";
 
-const ETIQUETAS: Record<InstanceEstado, string> = {
-  pending: "Iniciando",
-  qr: "Esperando QR",
-  connected: "Conectado",
-  disconnected: "Desconectado",
-};
-
-interface Fila {
-  sesion: Sesion;
-  estado: InstanceEstado;
-  qr: string | null;
-}
-
 export default function App() {
-  const sesiones = useMemo(crearSesionesDemo, []);
-  const [filas, setFilas] = useState<Fila[]>(() =>
-    sesiones.map((sesion) => ({ sesion, estado: "pending", qr: null })),
-  );
+  const [yo, setYo] = useState<Yo | null>(null);
+  const [probando, setProbando] = useState(true);
+  const [errorKey, setErrorKey] = useState<string | null>(null);
+  const [instanciaAbierta, setInstanciaAbierta] = useState<string | null>(null);
 
   useEffect(() => {
-    for (const s of sesiones) void s.transporte.connect();
-    const intervalo = setInterval(async () => {
-      const siguientes = await Promise.all(
-        sesiones.map(async (sesion) => ({
-          sesion,
-          estado: await sesion.transporte.status(),
-          qr: (await sesion.transporte.getQr())?.codigo ?? null,
-        })),
+    const key = apiKeyGuardada();
+    if (!key) {
+      setProbando(false);
+      return;
+    }
+    api
+      .yo(key)
+      .then(setYo)
+      .catch(() => olvidarApiKey())
+      .finally(() => setProbando(false));
+  }, []);
+
+  const entrar = useCallback(async (key: string) => {
+    setErrorKey(null);
+    try {
+      const quien = await api.yo(key);
+      guardarApiKey(key);
+      setYo(quien);
+    } catch (err) {
+      setErrorKey(
+        err instanceof ErrorNoAutorizado
+          ? "La key no es válida."
+          : "No se pudo contactar al orquestador.",
       );
-      setFilas(siguientes);
-    }, 400);
-    return () => clearInterval(intervalo);
-  }, [sesiones]);
+    }
+  }, []);
 
-  const alternar = (fila: Fila) => {
-    if (fila.estado === "disconnected") void fila.sesion.transporte.connect();
-    else void fila.sesion.transporte.disconnect();
-  };
+  if (probando) return null;
 
-  const conectadas = filas.filter((f) => f.estado === "connected").length;
-
-  return (
-    <main className="consola">
-      <header className="consola__cabecera">
+  if (!yo) {
+    return (
+      <main className="consola consola--angosta">
         <h1>Cauce</h1>
-        <p className="consola__sub">
-          Instancias del tenant <strong>{TENANT_DEMO}</strong> ·{" "}
-          {conectadas} de {filas.length} conectadas
-        </p>
-      </header>
+        <p className="consola__sub">Ingresa la API key de tu cuenta.</p>
+        <form
+          className="key-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const key = new FormData(e.currentTarget).get("key");
+            if (typeof key === "string" && key.trim()) void entrar(key.trim());
+          }}
+        >
+          <input
+            className={`campo${errorKey ? " campo--error" : ""}`}
+            name="key"
+            type="password"
+            placeholder="API key"
+            autoFocus
+          />
+          <button className="boton boton--primario" type="submit">
+            Entrar
+          </button>
+        </form>
+        {errorKey && <p className="mensaje-error">{errorKey}</p>}
+      </main>
+    );
+  }
 
-      <table>
-        <thead>
-          <tr>
-            <th>Número</th>
-            <th>Transporte</th>
-            <th>Estado</th>
-            <th>Último heartbeat</th>
-            <th aria-label="acciones" />
-          </tr>
-        </thead>
-        <tbody>
-          {filas.map((fila) => (
-            <tr key={fila.sesion.instancia.id}>
-              <td className="celda-numero">{fila.sesion.instancia.numero}</td>
-              <td className="celda-transporte">
-                {fila.sesion.instancia.transportType}
-              </td>
-              <td>
-                <span className={`estado estado--${fila.estado}`}>
-                  {ETIQUETAS[fila.estado]}
-                </span>
-                {fila.qr && (
-                  <span className="celda-qr" title={fila.qr}>
-                    escanea para vincular
-                  </span>
-                )}
-              </td>
-              <td className="celda-heartbeat">
-                {fila.estado === "connected"
-                  ? new Date().toLocaleTimeString("es-MX")
-                  : "—"}
-              </td>
-              <td className="celda-acciones">
-                <button
-                  className={
-                    fila.estado === "disconnected"
-                      ? "boton boton--primario"
-                      : "boton"
-                  }
-                  onClick={() => alternar(fila)}
-                >
-                  {fila.estado === "disconnected" ? "Conectar" : "Desconectar"}
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </main>
+  return instanciaAbierta ? (
+    <Conversacion
+      tenantId={yo.tenantId}
+      instanceId={instanciaAbierta}
+      alVolver={() => setInstanciaAbierta(null)}
+    />
+  ) : (
+    <Sesiones
+      yo={yo}
+      alAbrir={setInstanciaAbierta}
+      alSalir={() => {
+        olvidarApiKey();
+        setYo(null);
+      }}
+    />
   );
 }

@@ -92,6 +92,13 @@ export function crearApp(
     res.status(200).json({ ok: true });
   });
 
+  // Identidad del tenant dueño de la key; es lo único que la consola
+  // necesita para construir el resto de las rutas.
+  app.get("/api/me", autenticar(repo), async (req, res) => {
+    const tenant = await repo.getTenant(req.tenantId!);
+    res.json({ tenantId: tenant!.id, nombre: tenant!.nombre });
+  });
+
   const tenantRouter = express.Router({ mergeParams: true });
   tenantRouter.use(autenticar(repo));
 

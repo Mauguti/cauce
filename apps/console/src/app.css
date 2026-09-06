@@ -68,4 +68,160 @@
 
 .celda-acciones {
   text-align: right;
+  white-space: nowrap;
+}
+
+.celda-acciones .boton + .boton {
+  margin-left: var(--esp-2);
+}
+
+.celda-vacia {
+  color: var(--texto-secundario);
+  text-align: center;
+  padding: var(--esp-8) !important;
+}
+
+.consola--angosta {
+  max-width: 360px;
+  padding-top: var(--esp-16);
+}
+
+.consola--angosta h1 {
+  font-size: var(--texto-xl);
+  font-weight: var(--peso-bold);
+  margin: 0 0 var(--esp-1);
+}
+
+.key-form {
+  display: flex;
+  gap: var(--esp-2);
+  margin: var(--esp-4) 0 var(--esp-2);
+}
+
+.key-form .campo {
+  flex: 1;
+}
+
+.consola__cabecera--fila {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--esp-4);
+}
+
+.consola__acciones {
+  display: flex;
+  gap: var(--esp-2);
+}
+
+/* ---- Modal de QR ---- */
+.modal-fondo {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal {
+  background: var(--fondo);
+  border: var(--borde-fuerte);
+  border-radius: var(--radio);
+  padding: var(--esp-8);
+  max-width: 360px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-4);
+}
+
+.modal h2 {
+  font-size: var(--texto-l);
+  font-weight: var(--peso-semibold);
+  margin: 0;
+}
+
+.modal__qr {
+  width: 240px;
+  height: 240px;
+  margin: 0 auto;
+  border: var(--borde);
+  image-rendering: pixelated;
+}
+
+/* ---- Conversación ---- */
+.consola--conversacion {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.hilo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--esp-2);
+  padding: var(--esp-4) 0;
+  overflow-y: auto;
+}
+
+.burbuja {
+  max-width: 70%;
+  padding: var(--esp-2) var(--esp-3);
+  border: var(--borde);
+  border-radius: var(--radio);
+}
+
+.burbuja--in {
+  align-self: flex-start;
+  background: var(--fondo);
+}
+
+.burbuja--out {
+  align-self: flex-end;
+  background: var(--gris-1);
+}
+
+.burbuja--fallido {
+  border: var(--error-borde);
+}
+
+.burbuja--encolado,
+.burbuja--enviando {
+  border-style: dashed;
+}
+
+.burbuja__cuerpo {
+  margin: 0;
+  font-size: var(--texto-s);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.burbuja__meta {
+  margin: var(--esp-1) 0 0;
+  font-size: var(--texto-xs);
+  color: var(--texto-secundario);
+}
+
+.burbuja--fallido .burbuja__estado {
+  color: var(--error-texto);
+  font-weight: var(--error-peso);
+}
+
+.envio {
+  display: flex;
+  gap: var(--esp-2);
+  padding: var(--esp-4) 0 var(--esp-8);
+  border-top: var(--borde);
+}
+
+.envio__telefono {
+  width: 180px;
+}
+
+.envio__cuerpo {
+  flex: 1;
 }
