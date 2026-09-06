@@ -51,6 +51,7 @@ export interface Yo {
   limites: { lineas: number; conectores: number };
   pruebaExpiraEn: string | null;
   pruebaVigente: boolean;
+  terminosAceptados: boolean;
 }
 
 /** Versión con la que se compiló esta consola (la fija scripts/deploy.sh). */
@@ -71,6 +72,11 @@ export const api = {
       "/api/provisionar",
       { method: "POST" },
     ),
+
+  aceptarTerminos: (tenantId: string) =>
+    llamar<void>(`/api/tenants/${tenantId}/onboarding/aceptar-terminos`, {
+      method: "POST",
+    }),
 
   instancias: (tenantId: string) =>
     llamar<Instance[]>(`/api/tenants/${tenantId}/instances`),

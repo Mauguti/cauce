@@ -38,6 +38,12 @@ export interface Tenant {
    */
   pruebaExpiraEn?: string | null;
   /**
+   * ISO 8601 de cuándo el usuario aceptó las condiciones de uso del
+   * número (sesión no oficial, no prospección en frío). Null/ausente =
+   * aún no las acepta; se le muestran al conectar su primer número.
+   */
+  terminosAceptadosEn?: string | null;
+  /**
    * Milisegundos entre envíos de la cola de cada instancia del tenant
    * (antes del jitter). Ausente = valor por defecto conservador.
    */

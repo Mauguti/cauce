@@ -98,10 +98,31 @@ describe("límites por plan al crear sesión", () => {
     try {
       const r = await fetch(`${base}/api/me`, conKey);
       const yo = await r.json();
-      expect(yo).toMatchObject({ plan: "prueba", pruebaVigente: true });
+      expect(yo).toMatchObject({ plan: "prueba", pruebaVigente: true, terminosAceptados: false });
       expect(yo.limites).toEqual({ lineas: 1, conectores: 1 });
     } finally {
       cerrar();
+    }
+  });
+
+  it("aceptar-terminos marca la aceptación (idempotente) y /api/me lo refleja", async () => {
+    const repo = new RepositorioEnMemoria({ tenants: [tenant({ plan: "prueba" })] });
+    const server = crearApp(repo).listen(0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const post = await fetch(`${base}/api/tenants/t1/onboarding/aceptar-terminos`, {
+        method: "POST", ...conKey,
+      });
+      expect(post.status).toBe(204);
+      const yo = await (await fetch(`${base}/api/me`, conKey)).json();
+      expect(yo.terminosAceptados).toBe(true);
+      const t1 = await repo.getTenant("t1");
+      const primeraFecha = t1!.terminosAceptadosEn;
+      // Segunda vez: no cambia la fecha.
+      await fetch(`${base}/api/tenants/t1/onboarding/aceptar-terminos`, { method: "POST", ...conKey });
+      expect((await repo.getTenant("t1"))!.terminosAceptadosEn).toBe(primeraFecha);
+    } finally {
+      server.close();
     }
   });
 });

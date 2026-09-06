@@ -205,11 +205,24 @@ export function crearApp(
       limites,
       pruebaExpiraEn: tenant.pruebaExpiraEn ?? null,
       pruebaVigente: pruebaVigente(tenant),
+      terminosAceptados: Boolean(tenant.terminosAceptadosEn),
     });
   });
 
   const tenantRouter = express.Router({ mergeParams: true });
   tenantRouter.use(autenticar(repo, opciones.verificarToken));
+
+  // Registra la aceptación de las condiciones de uso del número.
+  tenantRouter.post("/onboarding/aceptar-terminos", async (req, res) => {
+    const tenant = (await repo.getTenant(req.tenantId!))!;
+    if (!tenant.terminosAceptadosEn) {
+      await repo.saveTenant({
+        ...tenant,
+        terminosAceptadosEn: new Date().toISOString(),
+      });
+    }
+    res.status(204).end();
+  });
 
   tenantRouter.get("/instances", async (req, res) => {
     res.json(await repo.listInstances(req.tenantId!));
