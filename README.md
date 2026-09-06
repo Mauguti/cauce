@@ -30,6 +30,35 @@ Las decisiones que gobiernan todo el código están en
 [docs/adr/0003](docs/adr/0003-socket-docker.md) (acceso al socket de
 Docker y red de contenedores).
 
+Persistencia en Firestore (`RepositorioFirestore`); en memoria si no hay
+credenciales. Conector de monday en `apps/orchestrator/src/monday/`
+(ver abajo). Login de usuarios: pendiente, diseñado en
+[docs/auth-usuarios.md](docs/auth-usuarios.md).
+
+## Conector de monday
+
+Un item de monday dispara un WhatsApp; la respuesta del cliente vuelve
+como update en ese item. La condición se arma en las automatizaciones
+nativas de monday (no hay motor de reglas propio).
+
+Alta por tenant (autenticado con la API key):
+
+```bash
+curl -X PUT https://cauce.digsol.com.mx/api/tenants/demo/conectores/monday \
+  -H "x-api-key: $CAUCE_API_KEY" -H "content-type: application/json" \
+  -d '{"instanceId":"<id de la sesión conectada>",
+       "apiToken":"<API token de monday>",
+       "signingSecret":"<Signing Secret de la app de monday>",
+       "columnaTelefono":"<columnId del teléfono>",
+       "plantilla":"Hola {{nombre}}, tu saldo de {{saldo}} vence hoy."}'
+```
+
+Luego, en monday: automatización nativa → acción **Webhook** apuntando a
+`https://cauce.digsol.com.mx/webhooks/monday/demo`. monday manda el
+challenge de verificación (se responde solo) y firma cada evento con el
+Signing Secret. Variables de plantilla: `{{nombre}}` (nombre del item) y
+`{{columnId}}` (texto de esa columna).
+
 ## Correr local
 
 Requiere Node ≥ 22.
