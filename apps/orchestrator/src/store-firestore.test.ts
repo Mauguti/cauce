@@ -114,4 +114,67 @@ describe.skipIf(!hayEmulador)("RepositorioFirestore", () => {
     // Los mensajes son subcolección del tenant, no de la instancia: quedan.
     expect((await repo.listMessages("t-fs", "i-fs")).length).toBeGreaterThan(0);
   });
+
+  it("registrarEntrante: primer contacto y luego actualiza", async () => {
+    const repo = new RepositorioFirestore(db);
+    const tel = `52551${Date.now() % 1000000}`;
+    const a = await repo.registrarEntrante("t-fs", "i-fs", tel, "2026-09-07T10:00:00Z");
+    expect(a.esPrimerContacto).toBe(true);
+    const b = await repo.registrarEntrante("t-fs", "i-fs", tel, "2026-09-07T10:05:00Z");
+    expect(b.esPrimerContacto).toBe(false);
+    expect(b.conversacion.primerContactoEn).toBe("2026-09-07T10:00:00Z");
+    expect(b.conversacion.ultimoEntranteEn).toBe("2026-09-07T10:05:00Z");
+  });
+
+  it("CARRERA: entrantes concurrentes del mismo número → un solo primer contacto", async () => {
+    const repo = new RepositorioFirestore(db);
+    const tel = `52559${Date.now() % 1000000}`;
+    // Las transacciones sobre el mismo doc se serializan (Firestore
+    // reintenta el perdedor); por eso 5 concurrentes tardan varios
+    // segundos. Lo que importa: exactamente una ve el primer contacto.
+    const resultados = await Promise.all(
+      Array.from({ length: 5 }, (_, k) =>
+        repo.registrarEntrante("t-fs", "i-fs", tel, `2026-09-07T11:00:0${k}Z`),
+      ),
+    );
+    const primeros = resultados.filter((r) => r.esPrimerContacto).length;
+    expect(primeros).toBe(1);
+  }, 30_000);
+
+  it("vincularMonday hace merge sin pisar el estado de la conversación", async () => {
+    const repo = new RepositorioFirestore(db);
+    const tel = `52558${Date.now() % 1000000}`;
+    await repo.registrarEntrante("t-fs", "i-fs", tel, "2026-09-07T12:00:00Z");
+    await repo.vincularMonday("t-fs", "i-fs", tel, "item-99");
+    const conv = await repo.getConversacion("t-fs", "i-fs", tel);
+    expect(conv?.mondayItemId).toBe("item-99");
+    // El primerContactoEn del entrante previo NO se perdió.
+    expect(conv?.primerContactoEn).toBe("2026-09-07T12:00:00Z");
+  });
+
+  it("la conversación (y su vínculo) sobrevive a un 'reinicio' del proceso", async () => {
+    const repo = new RepositorioFirestore(db);
+    const tel = `52557${Date.now() % 1000000}`;
+    await repo.registrarEntrante("t-fs", "i-fs", tel, "2026-09-07T13:00:00Z");
+    await repo.vincularMonday("t-fs", "i-fs", tel, "item-77");
+
+    const dbB = new Firestore({ projectId: "cauce-consola" });
+    const repoB = new RepositorioFirestore(dbB);
+    try {
+      const conv = await repoB.getConversacion("t-fs", "i-fs", tel);
+      expect(conv?.mondayItemId).toBe("item-77");
+    } finally {
+      await dbB.terminate();
+    }
+  });
+
+  it("disparadores: se guardan y se leen como lista ordenable", async () => {
+    const repo = new RepositorioFirestore(db);
+    await repo.saveDisparadores("t-fs", [
+      { id: "a", prioridad: 5, tipo: "cualquiera", activo: true, respuesta: "hola" },
+    ]);
+    const lista = await repo.getDisparadores("t-fs");
+    expect(lista).toHaveLength(1);
+    expect(lista[0]).toMatchObject({ id: "a", tipo: "cualquiera" });
+  });
 });

@@ -125,9 +125,9 @@ export class ConectorMonday {
       timestamp: new Date().toISOString(),
     };
     await this.#cola.encolar(mensaje);
-    // Vínculo para el regreso: la respuesta desde este teléfono vuelve
-    // como update a este item.
-    await this.#repo.saveVinculoMonday(
+    // El vínculo con el item vive en la conversación (identidad estable):
+    // la respuesta desde este teléfono sabrá a qué item volver.
+    await this.#repo.vincularMonday(
       tenantId,
       config.instanceId,
       telefono,
@@ -137,25 +137,17 @@ export class ConectorMonday {
   }
 
   /**
-   * Un mensaje entrante: si su teléfono está vinculado a un item, publica
-   * la respuesta como update en ese item. Silencioso si no hay vínculo
-   * (el número escribió sin que lo hubiéramos contactado desde monday).
+   * Publica un texto como update en un item de monday. Lo usa el motor
+   * de entrada cuando llega una respuesta de una conversación vinculada.
    */
-  async alRecibir(
+  async publicarEnItem(
     tenantId: TenantId,
-    instanceId: string,
-    telefono: string,
+    itemId: string,
     cuerpo: string,
   ): Promise<void> {
     const config = await this.#repo.getConectorMonday(tenantId);
-    if (!config || config.instanceId !== instanceId) return;
-    const itemId = await this.#repo.getVinculoMonday(
-      tenantId,
-      instanceId,
-      soloDigitos(telefono),
-    );
-    if (!itemId) return;
+    if (!config) return;
     const cliente = this.#clienteFactory(config.apiToken);
-    await cliente.crearUpdate(itemId, `📥 ${cuerpo}`);
+    await cliente.crearUpdate(itemId, cuerpo);
   }
 }

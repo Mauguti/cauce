@@ -8,6 +8,7 @@ import { GestorSesiones } from "./sesiones.ts";
 import { RepositorioEnMemoria, type Repositorio } from "./store.ts";
 import { RepositorioFirestore } from "./store-firestore.ts";
 import { ConectorMonday } from "./monday/conector.ts";
+import { MotorEntrada } from "./entrada/motor.ts";
 
 const puerto = Number(process.env.PORT ?? 3001);
 
@@ -78,7 +79,17 @@ if (await docker.disponible()) {
 }
 
 const monday = new ConectorMonday({ repo, cola });
-
-crearApp(repo, gestor, { corsOrigenes, cola, monday }).listen(puerto, () => {
-  console.log(`orquestador escuchando en :${puerto}`);
+const motorEntrada = new MotorEntrada({
+  repo,
+  monday,
+  // Carril inmediato: las respuestas automáticas no pasan por la cola.
+  enviarInmediato: (t, i, tel, cuerpo) =>
+    gestor.enviarDirecto(t, i, tel, cuerpo),
 });
+
+crearApp(repo, gestor, { corsOrigenes, cola, monday, motorEntrada }).listen(
+  puerto,
+  () => {
+    console.log(`orquestador escuchando en :${puerto}`);
+  },
+);

@@ -6,6 +6,8 @@ import type { GestorSesiones } from "./sesiones.ts";
 import { autenticar } from "./auth.ts";
 import type { ColaEnvios } from "./cola.ts";
 import type { ConectorMonday } from "./monday/conector.ts";
+import type { MotorEntrada } from "./entrada/motor.ts";
+import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 import { normalizarEntrante } from "./webhook.ts";
 
 declare global {
@@ -48,6 +50,8 @@ export interface AppOpciones {
   cola?: ColaEnvios;
   /** Conector monday; sin él la ruta /webhooks/monday responde 501. */
   monday?: ConectorMonday;
+  /** Motor de entrada; procesa cada mensaje entrante (conversación + disparadores). */
+  motorEntrada?: MotorEntrada;
 }
 
 export function crearApp(
@@ -128,18 +132,17 @@ export function crearApp(
       res.status(404).json({ error: "instancia desconocida" });
       return;
     }
-    // Responder rápido: normalizar y guardar es barato.
+    // Responder rápido: normalizar y guardar es barato. El resto
+    // (conversación, disparadores, write-back al CRM) lo hace el motor de
+    // entrada sin bloquear el 200; un fallo suyo no rompe la recepción.
     const mensaje = normalizarEntrante(tenantId!, instanceId!, req.body);
     if (mensaje) {
       await repo.saveMessage(mensaje);
-      // Write-back al CRM: si el teléfono está vinculado a un item de
-      // monday, la respuesta vuelve como update. Best-effort: un fallo
-      // del CRM no debe romper la recepción.
-      if (opciones.monday) {
-        opciones.monday
-          .alRecibir(tenantId!, instanceId!, mensaje.telefono, mensaje.cuerpo)
+      if (opciones.motorEntrada) {
+        opciones.motorEntrada
+          .procesar(tenantId!, instanceId!, mensaje)
           .catch((err) =>
-            console.warn(`monday write-back falló: ${err?.message}`),
+            console.warn(`motor de entrada falló: ${err?.message}`),
           );
       }
     }
@@ -183,6 +186,47 @@ export function crearApp(
       columnaTelefono,
       plantilla,
     });
+    res.status(204).end();
+  });
+
+  // Disparadores de entrada del tenant: se listan y se reemplazan enteros.
+  tenantRouter.get("/disparadores", async (req, res) => {
+    res.json(await repo.getDisparadores(req.tenantId!));
+  });
+
+  tenantRouter.put("/disparadores", async (req, res) => {
+    const lista = req.body;
+    if (!Array.isArray(lista)) {
+      res.status(400).json({ error: "se espera un arreglo de disparadores" });
+      return;
+    }
+    const tipos = new Set([
+      "primer_contacto",
+      "palabra_clave",
+      "cualquiera",
+      "fuera_horario",
+    ]);
+    for (const d of lista as DisparadorEntrada[]) {
+      if (
+        typeof d?.id !== "string" ||
+        typeof d?.prioridad !== "number" ||
+        !tipos.has(d?.tipo) ||
+        typeof d?.respuesta !== "string" ||
+        typeof d?.activo !== "boolean"
+      ) {
+        res.status(400).json({ error: "disparador inválido" });
+        return;
+      }
+      if (d.tipo === "palabra_clave" && !d.patron) {
+        res.status(400).json({ error: "palabra_clave requiere patron" });
+        return;
+      }
+      if (d.tipo === "fuera_horario" && !d.horario) {
+        res.status(400).json({ error: "fuera_horario requiere horario" });
+        return;
+      }
+    }
+    await repo.saveDisparadores(req.tenantId!, lista as DisparadorEntrada[]);
     res.status(204).end();
   });
 

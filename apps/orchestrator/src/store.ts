@@ -1,4 +1,5 @@
 import type {
+  Conversacion,
   Instance,
   InstanceId,
   Message,
@@ -6,6 +7,7 @@ import type {
   TenantId,
 } from "@cauce/core";
 import type { ConfigMonday } from "./monday/conector.ts";
+import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 
 /**
  * Repositorio scopeado por tenant. Toda operación exige `tenantId`;
@@ -25,19 +27,41 @@ export interface Repositorio {
   deleteInstance(tenantId: TenantId, instanceId: InstanceId): Promise<void>;
   saveMessage(mensaje: Message): Promise<void>;
   listMessages(tenantId: TenantId, instanceId?: InstanceId): Promise<Message[]>;
-  // Conector monday: configuración por tenant y vínculos teléfono→item.
+  // Conector monday: configuración por tenant.
   getConectorMonday(tenantId: TenantId): Promise<ConfigMonday | null>;
   saveConectorMonday(tenantId: TenantId, config: ConfigMonday): Promise<void>;
-  getVinculoMonday(
+
+  // Conversaciones (identidad estable por instancia+teléfono).
+  getConversacion(
     tenantId: TenantId,
     instanceId: InstanceId,
     telefono: string,
-  ): Promise<string | null>;
-  saveVinculoMonday(
+  ): Promise<Conversacion | null>;
+  /**
+   * Registra un mensaje entrante de forma ATÓMICA y devuelve si fue el
+   * primer contacto. La atomicidad es la que resuelve la carrera de dos
+   * entrantes casi simultáneos del mismo número: exactamente uno recibe
+   * esPrimerContacto=true.
+   */
+  registrarEntrante(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    timestamp: string,
+  ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }>;
+  /** Fija (merge) el item de monday vinculado a la conversación. */
+  vincularMonday(
     tenantId: TenantId,
     instanceId: InstanceId,
     telefono: string,
     itemId: string,
+  ): Promise<void>;
+
+  // Disparadores de entrada por tenant (lista ordenada por prioridad).
+  getDisparadores(tenantId: TenantId): Promise<DisparadorEntrada[]>;
+  saveDisparadores(
+    tenantId: TenantId,
+    disparadores: DisparadorEntrada[],
   ): Promise<void>;
 }
 
@@ -113,7 +137,8 @@ export class RepositorioEnMemoria implements Repositorio {
   }
 
   #conectorMonday = new Map<TenantId, ConfigMonday>();
-  #vinculosMonday = new Map<string, string>();
+  #conversaciones = new Map<string, Conversacion>();
+  #disparadores = new Map<TenantId, DisparadorEntrada[]>();
 
   async getConectorMonday(tenantId: TenantId): Promise<ConfigMonday | null> {
     return this.#conectorMonday.get(tenantId) ?? null;
@@ -126,20 +151,70 @@ export class RepositorioEnMemoria implements Repositorio {
     this.#conectorMonday.set(tenantId, config);
   }
 
-  async getVinculoMonday(
+  #claveConv(t: TenantId, i: InstanceId, tel: string): string {
+    return `${t}/${i}/${tel}`;
+  }
+
+  async getConversacion(
     tenantId: TenantId,
     instanceId: InstanceId,
     telefono: string,
-  ): Promise<string | null> {
-    return this.#vinculosMonday.get(`${tenantId}/${instanceId}/${telefono}`) ?? null;
+  ): Promise<Conversacion | null> {
+    return (
+      this.#conversaciones.get(this.#claveConv(tenantId, instanceId, telefono)) ??
+      null
+    );
   }
 
-  async saveVinculoMonday(
+  async registrarEntrante(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    timestamp: string,
+  ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }> {
+    // Sin `await` entre lectura y escritura: en el modelo de un solo hilo
+    // de JS esto es atómico frente a otras llamadas concurrentes.
+    const clave = this.#claveConv(tenantId, instanceId, telefono);
+    const previa = this.#conversaciones.get(clave);
+    const esPrimerContacto = !previa || previa.primerContactoEn === null;
+    const conversacion: Conversacion = {
+      tenantId,
+      instanceId,
+      telefono,
+      primerContactoEn: previa?.primerContactoEn ?? timestamp,
+      ultimoEntranteEn: timestamp,
+      mondayItemId: previa?.mondayItemId ?? null,
+    };
+    this.#conversaciones.set(clave, conversacion);
+    return { conversacion, esPrimerContacto };
+  }
+
+  async vincularMonday(
     tenantId: TenantId,
     instanceId: InstanceId,
     telefono: string,
     itemId: string,
   ): Promise<void> {
-    this.#vinculosMonday.set(`${tenantId}/${instanceId}/${telefono}`, itemId);
+    const clave = this.#claveConv(tenantId, instanceId, telefono);
+    const previa = this.#conversaciones.get(clave);
+    this.#conversaciones.set(clave, {
+      tenantId,
+      instanceId,
+      telefono,
+      primerContactoEn: previa?.primerContactoEn ?? null,
+      ultimoEntranteEn: previa?.ultimoEntranteEn ?? null,
+      mondayItemId: itemId,
+    });
+  }
+
+  async getDisparadores(tenantId: TenantId): Promise<DisparadorEntrada[]> {
+    return [...(this.#disparadores.get(tenantId) ?? [])];
+  }
+
+  async saveDisparadores(
+    tenantId: TenantId,
+    disparadores: DisparadorEntrada[],
+  ): Promise<void> {
+    this.#disparadores.set(tenantId, [...disparadores]);
   }
 }

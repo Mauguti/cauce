@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { Instance, InstanceId, TenantId } from "@cauce/core";
+import type { Instance, InstanceId, Message, TenantId } from "@cauce/core";
 import { createTransport, type MessageTransport } from "@cauce/transports";
 import type { ColaEnvios } from "./cola.ts";
 import { DockerManager, nombreContenedor } from "./docker/manager.ts";
@@ -62,6 +62,43 @@ export class GestorSesiones {
 
   obtener(instanceId: InstanceId): SesionActiva | null {
     return this.#sesiones.get(instanceId) ?? null;
+  }
+
+  /**
+   * Carril inmediato: envía SIN pasar por la cola ni su rate limiting.
+   * Responder dentro de una conversación activa es seguro y debe ser
+   * instantáneo; el espaciado de 45-65s solo protege envíos proactivos.
+   * Persiste el mensaje saliente como cualquier otro.
+   */
+  async enviarDirecto(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    cuerpo: string,
+  ): Promise<Message> {
+    const sesion = this.#sesiones.get(instanceId);
+    if (!sesion) throw new Error(`instancia ${instanceId} sin sesión activa`);
+    const mensaje: Message = {
+      id: randomUUID(),
+      tenantId,
+      instanceId,
+      direccion: "out",
+      telefono,
+      cuerpo,
+      estado: "enviando",
+      externalId: null,
+      timestamp: new Date().toISOString(),
+    };
+    try {
+      const recibo = await sesion.transport.send({ telefono, cuerpo });
+      mensaje.estado = "enviado";
+      mensaje.externalId = recibo.externalId;
+      mensaje.timestamp = recibo.timestamp;
+    } catch {
+      mensaje.estado = "fallido";
+    }
+    await this.#repo.saveMessage(mensaje);
+    return mensaje;
   }
 
   /**

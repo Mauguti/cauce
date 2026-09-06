@@ -35,6 +35,34 @@ credenciales. Conector de monday en `apps/orchestrator/src/monday/`
 (ver abajo). Login de usuarios: pendiente, diseñado en
 [docs/auth-usuarios.md](docs/auth-usuarios.md).
 
+## Disparadores de entrada
+
+Un mensaje entrante puede disparar una respuesta automática. Cada
+conversación (par instancia+teléfono) tiene identidad estable en
+Firestore: el primer contacto, el último entrante y el vínculo con el
+item de monday viven ahí, así que sobreviven a que la sesión se
+desconecte y reconecte.
+
+Cuatro condiciones, evaluadas por `prioridad` ascendente; **la primera
+que coincide gana**: `primer_contacto`, `palabra_clave` (contiene/igual),
+`cualquiera`, `fuera_horario` (horario laboral por tz). Las respuestas
+salen por un **carril inmediato sin rate limiting** — responder dentro
+de una conversación activa es seguro y debe ser instantáneo; el
+espaciado de 45-65s de la cola solo protege los envíos proactivos.
+
+Config por tenant (reemplaza la lista entera):
+
+```bash
+curl -X PUT https://cauce.digsol.com.mx/api/tenants/demo/disparadores \
+  -H "x-api-key: $CAUCE_API_KEY" -H "content-type: application/json" \
+  -d '[{"id":"bienvenida","prioridad":1,"tipo":"primer_contacto","activo":true,
+        "respuesta":"¡Hola! Gracias por escribir, te atendemos enseguida."},
+       {"id":"ausencia","prioridad":5,"tipo":"fuera_horario","activo":true,
+        "respuesta":"Estamos fuera de horario; te respondemos mañana.",
+        "horario":{"tz":"America/Mexico_City","dias":[1,2,3,4,5],
+                   "desde":"09:00","hasta":"18:00"}}]'
+```
+
 ## Conector de monday
 
 Un item de monday dispara un WhatsApp; la respuesta del cliente vuelve

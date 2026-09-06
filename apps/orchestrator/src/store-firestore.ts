@@ -1,6 +1,7 @@
 import { Firestore } from "@google-cloud/firestore";
 import {
   rutas,
+  type Conversacion,
   type Instance,
   type InstanceId,
   type Message,
@@ -9,6 +10,7 @@ import {
 } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
 import type { ConfigMonday } from "./monday/conector.ts";
+import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 
 /**
  * Repositorio sobre Firestore. Usa exactamente las `rutas` de
@@ -113,25 +115,74 @@ export class RepositorioFirestore implements Repositorio {
       .set(config);
   }
 
-  async getVinculoMonday(
+  async getConversacion(
     tenantId: TenantId,
     instanceId: InstanceId,
     telefono: string,
-  ): Promise<string | null> {
+  ): Promise<Conversacion | null> {
     const doc = await this.#db
-      .doc(`${rutas.tenant(tenantId)}/mondayVinculos/${instanceId}__${telefono}`)
+      .doc(rutas.conversacion(tenantId, instanceId, telefono))
       .get();
-    return doc.exists ? (doc.data()!.itemId as string) : null;
+    return doc.exists ? (doc.data() as Conversacion) : null;
   }
 
-  async saveVinculoMonday(
+  async registrarEntrante(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    timestamp: string,
+  ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }> {
+    const ref = this.#db.doc(
+      rutas.conversacion(tenantId, instanceId, telefono),
+    );
+    // Transacción: dos entrantes casi simultáneos del mismo número se
+    // serializan y Firestore reintenta el perdedor, así exactamente uno
+    // ve primerContactoEn ausente y recibe esPrimerContacto=true.
+    return this.#db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const previa = snap.exists ? (snap.data() as Conversacion) : null;
+      const esPrimerContacto = !previa || previa.primerContactoEn === null;
+      const conversacion: Conversacion = {
+        tenantId,
+        instanceId,
+        telefono,
+        primerContactoEn: previa?.primerContactoEn ?? timestamp,
+        ultimoEntranteEn: timestamp,
+        mondayItemId: previa?.mondayItemId ?? null,
+      };
+      tx.set(ref, conversacion);
+      return { conversacion, esPrimerContacto };
+    });
+  }
+
+  async vincularMonday(
     tenantId: TenantId,
     instanceId: InstanceId,
     telefono: string,
     itemId: string,
   ): Promise<void> {
+    // merge para no pisar primerContactoEn/ultimoEntranteEn si ya existen.
     await this.#db
-      .doc(`${rutas.tenant(tenantId)}/mondayVinculos/${instanceId}__${telefono}`)
-      .set({ instanceId, telefono, itemId });
+      .doc(rutas.conversacion(tenantId, instanceId, telefono))
+      .set(
+        { tenantId, instanceId, telefono, mondayItemId: itemId },
+        { merge: true },
+      );
+  }
+
+  async getDisparadores(tenantId: TenantId): Promise<DisparadorEntrada[]> {
+    const doc = await this.#db
+      .doc(`${rutas.tenant(tenantId)}/config/disparadores`)
+      .get();
+    return doc.exists ? ((doc.data()!.lista as DisparadorEntrada[]) ?? []) : [];
+  }
+
+  async saveDisparadores(
+    tenantId: TenantId,
+    disparadores: DisparadorEntrada[],
+  ): Promise<void> {
+    await this.#db
+      .doc(`${rutas.tenant(tenantId)}/config/disparadores`)
+      .set({ lista: disparadores });
   }
 }

@@ -81,8 +81,9 @@ describe("ConectorMonday.procesarEvento", () => {
       estado: "encolado",
     });
     expect(r.itemId).toBe("42");
-    // El vínculo permite el regreso.
-    expect(await repo.getVinculoMonday("demo", "i1", "525512345678")).toBe("42");
+    // El vínculo vive ahora en la conversación (identidad estable).
+    const conv = await repo.getConversacion("demo", "i1", "525512345678");
+    expect(conv?.mondayItemId).toBe("42");
   });
 
   it("falla si el item no tiene teléfono en la columna configurada", async () => {
@@ -94,20 +95,17 @@ describe("ConectorMonday.procesarEvento", () => {
   });
 });
 
-describe("ConectorMonday.alRecibir", () => {
-  it("publica update en el item vinculado", async () => {
+describe("ConectorMonday.publicarEnItem", () => {
+  it("publica el texto como update en el item", async () => {
     const { repo, monday, updates } = conectorConFake();
     await repo.saveConectorMonday("demo", CONFIG);
-    await repo.saveVinculoMonday("demo", "i1", "525512345678", "42");
-
-    await monday.alRecibir("demo", "i1", "+525512345678", "sí, pago mañana");
+    await monday.publicarEnItem("demo", "42", "📥 sí, pago mañana");
     expect(updates).toEqual([{ itemId: "42", cuerpo: "📥 sí, pago mañana" }]);
   });
 
-  it("no hace nada si el teléfono no está vinculado", async () => {
-    const { repo, monday, updates } = conectorConFake();
-    await repo.saveConectorMonday("demo", CONFIG);
-    await monday.alRecibir("demo", "i1", "+525599999999", "hola");
+  it("no hace nada si el tenant no tiene conector configurado", async () => {
+    const { monday, updates } = conectorConFake();
+    await monday.publicarEnItem("demo", "42", "hola");
     expect(updates).toHaveLength(0);
   });
 });

@@ -88,6 +88,26 @@ export interface Message {
 }
 
 /**
+ * Conversación con un número por instancia. Es la identidad estable de
+ * la relación: sobrevive a que el contenedor se reinicie o se reescanee
+ * el QR, porque no depende de la sesión sino del par (instancia, teléfono).
+ * Aquí vive el vínculo con el CRM (antes suelto): la respuesta del
+ * cliente sabe a qué item de monday volver mirando `mondayItemId`.
+ */
+export interface Conversacion {
+  tenantId: TenantId;
+  instanceId: InstanceId;
+  /** Teléfono de la contraparte en E.164 sin '+' (sirve de doc id). */
+  telefono: string;
+  /** ISO del primer mensaje entrante; null si aún no ha escrito. */
+  primerContactoEn: string | null;
+  /** ISO del último mensaje entrante; null si aún no ha escrito. */
+  ultimoEntranteEn: string | null;
+  /** Item de monday que originó/recibe esta conversación; null si ninguno. */
+  mondayItemId: string | null;
+}
+
+/**
  * Rutas de Firestore. Centralizarlas aquí hace imposible construir una
  * ruta a datos de un tenant sin pasar su id.
  */
@@ -99,4 +119,8 @@ export const rutas = {
   messages: (tenantId: TenantId) => `tenants/${tenantId}/messages`,
   message: (tenantId: TenantId, messageId: MessageId) =>
     `tenants/${tenantId}/messages/${messageId}`,
+  conversaciones: (tenantId: TenantId, instanceId: InstanceId) =>
+    `tenants/${tenantId}/instances/${instanceId}/conversaciones`,
+  conversacion: (tenantId: TenantId, instanceId: InstanceId, telefono: string) =>
+    `tenants/${tenantId}/instances/${instanceId}/conversaciones/${telefono}`,
 } as const;
