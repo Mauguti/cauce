@@ -95,7 +95,25 @@ Pre-descarga las imágenes fijadas (evita timeout en la primera sesión):
 docker pull evoapicloud/evolution-api:v2.3.7 && docker pull postgres:16.6-alpine
 ```
 
-### 2.4 Secretos y systemd
+### 2.4 Firestore (persistencia)
+
+El orquestador usa Firestore cuando detecta credenciales; sin ellas cae
+al repositorio en memoria (solo dev). Colecciones según el modelo de
+`@cauce/core`: `tenants/{tenantId}`, `tenants/{tenantId}/instances/{id}`,
+`tenants/{tenantId}/messages/{id}`.
+
+- Crea una service account con rol **Cloud Datastore User** en el
+  proyecto GCP y baja su JSON. **No va en el repo**; súbelo al host con
+  permisos `600` (p. ej. `/etc/cauce-firestore.json`) y apúntalo con
+  `GOOGLE_APPLICATION_CREDENTIALS` en el EnvironmentFile.
+- **Índices**: las consultas actuales (`listMessages` filtra por
+  `instanceId`, sin `orderBy`) usan solo índices de campo único, que
+  Firestore crea automáticamente — **no hace falta índice compuesto**.
+  El orden por `timestamp` lo hace el orquestador en memoria. Si en el
+  futuro se empuja el `orderBy` a Firestore, hará falta un índice
+  compuesto `messages(instanceId ASC, timestamp ASC)`.
+
+### 2.5 Secretos y systemd
 
 Los secretos van en el entorno del servicio, **nunca en el repo**.
 El `EnvironmentFile` lo lee root; permisos `600`.
@@ -111,8 +129,13 @@ CAUCE_API_KEY=<genera: openssl rand -hex 24>
 CAUCE_CORS_ORIGENES=https://cauce-consola.web.app
 CAUCE_URL_WEBHOOKS=http://host.docker.internal:3001
 CAUCE_DATA_DIR=/var/lib/cauce
+GOOGLE_APPLICATION_CREDENTIALS=/etc/cauce-firestore.json
 PORT=3001
 ```
+
+Sin `GOOGLE_APPLICATION_CREDENTIALS` (ni `FIRESTORE_PROJECT_ID`) el
+orquestador cae al repositorio en memoria y pierde el historial en cada
+reinicio; en producción esa variable es obligatoria.
 
 ```bash
 sudo mkdir -p /var/lib/cauce && sudo chown ubuntu:ubuntu /var/lib/cauce
@@ -151,7 +174,7 @@ En el log de arranque deben verse `sesiones rehidratadas desde
 Docker: N` y `orquestador escuchando en :3001`. Si aparece
 `Docker no disponible`, vuelve al paso 2.2.
 
-### 2.5 Caddy — TLS y único servicio publicado
+### 2.6 Caddy — TLS y único servicio publicado
 
 Caddy publica **solo** el orquestador y obtiene TLS automático.
 
@@ -180,7 +203,7 @@ curl https://api.tudominio.mx/health
 
 Debe responder `{"ok":true}`.
 
-### 2.6 Cerrar el círculo
+### 2.7 Cerrar el círculo
 
 1. Pon `VITE_CAUCE_API=https://api.tudominio.mx` en
    `apps/console/.env.production`, recompila y redeploya la consola

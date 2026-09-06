@@ -12,6 +12,7 @@
   "dependencies": {
     "@cauce/core": "*",
     "@cauce/transports": "*",
+    "@google-cloud/firestore": "^7.11.6",
     "dockerode": "^4.0.2",
     "express": "^5.1.0"
   },

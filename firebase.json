@@ -1,4 +1,8 @@
 {
+  "emulators": {
+    "firestore": { "port": 8085 },
+    "ui": { "enabled": false }
+  },
   "hosting": {
     "public": "apps/console/dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],

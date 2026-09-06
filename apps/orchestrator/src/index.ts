@@ -1,10 +1,12 @@
 import { randomBytes } from "node:crypto";
+import type { Tenant } from "@cauce/core";
 import { crearApp } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import { ColaEnvios } from "./cola.ts";
 import { DockerManager } from "./docker/manager.ts";
 import { GestorSesiones } from "./sesiones.ts";
-import { RepositorioEnMemoria } from "./store.ts";
+import { RepositorioEnMemoria, type Repositorio } from "./store.ts";
+import { RepositorioFirestore } from "./store-firestore.ts";
 
 const puerto = Number(process.env.PORT ?? 3001);
 
@@ -15,18 +17,35 @@ if (!process.env.CAUCE_API_KEY) {
   console.log(`API key efímera del tenant demo: ${apiKey}`);
 }
 
-const repo = new RepositorioEnMemoria({
-  tenants: [
-    {
-      id: "demo",
-      nombre: "Tenant demo",
-      plan: "basico",
-      estado: "activo",
-      apiKeyHash: hashApiKey(apiKey),
-      creadoEn: new Date().toISOString(),
-    },
-  ],
-});
+// Firestore si hay credenciales (o el emulador); en memoria en su
+// ausencia, para desarrollo local sin GCP y para las pruebas.
+const usaFirestore = Boolean(
+  process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+    process.env.FIRESTORE_PROJECT_ID ||
+    process.env.FIRESTORE_EMULATOR_HOST,
+);
+
+const tenantDemo: Tenant = {
+  id: "demo",
+  nombre: "Tenant demo",
+  plan: "basico",
+  estado: "activo",
+  apiKeyHash: hashApiKey(apiKey),
+  creadoEn: new Date().toISOString(),
+};
+
+let repo: Repositorio;
+if (usaFirestore) {
+  repo = new RepositorioFirestore();
+  // Alta idempotente del tenant demo: garantiza que la key del entorno
+  // funcione. Reescribe solo el doc del tenant, no sus instancias ni
+  // mensajes, así que no pierde historial entre reinicios.
+  await repo.saveTenant(tenantDemo);
+  console.log("repositorio: Firestore");
+} else {
+  repo = new RepositorioEnMemoria({ tenants: [tenantDemo] });
+  console.log("repositorio: en memoria (sin persistencia)");
+}
 
 const docker = new DockerManager();
 const cola = new ColaEnvios({
