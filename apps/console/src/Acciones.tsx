@@ -66,6 +66,7 @@ function Salientes(props: {
   const [plantilla, setPlantilla] = useState(props.monday?.plantilla ?? "");
   const [columnas, setColumnas] = useState<MondayColumna[]>([]);
   const [guardado, setGuardado] = useState(false);
+  const [guardarError, setGuardarError] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
   const [registro, setRegistro] = useState<RegistroMonday | null>(null);
   const [envios, setEnvios] = useState<Message[]>([]);
@@ -103,6 +104,7 @@ function Salientes(props: {
   }
 
   const insertar = (texto: string) => {
+    setGuardado(false);
     const el = areaRef.current;
     if (!el) {
       setPlantilla((p) => p + texto);
@@ -126,10 +128,14 @@ function Salientes(props: {
   );
 
   const guardar = async () => {
-    await api.monday.guardarPlantilla(yo.tenantId, plantilla).catch(() => {});
-    setGuardado(true);
-    props.alCambiar();
-    setTimeout(() => setGuardado(false), 2000);
+    setGuardarError(null);
+    try {
+      await api.monday.guardarPlantilla(yo.tenantId, plantilla);
+      setGuardado(true); // confirmación persistente hasta la próxima edición
+      props.alCambiar();
+    } catch (err: any) {
+      setGuardarError(err?.message ?? "No se pudo guardar la plantilla.");
+    }
   };
 
   const url = urlWebhookMonday(yo.tenantId);
@@ -176,7 +182,10 @@ function Salientes(props: {
             className="campo editor__area"
             rows={4}
             value={plantilla}
-            onChange={(e) => setPlantilla(e.target.value)}
+            onChange={(e) => {
+              setPlantilla(e.target.value);
+              setGuardado(false);
+            }}
             placeholder="Hola {{nombre}}, tu saldo de {{saldo}} vence el {{fecha}}."
           />
         </div>
@@ -187,9 +196,13 @@ function Salientes(props: {
         <p className="preview__cuerpo">{preview || "…"}</p>
       </div>
 
-      <button className="boton boton--primario" onClick={guardar}>
-        {guardado ? "Guardado ✓" : "Guardar plantilla"}
-      </button>
+      <div className="guardar-fila">
+        <button className="boton boton--primario" onClick={guardar}>
+          Guardar plantilla
+        </button>
+        {guardado && <span className="ok-guardado">Plantilla guardada ✓</span>}
+        {guardarError && <span className="mensaje-error">{guardarError}</span>}
+      </div>
 
       <div className="webhook">
         <h3>Conecta el disparo en monday</h3>
@@ -318,10 +331,16 @@ function Entrantes(props: { yo: Yo }) {
     api.disparadores(yo.tenantId).then(setLista).catch(() => {});
   }, [yo.tenantId]);
 
-  const actualizar = (id: string, cambios: Partial<Disparador>) =>
+  // Cualquier edición invalida la confirmación previa.
+  const tocado = () => setGuardado(false);
+
+  const actualizar = (id: string, cambios: Partial<Disparador>) => {
+    tocado();
     setLista((l) => l.map((d) => (d.id === id ? { ...d, ...cambios } : d)));
+  };
 
   const agregar = () => {
+    tocado();
     const nuevo: Disparador = {
       id: crypto.randomUUID().slice(0, 8),
       prioridad: (lista.at(-1)?.prioridad ?? 0) + 10,
@@ -332,11 +351,15 @@ function Entrantes(props: { yo: Yo }) {
     setLista((l) => [...l, nuevo]);
   };
 
-  const quitar = (id: string) => setLista((l) => l.filter((d) => d.id !== id));
+  const quitar = (id: string) => {
+    tocado();
+    setLista((l) => l.filter((d) => d.id !== id));
+  };
 
   const mover = (i: number, dir: -1 | 1) => {
     const j = i + dir;
     if (j < 0 || j >= lista.length) return;
+    tocado();
     const copia = [...lista];
     [copia[i], copia[j]] = [copia[j]!, copia[i]!];
     // Reasigna prioridades según el nuevo orden.
@@ -358,8 +381,7 @@ function Entrantes(props: { yo: Yo }) {
     }
     try {
       await api.guardarDisparadores(yo.tenantId, lista);
-      setGuardado(true);
-      setTimeout(() => setGuardado(false), 2000);
+      setGuardado(true); // persistente hasta la próxima edición
     } catch (err: any) {
       setError(err?.message ?? "No se pudo guardar.");
     }
@@ -460,13 +482,18 @@ function Entrantes(props: { yo: Yo }) {
 
       {error && <p className="mensaje-error">{error}</p>}
 
-      <div className="fila-inline">
+      <div className="guardar-fila">
         <button className="boton" onClick={agregar}>
           Agregar acción
         </button>
         <button className="boton boton--primario" onClick={guardar}>
-          {guardado ? "Guardado ✓" : "Guardar acciones"}
+          Guardar acciones
         </button>
+        {guardado && (
+          <span className="ok-guardado">
+            Acciones guardadas ✓ · se aplican a los mensajes que lleguen.
+          </span>
+        )}
       </div>
     </div>
   );

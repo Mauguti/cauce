@@ -90,6 +90,8 @@ function AsistenteMonday(props: {
   >(null);
   const [guardado, setGuardado] = useState(false);
   const [confirmarQuitar, setConfirmarQuitar] = useState(false);
+  // Colapsado: con conexión existente se muestra un resumen, no el form.
+  const [editando, setEditando] = useState(false);
 
   const conectadas = props.instancias.filter((i) => i.estado === "connected");
 
@@ -104,6 +106,7 @@ function AsistenteMonday(props: {
         setBoardId(v.boardId);
         setBoardNombre(v.boardNombre);
         setColumnaTelefono(v.columnaTelefono);
+        setEditando(false);
         api.monday
           .columnasGuardadas(yo.tenantId)
           .then(setColumnas)
@@ -114,6 +117,8 @@ function AsistenteMonday(props: {
                 "No se pudieron recargar las columnas del board guardado; vuelve a probar el token.",
             }),
           );
+      } else {
+        setEditando(true);
       }
     });
   }, [yo.tenantId]);
@@ -164,9 +169,10 @@ function AsistenteMonday(props: {
       });
       setGuardado(true);
       setEstado({ tipo: "ok", texto: "Conexión guardada." });
-      // Refresca la vista para reflejar el estado guardado.
+      // Refresca la vista y colapsa a resumen (estado configurado).
       const v = await api.monday.ver(yo.tenantId);
       setExistente(v);
+      setEditando(false);
       props.alGuardar();
     } catch (err: any) {
       setEstado({ tipo: "error", texto: err?.message ?? "No se pudo guardar." });
@@ -184,6 +190,8 @@ function AsistenteMonday(props: {
       setBoardId("");
       setColumnas([]);
       setColumnaTelefono("");
+      setGuardado(false);
+      setEditando(true);
       setEstado({ tipo: "ok", texto: "Conexión quitada." });
       props.alGuardar();
     } catch (err: any) {
@@ -197,11 +205,39 @@ function AsistenteMonday(props: {
 
   const hayColumnasTelefono = columnas.length === 0 || columnasTelefono.length > 0;
 
+  // Vista colapsada: conexión configurada, sin formulario.
+  if (existente && !editando) {
+    return (
+      <section className="asistente">
+        <div className="config-ok">
+          <div>
+            <h2>monday conectado ✓</h2>
+            <p className="consola__sub">
+              Board <strong>{existente.boardNombre || existente.boardId}</strong> ·
+              columna de teléfono <strong>{existente.columnaTelefono}</strong> ·
+              token {existente.apiTokenPista}
+            </p>
+            {guardado && <p className="ok-guardado">Cambios guardados.</p>}
+          </div>
+          <div className="config-ok__acciones">
+            <button className="boton" onClick={() => { setGuardado(false); setEstado(null); setEditando(true); }}>
+              Editar
+            </button>
+            <button className="boton" onClick={() => setConfirmarQuitar(true)}>
+              Quitar
+            </button>
+          </div>
+        </div>
+        {confirmarQuitar && modalQuitar()}
+      </section>
+    );
+  }
+
   return (
     <section className="asistente">
       <h2>Conectar monday</h2>
 
-      {existente && !guardado && (
+      {existente && (
         <p className="consola__sub">
           Conectado al board <strong>{existente.boardNombre || existente.boardId}</strong>{" "}
           (token {existente.apiTokenPista}). Puedes editar sin repegar el token;
@@ -333,29 +369,33 @@ function AsistenteMonday(props: {
         )}
       </div>
 
-      {confirmarQuitar && (
-        <div className="modal-fondo" onClick={() => setConfirmarQuitar(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Quitar conexión con monday</h2>
-            <p>
-              Se borran el API token y el signing secret guardados (cifrados).
-            </p>
-            <p className="mensaje-error">
-              El <strong>disparo saliente desde monday</strong> quedará inactivo:
-              los eventos del board dejarán de enviar mensajes hasta que
-              reconectes. Los disparadores de entrada no se ven afectados.
-            </p>
-            <div className="modal__acciones">
-              <button className="boton" onClick={() => setConfirmarQuitar(false)}>
-                Cancelar
-              </button>
-              <button className="boton boton--primario" onClick={quitar}>
-                Quitar conexión
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {confirmarQuitar && modalQuitar()}
     </section>
   );
+
+  function modalQuitar() {
+    return (
+      <div className="modal-fondo" onClick={() => setConfirmarQuitar(false)}>
+        <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <h2>Quitar conexión con monday</h2>
+          <p>
+            Se borran el API token y el signing secret guardados (cifrados).
+          </p>
+          <p className="mensaje-error">
+            El <strong>disparo saliente desde monday</strong> quedará inactivo:
+            los eventos del board dejarán de enviar mensajes hasta que
+            reconectes. Los disparadores de entrada no se ven afectados.
+          </p>
+          <div className="modal__acciones">
+            <button className="boton" onClick={() => setConfirmarQuitar(false)}>
+              Cancelar
+            </button>
+            <button className="boton boton--primario" onClick={quitar}>
+              Quitar conexión
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 }

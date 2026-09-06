@@ -471,3 +471,27 @@
   background: none; border: none; cursor: pointer; font: inherit;
   color: var(--texto-secundario); padding: 0 var(--esp-1); font-size: var(--texto-m);
 }
+
+/* ---- Confirmación de guardado / estado configurado (bloque 9) ---- */
+.guardar-fila { display: flex; align-items: center; gap: var(--esp-3); flex-wrap: wrap; }
+.ok-guardado {
+  font-size: var(--texto-s); font-weight: var(--peso-semibold);
+  color: var(--gris-8);
+  display: inline-flex; align-items: center; gap: var(--esp-1);
+}
+.config-ok {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: var(--esp-4); padding: var(--esp-4);
+  border: var(--borde); border-radius: var(--radio); background: var(--gris-1);
+}
+.config-ok h2 { margin: 0 0 var(--esp-1); font-size: var(--texto-m); font-weight: var(--peso-semibold); }
+.config-ok__acciones { display: flex; gap: var(--esp-2); flex: none; }
+
+/* ---- Aviso de desfase de versión (bloque 9) ---- */
+.banner-desfase {
+  position: sticky; top: 0; z-index: 50;
+  background: var(--gris-8); color: var(--blanco);
+  padding: var(--esp-2) var(--esp-4); font-size: var(--texto-s);
+  text-align: center;
+}
+.banner-desfase .tenue { color: var(--gris-4); }

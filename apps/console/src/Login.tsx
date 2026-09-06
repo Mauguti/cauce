@@ -27,7 +27,7 @@ export function Login() {
         await entrarEmail(email.trim(), pass);
       }
     } catch (err: any) {
-      setError(traducir(err?.code ?? "") ?? "No se pudo continuar.");
+      setError(motivo(err));
     } finally {
       setOcupado(false);
     }
@@ -37,8 +37,8 @@ export function Login() {
     setError(null);
     try {
       await entrarGoogle();
-    } catch {
-      setError("No se pudo entrar con Google.");
+    } catch (err: any) {
+      setError(motivo(err));
     }
   };
 
@@ -103,14 +103,33 @@ export function Login() {
   );
 }
 
-function traducir(code: string): string | null {
+/**
+ * Traduce el error de Firebase a un motivo entendible. Para códigos no
+ * mapeados muestra el código real (no un genérico): un error sin causa
+ * visible es un ticket de soporte.
+ */
+function motivo(err: any): string {
+  const code: string = err?.code ?? "";
   const m: Record<string, string> = {
     "auth/invalid-credential": "Correo o contraseña incorrectos.",
     "auth/wrong-password": "Correo o contraseña incorrectos.",
-    "auth/user-not-found": "No hay cuenta con ese correo.",
-    "auth/email-already-in-use": "Ya existe una cuenta con ese correo.",
+    "auth/user-not-found": "No hay cuenta con ese correo. Regístrate primero.",
+    "auth/email-already-in-use": "Ya existe una cuenta con ese correo. Entra en vez de registrarte.",
     "auth/weak-password": "La contraseña debe tener al menos 6 caracteres.",
-    "auth/invalid-email": "Correo inválido.",
+    "auth/invalid-email": "El correo no es válido.",
+    "auth/missing-password": "Escribe tu contraseña.",
+    "auth/too-many-requests": "Demasiados intentos. Espera un momento e inténtalo de nuevo.",
+    "auth/network-request-failed": "Sin conexión. Revisa tu red.",
+    "auth/popup-closed-by-user": "Cerraste la ventana de Google antes de terminar.",
+    "auth/popup-blocked": "El navegador bloqueó la ventana de Google. Permite ventanas emergentes.",
+    "auth/unauthorized-domain":
+      "Este dominio no está autorizado en Firebase Auth. Avísanos para habilitarlo.",
+    "auth/operation-not-allowed":
+      "El método de acceso no está habilitado en el proyecto.",
+    "auth/configuration-not-found":
+      "Firebase Auth no está configurado para este proyecto.",
   };
-  return m[code] ?? null;
+  if (m[code]) return m[code];
+  // Sin mapa: muestra el código real para que sea accionable.
+  return code ? `No se pudo continuar (${code}).` : "No se pudo continuar.";
 }
