@@ -18,12 +18,23 @@ import {
  */
 const DEV = import.meta.env.VITE_AUTH_DEV === "1";
 
+/**
+ * Firebase Auth vive en `digsol-fabrica-de-empleados` — el MISMO proyecto
+ * cuyas credenciales usa el orquestador (firebase-admin) para verificar
+ * los ID tokens. Debe coincidir: verifyIdToken exige que el token venga
+ * del proyecto del Admin SDK. (`cauce-consola` es solo Hosting y NO tiene
+ * Identity Toolkit provisionado: por eso signUp daba 404/CONFIGURATION_NOT_FOUND.)
+ */
 const firebaseConfig = {
   apiKey: (import.meta.env.VITE_FIREBASE_API_KEY as string) ??
-    "AIzaSyDhbsPLNdhBWOZbzFMBezXbSPLV3hRJR9k",
-  authDomain: "cauce-consola.firebaseapp.com",
-  projectId: "cauce-consola",
-  appId: "1:315987302649:web:8c107ab5f9624f1b4eea28",
+    "AIzaSyAkpWBNwwhtrlUHV_b2NKwNXiuTtKe4vXU",
+  authDomain:
+    (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string) ??
+    "digsol-fabrica-de-empleados.firebaseapp.com",
+  projectId: "digsol-fabrica-de-empleados",
+  appId: "1:381790209518:web:b9d0aa290221658a78faff",
+  messagingSenderId: "381790209518",
+  storageBucket: "digsol-fabrica-de-empleados.firebasestorage.app",
 };
 
 // ---- Modo dev: JWT sin firmar ----
