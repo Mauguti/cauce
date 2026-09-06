@@ -20,6 +20,7 @@ export function Sesiones(props: {
   const [error, setError] = useState<string | null>(null);
   const [qrDe, setQrDe] = useState<string | null>(null);
   const [aEliminar, setAEliminar] = useState<Instance | null>(null);
+  const [aDesconectar, setADesconectar] = useState<Instance | null>(null);
 
   const refrescar = useCallback(async () => {
     try {
@@ -52,6 +53,7 @@ export function Sesiones(props: {
   };
 
   const desconectar = async (id: string) => {
+    setADesconectar(null);
     await api.desconectarInstancia(yo.tenantId, id).catch(() => {});
     await refrescar();
     props.alCambiar();
@@ -147,8 +149,8 @@ export function Sesiones(props: {
                       Reconectar
                     </button>
                   ) : (
-                    <button className="boton" onClick={() => desconectar(inst.id)}>
-                      Desconectar
+                    <button className="boton" onClick={() => setADesconectar(inst)}>
+                      Desconectar WhatsApp
                     </button>
                   )}
                   <button className="boton" onClick={() => setAEliminar(inst)}>
@@ -193,6 +195,35 @@ export function Sesiones(props: {
                 onClick={() => eliminar(aEliminar.id)}
               >
                 Eliminar definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {aDesconectar && (
+        <div className="modal-fondo" onClick={() => setADesconectar(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Desconectar WhatsApp</h2>
+            <p>
+              Cierra la sesión de WhatsApp de{" "}
+              <strong>{aDesconectar.numero ?? aDesconectar.id}</strong> (logout).
+              El número deja de enviar y recibir hasta que reconectes escaneando
+              el QR.
+            </p>
+            <p className="consola__sub">
+              El contenedor, las conversaciones y la vinculación con el CRM se
+              conservan. No borra nada; es reversible.
+            </p>
+            <div className="modal__acciones">
+              <button className="boton" onClick={() => setADesconectar(null)}>
+                Cancelar
+              </button>
+              <button
+                className="boton boton--primario"
+                onClick={() => desconectar(aDesconectar.id)}
+              >
+                Desconectar WhatsApp
               </button>
             </div>
           </div>

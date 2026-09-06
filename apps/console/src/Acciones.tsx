@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import {
   api,
   urlWebhookMonday,
+  columnaEsVariable,
   type Yo,
   type MondayVista,
   type MondayColumna,
+  type RegistroMonday,
+  type Message,
   type Disparador,
   type TipoDisparador,
 } from "./api.ts";
@@ -64,13 +67,28 @@ function Salientes(props: {
   const [columnas, setColumnas] = useState<MondayColumna[]>([]);
   const [guardado, setGuardado] = useState(false);
   const [copiado, setCopiado] = useState(false);
+  const [registro, setRegistro] = useState<RegistroMonday | null>(null);
+  const [envios, setEnvios] = useState<Message[]>([]);
   const areaRef = useRef<HTMLTextAreaElement>(null);
 
+  const instanceId = props.monday?.instanceId;
+
   useEffect(() => {
-    if (props.monday) {
-      api.monday.columnasGuardadas(yo.tenantId).then(setColumnas).catch(() => {});
-    }
-  }, [yo.tenantId, props.monday]);
+    if (!props.monday) return;
+    api.monday.columnasGuardadas(yo.tenantId).then(setColumnas).catch(() => {});
+    const cargar = () => {
+      api.monday.registro(yo.tenantId).then(setRegistro).catch(() => {});
+      if (instanceId) {
+        api
+          .mensajes(yo.tenantId, instanceId)
+          .then((m) => setEnvios(m.filter((x) => x.direccion === "out")))
+          .catch(() => {});
+      }
+    };
+    cargar();
+    const t = setInterval(cargar, 4000);
+    return () => clearInterval(t);
+  }, [yo.tenantId, props.monday, instanceId]);
 
   if (!props.monday) {
     return (
@@ -131,7 +149,7 @@ function Salientes(props: {
               {columnas.length === 0 && (
                 <span className="tenue">cargando columnas…</span>
               )}
-              {columnas.map((c) => (
+              {columnas.filter((c) => columnaEsVariable(c.type)).map((c) => (
                 <button
                   key={c.id}
                   className="chip"
@@ -197,9 +215,88 @@ function Salientes(props: {
             {copiado ? "Copiado ✓" : "Copiar"}
           </button>
         </div>
+
+        <p className="webhook__estado">
+          {registro?.ultimaLlamadaEn ? (
+            <>
+              monday llamó por última vez:{" "}
+              <strong>{fechaLegible(registro.ultimaLlamadaEn)}</strong>
+            </>
+          ) : (
+            <span className="tenue">
+              monday aún no ha llamado a este webhook.
+            </span>
+          )}
+        </p>
+        {registro?.ultimoResultado &&
+          (registro.ultimoResultado.ok ? (
+            <p className="webhook__estado">
+              Último disparo: enviado a {registro.ultimoResultado.telefono}{" "}
+              (item {registro.ultimoResultado.itemId}) ·{" "}
+              {fechaLegible(registro.ultimoResultado.en)}
+            </p>
+          ) : (
+            <p className="mensaje-error">
+              Último disparo falló: {registro.ultimoResultado.error} ·{" "}
+              {fechaLegible(registro.ultimoResultado.en)}
+            </p>
+          ))}
+      </div>
+
+      <div className="registro">
+        <h3>Registro de envíos</h3>
+        {envios.length === 0 ? (
+          <p className="consola__sub">Todavía no se ha enviado ningún mensaje.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>Cuándo</th>
+                <th>A</th>
+                <th>Mensaje</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...envios]
+                .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+                .slice(0, 30)
+                .map((m) => (
+                  <tr key={m.id}>
+                    <td className="celda-heartbeat">{fechaLegible(m.timestamp)}</td>
+                    <td className="celda-numero">{m.telefono}</td>
+                    <td className="registro__cuerpo">{m.cuerpo}</td>
+                    <td>
+                      <span className={`estado-envio estado-envio--${m.estado}`}>
+                        {ETIQUETA_ENVIO[m.estado] ?? m.estado}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
+}
+
+const ETIQUETA_ENVIO: Record<string, string> = {
+  encolado: "Encolado",
+  enviando: "Enviando",
+  enviado: "Enviado",
+  fallido: "Fallido",
+  recibido: "Recibido",
+};
+
+function fechaLegible(iso: string): string {
+  const d = new Date(iso);
+  return d.toLocaleString("es-MX", {
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 const TIPOS: { tipo: TipoDisparador; nombre: string }[] = [

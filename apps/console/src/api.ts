@@ -149,6 +149,16 @@ export const api = {
         `/api/tenants/${tenantId}/conectores/monday/board-columnas`,
       ),
 
+    quitar: (tenantId: string) =>
+      llamar<void>(`/api/tenants/${tenantId}/conectores/monday`, {
+        method: "DELETE",
+      }),
+
+    registro: (tenantId: string) =>
+      llamar<RegistroMonday>(
+        `/api/tenants/${tenantId}/conectores/monday/registro`,
+      ),
+
     guardarPlantilla: (tenantId: string, plantilla: string) =>
       llamar<void>(`/api/tenants/${tenantId}/conectores/monday/plantilla`, {
         method: "PUT",
@@ -179,6 +189,7 @@ export interface MondayColumna {
 export interface MondayVista {
   instanceId: string;
   boardId: string;
+  boardNombre: string;
   columnaTelefono: string;
   plantilla: string;
   apiTokenPista: string;
@@ -187,10 +198,33 @@ export interface MondayVista {
 export interface MondayAlta {
   instanceId: string;
   boardId: string;
+  boardNombre: string;
   apiToken: string;
   signingSecret: string;
   columnaTelefono: string;
   plantilla: string;
+}
+
+/** Tipos de columna de monday válidos para mapear como teléfono. */
+export const TIPOS_TELEFONO = ["phone", "text"];
+/** Tipos cuyo texto es útil como variable de plantilla. */
+export const TIPOS_VARIABLE = [
+  "phone", "text", "long-text", "numbers", "numeric",
+  "date", "email", "name", "status", "dropdown", "location", "link",
+];
+export function columnaEsTelefono(tipo: string): boolean {
+  return TIPOS_TELEFONO.includes(tipo);
+}
+export function columnaEsVariable(tipo: string): boolean {
+  return TIPOS_VARIABLE.includes(tipo);
+}
+
+export interface RegistroMonday {
+  ultimaLlamadaEn: string | null;
+  ultimoResultado:
+    | { ok: true; itemId: string; telefono: string; en: string }
+    | { ok: false; error: string; en: string }
+    | null;
 }
 
 export type TipoDisparador =

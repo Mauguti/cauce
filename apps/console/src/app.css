@@ -386,3 +386,29 @@
 .horario__dias { display: flex; gap: var(--esp-1); }
 
 .modal__acciones { display: flex; gap: var(--esp-2); justify-content: flex-end; }
+
+/* ---- Registro de envíos / estado del webhook (bloque 7) ---- */
+.webhook__estado { font-size: var(--texto-s); margin: var(--esp-2) 0 0; }
+.registro { margin-top: var(--esp-6); }
+.registro h3 { margin: 0 0 var(--esp-3); font-size: var(--texto-m); font-weight: var(--peso-semibold); }
+.registro__cuerpo {
+  max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; color: var(--texto-secundario);
+}
+.estado-envio {
+  display: inline-flex; align-items: center; gap: var(--esp-1);
+  font-size: var(--texto-s);
+}
+.estado-envio::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none;
+}
+.estado-envio--enviado { font-weight: var(--peso-semibold); }
+.estado-envio--enviado::before { background: var(--gris-8); }
+.estado-envio--encolado::before,
+.estado-envio--enviando::before { border: 1.5px solid var(--gris-6); }
+.estado-envio--fallido { font-weight: var(--peso-semibold); }
+.estado-envio--fallido::before {
+  background: none; width: 10px; height: 10px;
+  /* Cruz sin color: aspa con borde. */
+  border: 1.5px solid var(--gris-8); border-radius: 0; transform: rotate(45deg);
+}

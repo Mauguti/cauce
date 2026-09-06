@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Instance } from "@cauce/core";
 import {
   api,
+  columnaEsTelefono,
   type Yo,
   type MondayBoard,
   type MondayColumna,
@@ -68,7 +69,6 @@ export function Conexiones(props: {
   );
 }
 
-const DIAS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
 function AsistenteMonday(props: {
   yo: Yo;
@@ -82,22 +82,38 @@ function AsistenteMonday(props: {
   const [instanceId, setInstanceId] = useState("");
   const [boards, setBoards] = useState<MondayBoard[] | null>(null);
   const [boardId, setBoardId] = useState("");
+  const [boardNombre, setBoardNombre] = useState("");
   const [columnas, setColumnas] = useState<MondayColumna[]>([]);
   const [columnaTelefono, setColumnaTelefono] = useState("");
   const [estado, setEstado] = useState<
     { tipo: "ok" | "error" | "info"; texto: string } | null
   >(null);
   const [guardado, setGuardado] = useState(false);
+  const [confirmarQuitar, setConfirmarQuitar] = useState(false);
 
   const conectadas = props.instancias.filter((i) => i.estado === "connected");
 
+  // Al abrir con conexión existente: recupera board y columna, y recarga
+  // las columnas del board con el token guardado (server-side), para que
+  // el selector de columna no quede vacío al editar.
   useEffect(() => {
     api.monday.ver(yo.tenantId).then((v) => {
       setExistente(v);
       if (v) {
         setInstanceId(v.instanceId);
         setBoardId(v.boardId);
+        setBoardNombre(v.boardNombre);
         setColumnaTelefono(v.columnaTelefono);
+        api.monday
+          .columnasGuardadas(yo.tenantId)
+          .then(setColumnas)
+          .catch(() =>
+            setEstado({
+              tipo: "error",
+              texto:
+                "No se pudieron recargar las columnas del board guardado; vuelve a probar el token.",
+            }),
+          );
       }
     });
   }, [yo.tenantId]);
@@ -119,8 +135,10 @@ function AsistenteMonday(props: {
 
   const elegirBoard = async (id: string) => {
     setBoardId(id);
+    setBoardNombre(boards?.find((b) => b.id === id)?.name ?? "");
     setColumnas([]);
     setColumnaTelefono("");
+    if (!id) return;
     try {
       setColumnas(await api.monday.columnas(yo.tenantId, apiToken, id));
     } catch (err: any) {
@@ -128,27 +146,56 @@ function AsistenteMonday(props: {
     }
   };
 
+  // Solo columnas donde tiene sentido buscar un teléfono.
+  const columnasTelefono = columnas.filter((c) => columnaEsTelefono(c.type));
+
   const guardar = async () => {
+    setEstado({ tipo: "info", texto: "Guardando…" });
     try {
       await api.monday.guardar(yo.tenantId, {
         instanceId,
         boardId,
+        boardNombre,
+        // Vacío al editar = conserva el token guardado.
         apiToken,
         signingSecret,
         columnaTelefono,
-        // La plantilla se edita en Acciones; al dar de alta se deja vacía
-        // si no había una previa.
         plantilla: existente?.plantilla ?? "",
       });
       setGuardado(true);
       setEstado({ tipo: "ok", texto: "Conexión guardada." });
+      // Refresca la vista para reflejar el estado guardado.
+      const v = await api.monday.ver(yo.tenantId);
+      setExistente(v);
       props.alGuardar();
     } catch (err: any) {
       setEstado({ tipo: "error", texto: err?.message ?? "No se pudo guardar." });
     }
   };
 
-  const puedeGuardar = apiToken && instanceId && boardId && columnaTelefono;
+  const quitar = async () => {
+    setConfirmarQuitar(false);
+    try {
+      await api.monday.quitar(yo.tenantId);
+      setExistente(null);
+      setApiToken("");
+      setSigningSecret("");
+      setBoards(null);
+      setBoardId("");
+      setColumnas([]);
+      setColumnaTelefono("");
+      setEstado({ tipo: "ok", texto: "Conexión quitada." });
+      props.alGuardar();
+    } catch (err: any) {
+      setEstado({ tipo: "error", texto: err?.message ?? "No se pudo quitar." });
+    }
+  };
+
+  // Al editar (ya hay conexión) no hace falta repegar el token.
+  const puedeGuardar =
+    (apiToken || existente) && instanceId && boardId && columnaTelefono;
+
+  const hayColumnasTelefono = columnas.length === 0 || columnasTelefono.length > 0;
 
   return (
     <section className="asistente">
@@ -156,8 +203,9 @@ function AsistenteMonday(props: {
 
       {existente && !guardado && (
         <p className="consola__sub">
-          Ya hay una conexión (token {existente.apiTokenPista}). Pega el token
-          de nuevo para reconfigurar; por seguridad no se muestra.
+          Conectado al board <strong>{existente.boardNombre || existente.boardId}</strong>{" "}
+          (token {existente.apiTokenPista}). Puedes editar sin repegar el token;
+          para cambiar de cuenta, pega un token nuevo y prueba.
         </p>
       )}
 
@@ -201,7 +249,7 @@ function AsistenteMonday(props: {
             className="campo"
             type="password"
             value={apiToken}
-            placeholder={existente ? "•••••• (pega de nuevo)" : "Pega tu token"}
+            placeholder={existente ? "•••••• (deja vacío para conservar)" : "Pega tu token"}
             onChange={(e) => setApiToken(e.target.value)}
           />
           <button className="boton" onClick={probar} disabled={!apiToken}>
@@ -216,7 +264,7 @@ function AsistenteMonday(props: {
           className="campo"
           type="password"
           value={signingSecret}
-          placeholder={existente?.tieneSigningSecret ? "•••••• (configurado)" : "Opcional"}
+          placeholder={existente?.tieneSigningSecret ? "•••••• (configurado; vacío conserva)" : "Opcional"}
           onChange={(e) => setSigningSecret(e.target.value)}
         />
       </label>
@@ -248,30 +296,66 @@ function AsistenteMonday(props: {
       {columnas.length > 0 && (
         <label className="campo-etq">
           <span>Columna del teléfono</span>
-          <select
-            className="campo"
-            value={columnaTelefono}
-            onChange={(e) => setColumnaTelefono(e.target.value)}
-          >
-            <option value="">Elige la columna…</option>
-            {columnas.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.title} ({c.type})
-              </option>
-            ))}
-          </select>
+          {hayColumnasTelefono ? (
+            <select
+              className="campo"
+              value={columnaTelefono}
+              onChange={(e) => setColumnaTelefono(e.target.value)}
+            >
+              <option value="">Elige la columna…</option>
+              {columnasTelefono.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.title} ({c.type})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <p className="mensaje-error">
+              Este board no tiene columnas de tipo teléfono ni texto. Agrega una
+              en monday para poder mapear el número.
+            </p>
+          )}
         </label>
       )}
 
-      <button
-        className="boton boton--primario"
-        onClick={guardar}
-        disabled={!puedeGuardar}
-      >
-        Guardar conexión
-      </button>
+      <div className="fila-inline">
+        <button
+          className="boton boton--primario"
+          onClick={guardar}
+          disabled={!puedeGuardar}
+        >
+          Guardar conexión
+        </button>
+        {existente && (
+          <button className="boton" onClick={() => setConfirmarQuitar(true)}>
+            Quitar conexión
+          </button>
+        )}
+      </div>
+
+      {confirmarQuitar && (
+        <div className="modal-fondo" onClick={() => setConfirmarQuitar(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Quitar conexión con monday</h2>
+            <p>
+              Se borran el API token y el signing secret guardados (cifrados).
+            </p>
+            <p className="mensaje-error">
+              El <strong>disparo saliente desde monday</strong> quedará inactivo:
+              los eventos del board dejarán de enviar mensajes hasta que
+              reconectes. Los disparadores de entrada no se ven afectados.
+            </p>
+            <div className="modal__acciones">
+              <button className="boton" onClick={() => setConfirmarQuitar(false)}>
+                Cancelar
+              </button>
+              <button className="boton boton--primario" onClick={quitar}>
+                Quitar conexión
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
-
-export { DIAS };

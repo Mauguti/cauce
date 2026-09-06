@@ -15,6 +15,8 @@ export interface ConectorMondayDoc {
   instanceId: string;
   /** Board de monday elegido; contexto de las columnas de la plantilla. */
   boardId: string;
+  /** Nombre del board, para mostrarlo al reabrir sin re-consultar. */
+  boardNombre: string;
   /** columnId de monday que contiene el teléfono del cliente. */
   columnaTelefono: string;
   /**
@@ -30,10 +32,16 @@ export interface ConectorMondayDoc {
   apiTokenPista: string;
 }
 
-/** Datos en claro que la consola envía para dar de alta el conector. */
+/**
+ * Datos en claro que la consola envía para dar de alta o editar el
+ * conector. Al EDITAR, apiToken/signingSecret pueden venir vacíos: se
+ * conservan los ya guardados (el token está enmascarado en la UI y no se
+ * repite). En un alta nueva, apiToken es obligatorio.
+ */
 export interface AltaConectorMonday {
   instanceId: string;
   boardId: string;
+  boardNombre?: string;
   columnaTelefono: string;
   plantilla: string;
   apiToken: string;
@@ -59,6 +67,21 @@ export interface ResultadoDisparo {
   mensajeId: string;
 }
 
+/**
+ * Rastro observable del conector para la UI: cuándo llamó monday por
+ * última vez y cómo terminó el último disparo. Evita la mitad de los
+ * tickets ("¿monday ya me llamó?", "¿por qué no se mandó?").
+ */
+export interface RegistroMonday {
+  /** ISO de la última vez que monday golpeó el webhook. */
+  ultimaLlamadaEn: string | null;
+  /** Resultado del último evento procesado. */
+  ultimoResultado:
+    | { ok: true; itemId: string; telefono: string; en: string }
+    | { ok: false; error: string; en: string }
+    | null;
+}
+
 export class ConectorMonday {
   readonly #repo: Repositorio;
   readonly #cola: ColaEnvios;
@@ -79,16 +102,32 @@ export class ConectorMonday {
       opciones.clienteFactory ?? ((token) => new ClienteMonday(token));
   }
 
-  /** Cifra las credenciales del alta y las guarda. */
+  /**
+   * Cifra las credenciales del alta y las guarda. Al editar (apiToken /
+   * signingSecret vacíos) conserva las credenciales ya guardadas en vez
+   * de sobrescribirlas con vacío. Lanza si es alta nueva sin token.
+   */
   async guardarAlta(tenantId: TenantId, alta: AltaConectorMonday): Promise<void> {
+    const previo = await this.#repo.getConectorMonday(tenantId);
+    if (!alta.apiToken && !previo) {
+      throw new Error("se requiere el API token de monday para conectar");
+    }
+    const apiTokenCifrado = alta.apiToken
+      ? this.#cripto.cifrar(alta.apiToken)
+      : previo!.apiTokenCifrado;
+    const apiTokenPista = alta.apiToken ? pista(alta.apiToken) : previo!.apiTokenPista;
+    const signingSecretCifrado = alta.signingSecret
+      ? this.#cripto.cifrar(alta.signingSecret)
+      : (previo?.signingSecretCifrado ?? "");
     await this.#repo.saveConectorMonday(tenantId, {
       instanceId: alta.instanceId,
       boardId: alta.boardId,
+      boardNombre: alta.boardNombre ?? previo?.boardNombre ?? "",
       columnaTelefono: alta.columnaTelefono,
       plantilla: alta.plantilla,
-      apiTokenCifrado: this.#cripto.cifrar(alta.apiToken),
-      signingSecretCifrado: this.#cripto.cifrar(alta.signingSecret),
-      apiTokenPista: pista(alta.apiToken),
+      apiTokenCifrado,
+      signingSecretCifrado,
+      apiTokenPista,
     });
   }
 
@@ -96,6 +135,7 @@ export class ConectorMonday {
   async verConfig(tenantId: TenantId): Promise<{
     instanceId: string;
     boardId: string;
+    boardNombre: string;
     columnaTelefono: string;
     plantilla: string;
     apiTokenPista: string;
@@ -106,11 +146,22 @@ export class ConectorMonday {
     return {
       instanceId: doc.instanceId,
       boardId: doc.boardId,
+      boardNombre: doc.boardNombre ?? "",
       columnaTelefono: doc.columnaTelefono,
       plantilla: doc.plantilla,
       apiTokenPista: doc.apiTokenPista,
       tieneSigningSecret: doc.signingSecretCifrado !== "",
     };
+  }
+
+  /**
+   * Quita la conexión: borra el token y el signing secret cifrados. El
+   * disparo saliente desde monday queda inactivo hasta reconectar (sin
+   * conector, el webhook /webhooks/monday responde 404). No toca los
+   * disparadores de entrada, que no dependen del CRM.
+   */
+  async desconectar(tenantId: TenantId): Promise<void> {
+    await this.#repo.deleteConectorMonday(tenantId);
   }
 
   /** Lista los boards reales de la cuenta con el token dado (setup). */
@@ -181,6 +232,30 @@ export class ConectorMonday {
     tenantId: TenantId,
     evento: any,
   ): Promise<ResultadoDisparo> {
+    try {
+      const r = await this.#procesarEventoInterno(tenantId, evento);
+      await this.#registrarResultado(tenantId, {
+        ok: true,
+        itemId: r.itemId,
+        telefono: r.telefono,
+        en: new Date().toISOString(),
+      });
+      return r;
+    } catch (err: any) {
+      // El error queda visible en la UI (Salientes), no solo en logs.
+      await this.#registrarResultado(tenantId, {
+        ok: false,
+        error: err?.message ?? "error desconocido",
+        en: new Date().toISOString(),
+      });
+      throw err;
+    }
+  }
+
+  async #procesarEventoInterno(
+    tenantId: TenantId,
+    evento: any,
+  ): Promise<ResultadoDisparo> {
     const itemId = evento?.pulseId ?? evento?.itemId;
     if (itemId === undefined || itemId === null) {
       throw new Error("evento de monday sin pulseId");
@@ -196,10 +271,13 @@ export class ConectorMonday {
     const telefono = soloDigitos(telefonoTexto);
     if (!telefono) {
       throw new Error(
-        `item ${itemId} sin teléfono en la columna ${doc.columnaTelefono}`,
+        `el item no tiene teléfono en la columna mapeada (${doc.columnaTelefono})`,
       );
     }
     const cuerpo = renderPlantilla(doc.plantilla, item);
+    if (!cuerpo.trim()) {
+      throw new Error("la plantilla quedó vacía para este item");
+    }
 
     const mensaje: Message = {
       id: crypto.randomUUID(),
@@ -220,6 +298,36 @@ export class ConectorMonday {
       String(itemId),
     );
     return { itemId: String(itemId), telefono, mensajeId: mensaje.id };
+  }
+
+  /** Registra que monday golpeó el webhook (para "¿ya me llamó?"). */
+  async registrarLlamada(tenantId: TenantId): Promise<void> {
+    const previo = await this.#repo.getRegistroMonday(tenantId);
+    await this.#repo.setRegistroMonday(tenantId, {
+      ultimaLlamadaEn: new Date().toISOString(),
+      ultimoResultado: previo?.ultimoResultado ?? null,
+    });
+  }
+
+  async #registrarResultado(
+    tenantId: TenantId,
+    resultado: RegistroMonday["ultimoResultado"],
+  ): Promise<void> {
+    const previo = await this.#repo.getRegistroMonday(tenantId);
+    await this.#repo.setRegistroMonday(tenantId, {
+      ultimaLlamadaEn: previo?.ultimaLlamadaEn ?? null,
+      ultimoResultado: resultado,
+    });
+  }
+
+  /** Registro observable del conector para la UI. */
+  async verRegistro(tenantId: TenantId): Promise<RegistroMonday> {
+    return (
+      (await this.#repo.getRegistroMonday(tenantId)) ?? {
+        ultimaLlamadaEn: null,
+        ultimoResultado: null,
+      }
+    );
   }
 
   /**

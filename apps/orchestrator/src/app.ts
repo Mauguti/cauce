@@ -97,6 +97,8 @@ export function crearApp(
       res.status(401).json({ error: "firma inválida" });
       return;
     }
+    // Deja rastro de que monday llamó (para "¿ya me llamó?" en la UI).
+    void opciones.monday.registrarLlamada(tenantId);
     // Responder rápido; el disparo (leer item, encolar envío) es trabajo
     // que no debe hacer esperar a monday ni tumbar su reintento.
     res.status(200).json({ ok: true });
@@ -209,6 +211,15 @@ export function crearApp(
     }
   });
 
+  // Rastro observable del conector: última llamada de monday y resultado.
+  tenantRouter.get("/conectores/monday/registro", async (req, res) => {
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    res.json(await opciones.monday.verRegistro(req.tenantId!));
+  });
+
   // Columnas del board ya configurado (editor de Acciones): usa el token
   // guardado, descifrado en el servidor; la consola no lo maneja.
   tenantRouter.get("/conectores/monday/board-columnas", async (req, res) => {
@@ -242,35 +253,58 @@ export function crearApp(
     res.status(204).end();
   });
 
-  // Alta/edición del conector: cifra credenciales en reposo.
+  // Alta/edición del conector: cifra credenciales en reposo. Al editar,
+  // apiToken/signingSecret pueden venir vacíos y se conservan los ya
+  // guardados (el token va enmascarado en la UI).
   tenantRouter.put("/conectores/monday", async (req, res) => {
     if (!opciones.monday) {
       res.status(501).json({ error: "conector monday no disponible" });
       return;
     }
-    const { instanceId, boardId, apiToken, signingSecret, columnaTelefono, plantilla } =
-      req.body ?? {};
+    const {
+      instanceId,
+      boardId,
+      boardNombre,
+      apiToken,
+      signingSecret,
+      columnaTelefono,
+      plantilla,
+    } = req.body ?? {};
     if (
       typeof instanceId !== "string" ||
       typeof boardId !== "string" ||
-      typeof apiToken !== "string" ||
       typeof columnaTelefono !== "string" ||
       typeof plantilla !== "string"
     ) {
       res.status(400).json({
-        error:
-          "se requieren instanceId, boardId, apiToken, columnaTelefono y plantilla",
+        error: "se requieren instanceId, boardId, columnaTelefono y plantilla",
       });
       return;
     }
-    await opciones.monday.guardarAlta(req.tenantId!, {
-      instanceId,
-      boardId,
-      apiToken,
-      signingSecret: typeof signingSecret === "string" ? signingSecret : "",
-      columnaTelefono,
-      plantilla,
-    });
+    try {
+      await opciones.monday.guardarAlta(req.tenantId!, {
+        instanceId,
+        boardId,
+        boardNombre: typeof boardNombre === "string" ? boardNombre : "",
+        apiToken: typeof apiToken === "string" ? apiToken : "",
+        signingSecret: typeof signingSecret === "string" ? signingSecret : "",
+        columnaTelefono,
+        plantilla,
+      });
+      res.status(204).end();
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "no se pudo guardar" });
+    }
+  });
+
+  // Quitar la conexión: borra credenciales cifradas; el disparo saliente
+  // desde monday queda inactivo hasta reconectar.
+  tenantRouter.delete("/conectores/monday", async (req, res) => {
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    await opciones.monday.desconectar(req.tenantId!);
     res.status(204).end();
   });
 

@@ -105,6 +105,39 @@ describe("ConectorMonday credenciales", () => {
     expect(JSON.stringify(vista)).not.toContain("tok-monday-secreto-1234");
     expect(JSON.stringify(vista)).not.toContain("secreto-firma");
   });
+
+  it("editar sin token conserva las credenciales guardadas", async () => {
+    const { repo, monday } = conectorConFake();
+    await monday.guardarAlta("demo", ALTA);
+    const antes = (await repo.getConectorMonday("demo"))!;
+
+    // Reedición: cambia la columna, apiToken/signingSecret vacíos.
+    await monday.guardarAlta("demo", {
+      ...ALTA,
+      apiToken: "",
+      signingSecret: "",
+      columnaTelefono: "otra",
+    });
+    const despues = (await repo.getConectorMonday("demo"))!;
+    expect(despues.columnaTelefono).toBe("otra");
+    expect(despues.apiTokenCifrado).toBe(antes.apiTokenCifrado);
+    expect(despues.signingSecretCifrado).toBe(antes.signingSecretCifrado);
+    expect(despues.apiTokenPista).toBe("····1234");
+  });
+
+  it("alta nueva sin token es rechazada", async () => {
+    const { monday } = conectorConFake();
+    await expect(
+      monday.guardarAlta("demo", { ...ALTA, apiToken: "" }),
+    ).rejects.toThrow(/API token/);
+  });
+
+  it("desconectar borra la config del conector", async () => {
+    const { repo, monday } = conectorConFake();
+    await monday.guardarAlta("demo", ALTA);
+    await monday.desconectar("demo");
+    expect(await repo.getConectorMonday("demo")).toBeNull();
+  });
 });
 
 describe("ConectorMonday.procesarEvento", () => {
@@ -134,6 +167,33 @@ describe("ConectorMonday.procesarEvento", () => {
     await expect(
       monday.procesarEvento("demo", { pulseId: 42 }),
     ).rejects.toThrow(/teléfono/);
+  });
+
+  it("registra el resultado (ok) del disparo para la UI", async () => {
+    const { monday } = conectorConFake();
+    await monday.guardarAlta("demo", ALTA);
+    await monday.procesarEvento("demo", { pulseId: 42 });
+    const reg = await monday.verRegistro("demo");
+    expect(reg.ultimoResultado).toMatchObject({ ok: true, itemId: "42", telefono: "525512345678" });
+  });
+
+  it("registra el resultado (error legible) cuando el disparo falla", async () => {
+    const { monday } = conectorConFake();
+    await monday.guardarAlta("demo", { ...ALTA, columnaTelefono: "noexiste" });
+    await monday.procesarEvento("demo", { pulseId: 42 }).catch(() => {});
+    const reg = await monday.verRegistro("demo");
+    expect(reg.ultimoResultado?.ok).toBe(false);
+    expect((reg.ultimoResultado as any).error).toMatch(/teléfono/);
+  });
+
+  it("registrarLlamada marca la última llamada sin pisar el resultado", async () => {
+    const { monday } = conectorConFake();
+    await monday.guardarAlta("demo", ALTA);
+    await monday.procesarEvento("demo", { pulseId: 42 });
+    await monday.registrarLlamada("demo");
+    const reg = await monday.verRegistro("demo");
+    expect(reg.ultimaLlamadaEn).not.toBeNull();
+    expect(reg.ultimoResultado?.ok).toBe(true);
   });
 });
 
@@ -166,8 +226,9 @@ describe("ConectorMonday.verificarFirma", () => {
     expect(monday.verificarFirma(doc, `Bearer ${malo}`)).toBe(false);
     expect(monday.verificarFirma(doc, undefined)).toBe(false);
 
-    await monday.guardarAlta("demo", { ...ALTA, signingSecret: "" });
-    const sinSecret = (await repo.getConectorMonday("demo"))!;
+    // Alta fresca sin secret (en otro tenant): no se exige JWT.
+    await monday.guardarAlta("otro", { ...ALTA, signingSecret: "" });
+    const sinSecret = (await repo.getConectorMonday("otro"))!;
     expect(monday.verificarFirma(sinSecret, undefined)).toBe(true);
   });
 });

@@ -9,7 +9,7 @@ import {
   type TenantId,
 } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
-import type { ConectorMondayDoc } from "./monday/conector.ts";
+import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 
 /**
@@ -113,6 +113,30 @@ export class RepositorioFirestore implements Repositorio {
     await this.#db
       .doc(`${rutas.tenant(tenantId)}/conectores/monday`)
       .set(config);
+  }
+
+  async deleteConectorMonday(tenantId: TenantId): Promise<void> {
+    await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/monday`).delete();
+    await this.#db
+      .doc(`${rutas.tenant(tenantId)}/conectores/monday-registro`)
+      .delete()
+      .catch(() => {});
+  }
+
+  async getRegistroMonday(tenantId: TenantId): Promise<RegistroMonday | null> {
+    const doc = await this.#db
+      .doc(`${rutas.tenant(tenantId)}/conectores/monday-registro`)
+      .get();
+    return doc.exists ? (doc.data() as RegistroMonday) : null;
+  }
+
+  async setRegistroMonday(
+    tenantId: TenantId,
+    registro: RegistroMonday,
+  ): Promise<void> {
+    await this.#db
+      .doc(`${rutas.tenant(tenantId)}/conectores/monday-registro`)
+      .set(registro);
   }
 
   async getConversacion(
