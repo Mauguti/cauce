@@ -21,6 +21,21 @@ export interface SesionActiva {
 }
 
 /**
+ * El logout de WhatsApp no se confirmó, así que NO se destruyó nada: si
+ * destruyéramos el contenedor con la sesión aún vinculada, quedaría un
+ * dispositivo colgando del lado de WhatsApp y cada repetición degrada el
+ * número (mensajes que se quedan en PENDING y no se entregan). La consola
+ * la traduce a una instrucción para el usuario: cerrar la sesión desde su
+ * teléfono.
+ */
+export class SesionNoCerrada extends Error {
+  constructor(readonly instanceId: InstanceId) {
+    super(`no se pudo confirmar el cierre de la sesión ${instanceId}`);
+    this.name = "SesionNoCerrada";
+  }
+}
+
+/**
  * Mantiene el vínculo instancia → transporte/contenedor. Vive en memoria:
  * si el orquestador se reinicia, los contenedores siguen corriendo pero
  * hay que rehidratar este mapa.
@@ -297,15 +312,29 @@ export class GestorSesiones {
     return this.refrescar(tenantId, instanceId);
   }
 
+  /**
+   * Elimina la instancia, pero SOLO tras confirmar que la sesión de
+   * WhatsApp quedó cerrada (logout). Destruir el contenedor con la sesión
+   * viva deja un dispositivo vinculado colgando y degrada el número; por
+   * eso, si el logout no se confirma, no se destruye nada y se lanza
+   * `SesionNoCerrada` para que el usuario la cierre desde su teléfono.
+   */
   async eliminar(tenantId: TenantId, instanceId: InstanceId): Promise<void> {
-    this.#cola?.baja(instanceId, true);
     const sesion = this.#sesiones.get(instanceId);
     if (sesion) {
+      let cerrada = false;
       try {
-        await sesion.transport.disconnect();
+        await sesion.transport.disconnect(); // pide el logout
+        // Y confirma que de verdad se cerró: si sigue "connected", el
+        // logout no tomó y destruir ahora dejaría el device colgando.
+        cerrada = (await sesion.transport.status()) !== "connected";
       } catch {
-        // El contenedor puede estar ya caído; la limpieza sigue.
+        cerrada = false; // contenedor inalcanzable: no podemos confirmar
       }
+      if (!cerrada) {
+        throw new SesionNoCerrada(instanceId); // NO destruir, NO borrar
+      }
+      this.#cola?.baja(instanceId, true);
       await this.#docker.detener(sesion.contenedorId);
       await this.#docker.eliminar(sesion.contenedorId, true);
       this.#sesiones.delete(instanceId);

@@ -97,9 +97,16 @@ export function Sesiones(props: {
 
   const eliminar = async (id: string) => {
     setAEliminar(null);
-    await api.eliminarInstancia(yo.tenantId, id).catch(() => {});
+    try {
+      await api.eliminarInstancia(yo.tenantId, id);
+      props.alCambiar();
+    } catch (err: any) {
+      // 409 típico: el logout no se confirmó, así que no se borró nada. El
+      // mensaje del servidor dice al usuario cómo cerrar la sesión desde su
+      // teléfono. Lo mostramos tal cual, persistente.
+      setAccionError(err?.message ?? "No se pudo eliminar el número. Intenta de nuevo.");
+    }
     await refrescar();
-    props.alCambiar();
   };
 
   const conectadas = instancias.filter((i) => i.estado === "connected").length;

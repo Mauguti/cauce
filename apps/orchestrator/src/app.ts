@@ -2,7 +2,7 @@ import express, { type Request, type Response, type NextFunction } from "express
 import { timingSafeEqual } from "node:crypto";
 import type { TenantId } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
-import type { GestorSesiones } from "./sesiones.ts";
+import { SesionNoCerrada, type GestorSesiones } from "./sesiones.ts";
 import { autenticar } from "./auth.ts";
 import type { ColaEnvios } from "./cola.ts";
 import type { ConectorMonday } from "./monday/conector.ts";
@@ -614,7 +614,21 @@ export function crearApp(
       res.status(404).json({ error: "instancia no encontrada" });
       return;
     }
-    await gestor.eliminar(req.tenantId!, req.params.instanceId!);
+    try {
+      await gestor.eliminar(req.tenantId!, req.params.instanceId!);
+    } catch (err) {
+      // Logout sin confirmar: no se borró nada. El número queda intacto y
+      // el usuario debe cerrar la sesión desde su teléfono antes de que
+      // borrarla sea seguro.
+      if (err instanceof SesionNoCerrada) {
+        res.status(409).json({
+          error:
+            "No pudimos cerrar la sesión de WhatsApp de este número, así que no lo eliminamos. Borrarlo así deja el número vinculado a medias y puede dañarlo. Ciérralo desde tu teléfono (WhatsApp → Dispositivos vinculados → cierra esta sesión) y vuelve a intentar. Si solo quieres pausarlo, usa Desconectar.",
+        });
+        return;
+      }
+      throw err;
+    }
     res.status(204).end();
   });
 

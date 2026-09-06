@@ -4,7 +4,7 @@ import type { QrPayload } from "@cauce/transports";
 import { crearApp } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
 import { RepositorioEnMemoria } from "./store.ts";
-import type { GestorSesiones } from "./sesiones.ts";
+import { SesionNoCerrada, type GestorSesiones } from "./sesiones.ts";
 
 const KEY_A = "key-tenant-a-0000000000000000";
 const KEY_B = "key-tenant-b-1111111111111111";
@@ -227,6 +227,49 @@ describe("autenticación con ID token de Firebase", () => {
         headers: { authorization: `Bearer uid-desconocido.x.y` },
       });
       expect(res.status).toBe(401);
+    } finally {
+      cerrar();
+    }
+  });
+});
+
+describe("DELETE /instances/:id (logout confirmado antes de destruir)", () => {
+  const KEY = "key-del-00000000000000000000000000";
+  function levantar(fakeEliminar: GestorSesiones["eliminar"]) {
+    const repo = new RepositorioEnMemoria({
+      tenants: [{ id: "t", nombre: "T", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2026-09-06T00:00:00Z" }],
+      instances: [{ id: "i1", tenantId: "t", transportType: "evolution", contenedorId: "c", numero: null, estado: "connected", ultimoHeartbeat: null }],
+    });
+    const gestor = { eliminar: fakeEliminar } as unknown as GestorSesiones;
+    const server = crearApp(repo, gestor).listen(0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    return { base, repo, cerrar: () => server.close() };
+  }
+  const h = { method: "DELETE", headers: { "x-api-key": KEY } };
+
+  it("si el logout no se confirma → 409, mensaje accionable y NO borra", async () => {
+    const { base, repo, cerrar } = levantar(async () => {
+      throw new SesionNoCerrada("i1");
+    });
+    try {
+      const res = await fetch(`${base}/api/tenants/t/instances/i1`, h);
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toMatch(/Dispositivos vinculados/);
+      // La instancia sigue viva: no se borró en silencio.
+      expect(await repo.getInstance("t", "i1")).not.toBeNull();
+    } finally {
+      cerrar();
+    }
+  });
+
+  it("logout confirmado → 204", async () => {
+    const { base, repo, cerrar } = levantar(async (tenantId, instanceId) => {
+      await repo.deleteInstance(tenantId, instanceId);
+    });
+    try {
+      const res = await fetch(`${base}/api/tenants/t/instances/i1`, h);
+      expect(res.status).toBe(204);
+      expect(await repo.getInstance("t", "i1")).toBeNull();
     } finally {
       cerrar();
     }
