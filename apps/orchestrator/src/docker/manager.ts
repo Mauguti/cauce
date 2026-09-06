@@ -81,6 +81,16 @@ async function puertoLibre(): Promise<number> {
   });
 }
 
+export interface InstanciaEnDocker {
+  contenedorId: string;
+  tenantId: TenantId;
+  instanceId: InstanceId;
+  apiKey: string;
+  webhookToken: string;
+  baseUrl: string | null;
+  corriendo: boolean;
+}
+
 export interface InstanciaCreada {
   contenedorId: string;
   /** Hostname del contenedor dentro de cauce-net. */
@@ -263,7 +273,7 @@ export class DockerManager {
   async crear(
     tenantId: TenantId,
     instanceId: InstanceId,
-    opciones: { apiKey: string },
+    opciones: { apiKey: string; webhookToken: string },
   ): Promise<InstanciaCreada> {
     await this.asegurarBaseDatos();
     const bd = nombreBaseDatos(instanceId);
@@ -276,7 +286,16 @@ export class DockerManager {
       imagen: IMAGEN_EVOLUTION,
       puertoLoopback: 8080,
       volumenes: { [nombreVolumenAuth(instanceId)]: "/evolution/instances" },
-      labels: { "cauce.tenant": tenantId, "cauce.instance": instanceId },
+      // apiKey y webhookToken viven como labels para poder rehidratar
+      // sesiones tras un reinicio del orquestador. Mismo criterio que
+      // el password de la BD: quien lee el socket ya es root del host.
+      // TODO: moverlos a Google Secret Manager.
+      labels: {
+        "cauce.tenant": tenantId,
+        "cauce.instance": instanceId,
+        "cauce.apikey": opciones.apiKey,
+        "cauce.webhook-token": opciones.webhookToken,
+      },
       env: {
         SERVER_PORT: "8080",
         AUTHENTICATION_API_KEY: opciones.apiKey,
@@ -344,6 +363,48 @@ export class DockerManager {
     } catch (err: any) {
       if (err?.statusCode !== 404) throw err;
     }
+  }
+
+  /**
+   * Instancias de la flota según Docker: contenedores con rol
+   * `instancia` y sus labels. Fuente de verdad para rehidratar el
+   * orquestador tras un reinicio.
+   */
+  async listarInstancias(): Promise<InstanciaEnDocker[]> {
+    const contenedores = await this.#docker.listContainers({
+      all: true,
+      filters: { label: ["cauce.rol=instancia"] },
+    });
+    const resultado: InstanciaEnDocker[] = [];
+    for (const c of contenedores) {
+      const labels = c.Labels ?? {};
+      const tenantId = labels["cauce.tenant"];
+      const instanceId = labels["cauce.instance"];
+      const apiKey = labels["cauce.apikey"];
+      const webhookToken = labels["cauce.webhook-token"];
+      if (!tenantId || !instanceId || !apiKey || !webhookToken) {
+        console.warn(
+          `contenedor ${c.Names?.[0] ?? c.Id.slice(0, 12)} tiene rol instancia pero labels incompletos; se ignora`,
+        );
+        continue;
+      }
+      let baseUrl: string | null = null;
+      try {
+        baseUrl = await this.baseUrlLocal(c.Id);
+      } catch {
+        // Sin binding loopback no es operable desde el orquestador.
+      }
+      resultado.push({
+        contenedorId: c.Id,
+        tenantId,
+        instanceId,
+        apiKey,
+        webhookToken,
+        baseUrl,
+        corriendo: c.State === "running",
+      });
+    }
+    return resultado;
   }
 
   async inspeccionar(contenedorId: string) {

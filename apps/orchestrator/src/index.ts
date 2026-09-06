@@ -41,6 +41,13 @@ const corsOrigenes = (
   process.env.CAUCE_CORS_ORIGENES ?? "http://localhost:5173"
 ).split(",");
 
+if (await docker.disponible()) {
+  const n = await gestor.rehidratar();
+  console.log(`sesiones rehidratadas desde Docker: ${n}`);
+} else {
+  console.warn("Docker no disponible; se arranca sin sesiones");
+}
+
 crearApp(repo, gestor, { corsOrigenes }).listen(puerto, () => {
   console.log(`orquestador escuchando en :${puerto}`);
 });

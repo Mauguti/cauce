@@ -45,13 +45,71 @@ export class GestorSesiones {
     return this.#sesiones.get(instanceId) ?? null;
   }
 
+  /**
+   * Reconstruye las sesiones desde Docker tras un reinicio del
+   * orquestador: los contenedores con labels de la flota son la fuente
+   * de verdad. Un contenedor cuyo tenant no existe en el repositorio se
+   * reporta y se deja intacto — nunca se borra desde aquí.
+   */
+  async rehidratar(): Promise<number> {
+    let rehidratadas = 0;
+    for (const enDocker of await this.#docker.listarInstancias()) {
+      const tenant = await this.#repo.getTenant(enDocker.tenantId);
+      if (!tenant) {
+        console.warn(
+          `contenedor de instancia ${enDocker.instanceId} pertenece al tenant desconocido "${enDocker.tenantId}"; se deja corriendo sin registrar`,
+        );
+        continue;
+      }
+      if (!enDocker.baseUrl) {
+        console.warn(
+          `instancia ${enDocker.instanceId} sin binding loopback; se omite`,
+        );
+        continue;
+      }
+      const transport = createTransport({
+        tipo: "evolution",
+        opciones: {
+          baseUrl: enDocker.baseUrl,
+          apiKey: enDocker.apiKey,
+          instanceName: nombreContenedor(
+            enDocker.tenantId,
+            enDocker.instanceId,
+          ),
+          webhookUrl: `${this.#urlPublica}/webhooks/${enDocker.tenantId}/${enDocker.instanceId}?token=${enDocker.webhookToken}`,
+        },
+      });
+      const estado = await transport.status();
+      await this.#repo.saveInstance({
+        id: enDocker.instanceId,
+        tenantId: enDocker.tenantId,
+        transportType: "evolution",
+        contenedorId: enDocker.contenedorId,
+        numero: null,
+        estado,
+        ultimoHeartbeat: new Date().toISOString(),
+      });
+      this.#sesiones.set(enDocker.instanceId, {
+        transport,
+        contenedorId: enDocker.contenedorId,
+        baseUrl: enDocker.baseUrl,
+        webhookToken: enDocker.webhookToken,
+      });
+      rehidratadas += 1;
+    }
+    return rehidratadas;
+  }
+
   async crear(tenantId: TenantId): Promise<Instance> {
     const instanceId = randomUUID().slice(0, 8);
     const apiKey = randomBytes(24).toString("hex");
     const webhookToken = randomBytes(24).toString("hex");
 
     const webhookUrl = `${this.#urlPublica}/webhooks/${tenantId}/${instanceId}?token=${webhookToken}`;
-    const creada = await this.#docker.crear(tenantId, instanceId, { apiKey });
+    const creada = await this.#docker.crear(tenantId, instanceId, {
+      apiKey,
+      webhookToken,
+    });
     await this.#docker.esperarListo(creada.baseUrl);
 
     const transport = createTransport({
