@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { TenantId } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
 import type { GestorSesiones } from "./sesiones.ts";
+import { autenticar } from "./auth.ts";
 import { normalizarEntrante } from "./webhook.ts";
 
 declare global {
@@ -13,31 +14,6 @@ declare global {
   }
 }
 
-/**
- * Toda ruta de datos cuelga de /api/tenants/:tenantId y pasa por este
- * middleware: valida que el tenant exista y lo fija en la request.
- *
- * TODO auth real: el tenantId debe derivarse de la identidad autenticada,
- * no confiarse del path. Hoy no hay autenticación (fuera de alcance).
- */
-function scopeTenant(repo: Repositorio) {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    const tenantId =
-      typeof req.params.tenantId === "string" ? req.params.tenantId : undefined;
-    if (!tenantId) {
-      res.status(400).json({ error: "tenantId requerido" });
-      return;
-    }
-    const tenant = await repo.getTenant(tenantId);
-    if (!tenant || tenant.estado !== "activo") {
-      res.status(404).json({ error: "tenant no encontrado" });
-      return;
-    }
-    req.tenantId = tenantId;
-    next();
-  };
-}
-
 function tokenValido(recibido: unknown, esperado: string): boolean {
   if (typeof recibido !== "string") return false;
   const a = Buffer.from(recibido);
@@ -45,12 +21,37 @@ function tokenValido(recibido: unknown, esperado: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** CORS restringido: solo los orígenes de la allowlist (la consola). */
+function cors(origenes: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const origen = req.headers.origin;
+    if (typeof origen === "string" && origenes.includes(origen)) {
+      res.setHeader("access-control-allow-origin", origen);
+      res.setHeader("access-control-allow-headers", "content-type, x-api-key");
+      res.setHeader("access-control-allow-methods", "GET, POST, DELETE");
+      res.setHeader("vary", "origin");
+    }
+    if (req.method === "OPTIONS") {
+      res.status(204).end();
+      return;
+    }
+    next();
+  };
+}
+
+export interface AppOpciones {
+  /** Orígenes permitidos para CORS (la consola). */
+  corsOrigenes?: string[];
+}
+
 export function crearApp(
   repo: Repositorio,
   gestor?: GestorSesiones,
+  opciones: AppOpciones = {},
 ): express.Express {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+  app.use(cors(opciones.corsOrigenes ?? []));
 
   app.get("/health", (_req, res) => {
     res.json({ ok: true });
@@ -89,7 +90,7 @@ export function crearApp(
   });
 
   const tenantRouter = express.Router({ mergeParams: true });
-  tenantRouter.use(scopeTenant(repo));
+  tenantRouter.use(autenticar(repo));
 
   tenantRouter.get("/instances", async (req, res) => {
     res.json(await repo.listInstances(req.tenantId!));
@@ -148,7 +149,7 @@ export function crearApp(
         direccion: "out" as const,
         telefono,
         cuerpo,
-        estado: "sent" as const,
+        estado: "enviado" as const,
         externalId: recibo.externalId,
         timestamp: recibo.timestamp,
       };

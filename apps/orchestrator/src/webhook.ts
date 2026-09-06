@@ -36,7 +36,7 @@ export function normalizarEntrante(
     direccion: "in",
     telefono,
     cuerpo,
-    estado: "delivered",
+    estado: "recibido",
     externalId: typeof key.id === "string" ? key.id : null,
     timestamp: Number.isFinite(marcaSegundos)
       ? new Date(marcaSegundos * 1000).toISOString()

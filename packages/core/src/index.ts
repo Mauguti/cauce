@@ -19,6 +19,16 @@ export interface Tenant {
   nombre: string;
   plan: TenantPlan;
   estado: TenantEstado;
+  /**
+   * SHA-256 (hex) de la API key del tenant. La key en claro nunca se
+   * guarda; el tenant se deriva de la key presentada, no del path.
+   */
+  apiKeyHash: string;
+  /**
+   * Milisegundos entre envíos de la cola de cada instancia del tenant
+   * (antes del jitter). Ausente = valor por defecto conservador.
+   */
+  envioIntervaloMs?: number;
   /** ISO 8601 */
   creadoEn: string;
 }
@@ -49,7 +59,17 @@ export interface Instance {
 }
 
 export type MessageDireccion = "in" | "out";
-export type MessageEstado = "queued" | "sent" | "delivered" | "failed";
+/**
+ * Ciclo de vida de un mensaje saliente:
+ * encolado → enviando → enviado | fallido (tras agotar reintentos).
+ * Los entrantes nacen y mueren en `recibido`.
+ */
+export type MessageEstado =
+  | "encolado"
+  | "enviando"
+  | "enviado"
+  | "fallido"
+  | "recibido";
 
 /** Documento en `tenants/{tenantId}/messages/{messageId}` */
 export interface Message {

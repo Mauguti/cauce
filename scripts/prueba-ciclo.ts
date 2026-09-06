@@ -14,6 +14,7 @@
  */
 import qrcode from "qrcode-terminal";
 import { crearApp } from "../apps/orchestrator/src/app.ts";
+import { hashApiKey } from "../apps/orchestrator/src/auth.ts";
 import { DockerManager } from "../apps/orchestrator/src/docker/manager.ts";
 import { GestorSesiones } from "../apps/orchestrator/src/sesiones.ts";
 import { RepositorioEnMemoria } from "../apps/orchestrator/src/store.ts";
@@ -31,6 +32,7 @@ const PUERTO = 3001;
 const TENANT = "demo";
 const BASE = `http://127.0.0.1:${PUERTO}/api/tenants/${TENANT}`;
 
+const API_KEY = "key-local-prueba-ciclo";
 const repo = new RepositorioEnMemoria({
   tenants: [
     {
@@ -38,6 +40,7 @@ const repo = new RepositorioEnMemoria({
       nombre: "Tenant demo",
       plan: "basico",
       estado: "activo",
+      apiKeyHash: hashApiKey(API_KEY),
       creadoEn: new Date().toISOString(),
     },
   ],
@@ -48,6 +51,13 @@ const gestor = new GestorSesiones({
   repo,
   urlPublica: `http://host.docker.internal:${PUERTO}`,
 });
+
+function api(ruta: string, init: RequestInit = {}) {
+  return fetch(`${BASE}${ruta}`, {
+    ...init,
+    headers: { ...(init.headers ?? {}), "x-api-key": API_KEY },
+  });
+}
 
 function paso(msg: string) {
   console.log(`\n== ${msg}`);
@@ -78,7 +88,7 @@ let instanceId: string | null = null;
 
 try {
   paso("Creando sesión (contenedor + BD + instancia Evolution)…");
-  const creacion = await fetch(`${BASE}/instances`, { method: "POST" });
+  const creacion = await api("/instances", { method: "POST" });
   if (creacion.status !== 201) {
     throw new Error(`POST /instances → ${creacion.status}: ${await creacion.text()}`);
   }
@@ -88,7 +98,7 @@ try {
 
   paso("Esperando QR…");
   const qr = await esperar("QR", 90_000, 2000, async () => {
-    const res = await fetch(`${BASE}/instances/${instanceId}/qr`);
+    const res = await api(`/instances/${instanceId}/qr`);
     if (res.status !== 200) return null;
     return (await res.json()) as { codigo: string };
   });
@@ -98,7 +108,7 @@ try {
   paso("Esperando conexión (hasta 3 minutos)…");
   let ultimoEstado = "";
   await esperar("conexión", 180_000, 2500, async () => {
-    const res = await fetch(`${BASE}/instances/${instanceId}`);
+    const res = await api(`/instances/${instanceId}`);
     const inst = await res.json();
     if (inst.estado !== ultimoEstado) {
       ultimoEstado = inst.estado;
@@ -109,7 +119,7 @@ try {
   console.log("   ¡Conectada!");
 
   paso(`Enviando mensaje de prueba a ${destino}…`);
-  const envio = await fetch(`${BASE}/instances/${instanceId}/send`, {
+  const envio = await api(`/instances/${instanceId}/send`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -141,7 +151,7 @@ try {
 } finally {
   if (limpiar && instanceId) {
     paso("Limpiando contenedor y volumen…");
-    await fetch(`${BASE}/instances/${instanceId}`, { method: "DELETE" });
+    await api(`/instances/${instanceId}`, { method: "DELETE" });
   } else if (instanceId) {
     console.log(
       `\nSesión viva: contenedor cauce-${TENANT}-${instanceId} sigue corriendo (usa --limpiar para destruirla).`,

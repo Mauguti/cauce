@@ -1,6 +1,7 @@
 # ADR 0002 — Multitenancy desde el primer commit
 
-**Estado:** aceptada · 2026-09-05
+**Estado:** aceptada · 2026-09-05 · actualizada 2026-09-05 (auth por
+API key: el tenant ya no se confía del path)
 
 ## Contexto
 
@@ -18,8 +19,12 @@ rehacer el modelo de datos, las rutas y las consultas.
   opcional.
 - Las rutas de Firestore se construyen solo con los helpers `rutas` de
   `@cauce/core`, que exigen el `tenantId` como argumento.
-- Toda ruta HTTP de datos cuelga de `/api/tenants/:tenantId` y pasa
-  por un middleware que valida el tenant y lo fija en la request.
+- Toda ruta HTTP de datos cuelga de `/api/tenants/:tenantId` y exige
+  una API key por tenant (`x-api-key` o `Bearer`). **El `tenantId`
+  efectivo se deriva de la key**, no del path: el path solo se valida
+  contra ella y un desajuste responde 401 idéntico al de key
+  inválida, sin revelar si el tenant existe. La key se guarda
+  hasheada (SHA-256) y se compara timing-safe.
 - El repositorio (`Repositorio` en el orquestador) no ofrece ninguna
   operación sin `tenantId`.
 
@@ -29,6 +34,6 @@ rehacer el modelo de datos, las rutas y las consultas.
   proyecto de refactor.
 - No existe una consulta "global" accidental: la forma de los datos y
   de las APIs la hace imposible de escribir.
-- Pendiente explícito: hoy el `tenantId` viene del path porque no hay
-  autenticación (fuera de alcance). Con auth real, se deriva de la
-  identidad y el path solo se verifica contra ella.
+- La API key identifica al tenant, no a usuarios finales; auth de
+  usuarios queda para después. Rotación de keys: TODO junto con
+  Secret Manager.

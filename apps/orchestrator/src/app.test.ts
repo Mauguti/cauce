@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
 import { crearApp } from "./app.ts";
+import { hashApiKey } from "./auth.ts";
 import { RepositorioEnMemoria } from "./store.ts";
+
+const KEY_A = "key-tenant-a-0000000000000000";
+const KEY_B = "key-tenant-b-1111111111111111";
 
 function levantar() {
   const repo = new RepositorioEnMemoria({
     tenants: [
-      { id: "a", nombre: "A", plan: "basico", estado: "activo", creadoEn: "2026-09-05T00:00:00Z" },
-      { id: "b", nombre: "B", plan: "basico", estado: "activo", creadoEn: "2026-09-05T00:00:00Z" },
+      { id: "a", nombre: "A", plan: "basico", estado: "activo", apiKeyHash: hashApiKey(KEY_A), creadoEn: "2026-09-05T00:00:00Z" },
+      { id: "b", nombre: "B", plan: "basico", estado: "activo", apiKeyHash: hashApiKey(KEY_B), creadoEn: "2026-09-05T00:00:00Z" },
     ],
     instances: [
       { id: "i1", tenantId: "a", transportType: "mock", contenedorId: null, numero: "+521", estado: "connected", ultimoHeartbeat: null },
@@ -19,8 +23,10 @@ function levantar() {
   return { base, cerrar: () => server.close() };
 }
 
+const conKey = (key: string) => ({ headers: { "x-api-key": key } });
+
 describe("orquestador", () => {
-  it("responde health", async () => {
+  it("responde health sin auth", async () => {
     const { base, cerrar } = levantar();
     try {
       const res = await fetch(`${base}/health`);
@@ -30,35 +36,79 @@ describe("orquestador", () => {
     }
   });
 
-  it("lista solo instancias del tenant scopeado", async () => {
+  it("lista solo instancias del tenant dueño de la key", async () => {
     const { base, cerrar } = levantar();
     try {
-      const res = await fetch(`${base}/api/tenants/a/instances`);
+      const res = await fetch(`${base}/api/tenants/a/instances`, conKey(KEY_A));
+      expect(res.status).toBe(200);
       const instancias = await res.json();
       expect(instancias).toHaveLength(1);
       expect(instancias[0].id).toBe("i1");
-      expect(instancias.every((i: { tenantId: string }) => i.tenantId === "a")).toBe(true);
     } finally {
       cerrar();
     }
   });
 
-  it("no expone instancias de otro tenant por id", async () => {
+  it("rechaza sin key y con key inválida, sin filtrar existencia", async () => {
     const { base, cerrar } = levantar();
     try {
-      // i2 pertenece al tenant b: pedirla scopeada en a debe dar 404.
-      const res = await fetch(`${base}/api/tenants/a/instances/i2`);
+      const sinKey = await fetch(`${base}/api/tenants/a/instances`);
+      expect(sinKey.status).toBe(401);
+
+      const keyMala = await fetch(
+        `${base}/api/tenants/a/instances`,
+        conKey("key-adivinada"),
+      );
+      expect(keyMala.status).toBe(401);
+      // Mismo cuerpo para tenant existente e inexistente.
+      const inexistente = await fetch(
+        `${base}/api/tenants/nope/instances`,
+        conKey("key-adivinada"),
+      );
+      expect(inexistente.status).toBe(401);
+      expect(await keyMala.text()).toBe(await inexistente.text());
+    } finally {
+      cerrar();
+    }
+  });
+
+  it("key del tenant A contra recursos del tenant B → 401", async () => {
+    const { base, cerrar } = levantar();
+    try {
+      const res = await fetch(`${base}/api/tenants/b/instances`, conKey(KEY_A));
+      expect(res.status).toBe(401);
+
+      const porId = await fetch(
+        `${base}/api/tenants/b/instances/i2`,
+        conKey(KEY_A),
+      );
+      expect(porId.status).toBe(401);
+    } finally {
+      cerrar();
+    }
+  });
+
+  it("el tenant sale de la key: una instancia ajena por id da 404", async () => {
+    const { base, cerrar } = levantar();
+    try {
+      // i2 es del tenant b; con la key de A (y path de A) no existe.
+      const res = await fetch(
+        `${base}/api/tenants/a/instances/i2`,
+        conKey(KEY_A),
+      );
       expect(res.status).toBe(404);
     } finally {
       cerrar();
     }
   });
 
-  it("devuelve 404 para tenant inexistente", async () => {
+  it("acepta la key también como Bearer", async () => {
     const { base, cerrar } = levantar();
     try {
-      const res = await fetch(`${base}/api/tenants/nope/instances`);
-      expect(res.status).toBe(404);
+      const res = await fetch(`${base}/api/tenants/a/instances`, {
+        headers: { authorization: `Bearer ${KEY_A}` },
+      });
+      expect(res.status).toBe(200);
     } finally {
       cerrar();
     }

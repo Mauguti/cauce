@@ -16,6 +16,7 @@ import type {
  */
 export interface Repositorio {
   getTenant(tenantId: TenantId): Promise<Tenant | null>;
+  listTenants(): Promise<Tenant[]>;
   listInstances(tenantId: TenantId): Promise<Instance[]>;
   getInstance(tenantId: TenantId, instanceId: InstanceId): Promise<Instance | null>;
   saveInstance(instance: Instance): Promise<void>;
@@ -36,6 +37,10 @@ export class RepositorioEnMemoria implements Repositorio {
 
   async getTenant(tenantId: TenantId): Promise<Tenant | null> {
     return this.#tenants.get(tenantId) ?? null;
+  }
+
+  async listTenants(): Promise<Tenant[]> {
+    return [...this.#tenants.values()];
   }
 
   async listInstances(tenantId: TenantId): Promise<Instance[]> {
