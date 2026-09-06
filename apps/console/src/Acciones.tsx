@@ -207,9 +207,8 @@ function Salientes(props: {
       <div className="webhook">
         <h3>Conecta el disparo en monday</h3>
         <p className="consola__sub">
-          En tu board: <em>Integraciones → Webhooks</em> (o una automatización
-          con acción de webhook). Pega esta URL como destino. monday enviará
-          aquí el item cuando se cumpla la condición que definas allá.
+          Copia esta URL y pégala en una automatización de tu board. monday
+          enviará aquí el item cuando se cumpla la condición que definas.
         </p>
         <div className="fila-inline">
           <input className="campo webhook__url" readOnly value={url} />
@@ -229,18 +228,45 @@ function Salientes(props: {
           </button>
         </div>
 
-        <p className="webhook__estado">
-          {registro?.ultimaLlamadaEn ? (
-            <>
-              monday llamó por última vez:{" "}
-              <strong>{fechaLegible(registro.ultimaLlamadaEn)}</strong>
-            </>
-          ) : (
-            <span className="tenue">
-              monday aún no ha llamado a este webhook.
-            </span>
-          )}
+        <ol className="guia">
+          <li>
+            En tu board de monday, arriba a la derecha abre{" "}
+            <strong>Integrar</strong> (icono de enchufe) y busca la app{" "}
+            <strong>Webhooks</strong>.
+          </li>
+          <li>
+            Elige la receta{" "}
+            <em>"When a column changes, send a webhook"</em> — o{" "}
+            <em>"When status changes to something…"</em> si disparas por estatus.
+            Para cobranza, lo típico es: <strong>cuando la fecha de pago es hoy</strong>{" "}
+            o <strong>cuando el estatus cambia a "Recordar"</strong>.
+          </li>
+          <li>
+            En el paso del <em>webhook URL</em>, pega la URL de arriba y guarda.
+          </li>
+          <li>
+            monday mandará una verificación al guardar (se responde sola). Cuando
+            se cumpla tu condición en un item, dispara el mensaje.
+          </li>
+        </ol>
+        <p className="consola__sub tenue">
+          Alternativa sin app: <em>Automatizaciones → Crear automatización →</em>{" "}
+          acción <em>"Send a webhook"</em> con esta misma URL.
         </p>
+
+        {registro?.ultimaLlamadaEn ? (
+          <p className="webhook__estado ok-guardado">
+            ✓ Conectado. monday llamó por última vez:{" "}
+            <strong>{fechaLegible(registro.ultimaLlamadaEn)}</strong>
+          </p>
+        ) : (
+          <p className="webhook__estado aviso-pendiente">
+            monday <strong>aún no ha llamado</strong> a este webhook. Si ya creaste
+            la automatización: revisa que la URL esté pegada completa, que la
+            condición se cumpla en algún item, y que la automatización esté activa
+            (no en borrador). En cuanto llegue el primer disparo, aquí lo verás.
+          </p>
+        )}
         {registro?.ultimoResultado &&
           (registro.ultimoResultado.ok ? (
             <p className="webhook__estado">
