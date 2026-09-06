@@ -127,6 +127,31 @@ export class ConectorMonday {
   }
 
   /**
+   * Columnas del board YA configurado, usando el token guardado
+   * (descifrado en el servidor). Lo usa el editor de Acciones sin que la
+   * consola tenga que manejar el token en claro.
+   */
+  async columnasGuardadas(tenantId: TenantId): Promise<ColumnaBoard[]> {
+    const doc = await this.#repo.getConectorMonday(tenantId);
+    if (!doc) return [];
+    const cliente = this.#clienteFactory(
+      this.#cripto.descifrar(doc.apiTokenCifrado),
+    );
+    return cliente.listarColumnas(doc.boardId);
+  }
+
+  /** Actualiza solo la plantilla, sin tocar credenciales. */
+  async actualizarPlantilla(
+    tenantId: TenantId,
+    plantilla: string,
+  ): Promise<boolean> {
+    const doc = await this.#repo.getConectorMonday(tenantId);
+    if (!doc) return false;
+    await this.#repo.saveConectorMonday(tenantId, { ...doc, plantilla });
+    return true;
+  }
+
+  /**
    * Verifica el JWT que monday manda en el header authorization, firmado
    * con el Signing Secret del tenant. true si es válido (o si el tenant
    * no configuró signingSecret, en cuyo caso no se exige).

@@ -12,13 +12,14 @@ const ETIQUETAS: Record<InstanceEstado, string> = {
 export function Sesiones(props: {
   yo: Yo;
   alAbrir: (instanceId: string) => void;
-  alSalir: () => void;
+  alCambiar: () => void;
 }) {
   const { yo } = props;
   const [instancias, setInstancias] = useState<Instance[]>([]);
   const [creando, setCreando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [qrDe, setQrDe] = useState<string | null>(null);
+  const [aEliminar, setAEliminar] = useState<Instance | null>(null);
 
   const refrescar = useCallback(async () => {
     try {
@@ -41,6 +42,7 @@ export function Sesiones(props: {
     try {
       const creada = await api.crearInstancia(yo.tenantId);
       await refrescar();
+      props.alCambiar();
       setQrDe(creada.id);
     } catch (err: any) {
       setError(err?.message ?? "No se pudo crear la sesión.");
@@ -49,98 +51,160 @@ export function Sesiones(props: {
     }
   };
 
+  const desconectar = async (id: string) => {
+    await api.desconectarInstancia(yo.tenantId, id).catch(() => {});
+    await refrescar();
+    props.alCambiar();
+  };
+
+  const reconectar = async (id: string) => {
+    await api.reconectarInstancia(yo.tenantId, id).catch(() => {});
+    await refrescar();
+    props.alCambiar();
+    setQrDe(id);
+  };
+
+  const eliminar = async (id: string) => {
+    setAEliminar(null);
+    await api.eliminarInstancia(yo.tenantId, id).catch(() => {});
+    await refrescar();
+    props.alCambiar();
+  };
+
   const conectadas = instancias.filter((i) => i.estado === "connected").length;
 
   return (
-    <main className="consola">
-      <header className="consola__cabecera consola__cabecera--fila">
+    <main className="seccion">
+      <header className="seccion__cabecera seccion__cabecera--fila">
         <div>
-          <h1>Cauce</h1>
+          <h1>Sesiones</h1>
           <p className="consola__sub">
-            {yo.nombre} · {conectadas} de {instancias.length} conectadas
+            {conectadas} de {instancias.length} conectadas
           </p>
         </div>
-        <div className="consola__acciones">
-          <button
-            className="boton boton--primario"
-            onClick={crear}
-            disabled={creando}
-          >
-            {creando ? "Creando sesión…" : "Conectar número"}
-          </button>
-          <button className="boton" onClick={props.alSalir}>
-            Salir
-          </button>
-        </div>
+        <button
+          className="boton boton--primario"
+          onClick={crear}
+          disabled={creando}
+        >
+          {creando ? "Creando sesión…" : "Conectar número"}
+        </button>
       </header>
 
       {error && <p className="mensaje-error">{error}</p>}
       {creando && (
         <p className="consola__sub">
-          Levantando contenedor e instancia; esto toma alrededor de un minuto.
+          Levantando contenedor e instancia; toma alrededor de un minuto.
         </p>
       )}
 
-      <table>
-        <thead>
-          <tr>
-            <th>Número</th>
-            <th>Estado</th>
-            <th>Último heartbeat</th>
-            <th aria-label="acciones" />
-          </tr>
-        </thead>
-        <tbody>
-          {instancias.map((inst) => (
-            <tr key={inst.id}>
-              <td className="celda-numero">{inst.numero ?? inst.id}</td>
-              <td>
-                <span className={`estado estado--${inst.estado}`}>
-                  {ETIQUETAS[inst.estado]}
-                </span>
-              </td>
-              <td className="celda-heartbeat">
-                {inst.ultimoHeartbeat
-                  ? new Date(inst.ultimoHeartbeat).toLocaleTimeString("es-MX")
-                  : "—"}
-              </td>
-              <td className="celda-acciones">
-                {inst.estado === "qr" && (
-                  <button className="boton" onClick={() => setQrDe(inst.id)}>
-                    Ver QR
-                  </button>
-                )}
-                <button className="boton" onClick={() => props.alAbrir(inst.id)}>
-                  Conversación
-                </button>
-              </td>
-            </tr>
-          ))}
-          {instancias.length === 0 && (
+      {instancias.length === 0 && !creando ? (
+        <div className="vacio">
+          <p>Aún no conectas ningún número.</p>
+          <p className="consola__sub">
+            Conecta el número desde el que enviarás y recibirás mensajes.
+          </p>
+        </div>
+      ) : (
+        <table>
+          <thead>
             <tr>
-              <td colSpan={4} className="celda-vacia">
-                Sin sesiones. Conecta tu primer número.
-              </td>
+              <th>Número</th>
+              <th>Estado</th>
+              <th>Último heartbeat</th>
+              <th aria-label="acciones" />
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {instancias.map((inst) => (
+              <tr key={inst.id}>
+                <td className="celda-numero">
+                  {inst.numero ?? <span className="tenue">sin conectar · {inst.id}</span>}
+                </td>
+                <td>
+                  <span className={`estado estado--${inst.estado}`}>
+                    {ETIQUETAS[inst.estado]}
+                  </span>
+                </td>
+                <td className="celda-heartbeat">
+                  {inst.ultimoHeartbeat
+                    ? new Date(inst.ultimoHeartbeat).toLocaleTimeString("es-MX")
+                    : "—"}
+                </td>
+                <td className="celda-acciones">
+                  {inst.estado === "qr" && (
+                    <button className="boton" onClick={() => setQrDe(inst.id)}>
+                      Ver QR
+                    </button>
+                  )}
+                  {inst.estado === "connected" && (
+                    <button className="boton" onClick={() => props.alAbrir(inst.id)}>
+                      Conversaciones
+                    </button>
+                  )}
+                  {inst.estado === "disconnected" ? (
+                    <button className="boton" onClick={() => reconectar(inst.id)}>
+                      Reconectar
+                    </button>
+                  ) : (
+                    <button className="boton" onClick={() => desconectar(inst.id)}>
+                      Desconectar
+                    </button>
+                  )}
+                  <button className="boton" onClick={() => setAEliminar(inst)}>
+                    Eliminar
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
 
       {qrDe && (
         <ModalQr
           tenantId={yo.tenantId}
           instanceId={qrDe}
-          alCerrar={() => setQrDe(null)}
+          alCerrar={() => {
+            setQrDe(null);
+            void refrescar();
+          }}
         />
+      )}
+
+      {aEliminar && (
+        <div className="modal-fondo" onClick={() => setAEliminar(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Eliminar sesión</h2>
+            <p>
+              Se destruyen el contenedor, el volumen y la base de datos de{" "}
+              <strong>{aEliminar.numero ?? aEliminar.id}</strong>.
+            </p>
+            <p className="mensaje-error">
+              Se pierden la vinculación con el CRM y las conversaciones
+              asociadas. Esto no se puede deshacer.
+            </p>
+            <div className="modal__acciones">
+              <button className="boton" onClick={() => setAEliminar(null)}>
+                Cancelar
+              </button>
+              <button
+                className="boton boton--primario"
+                onClick={() => eliminar(aEliminar.id)}
+              >
+                Eliminar definitivamente
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );
 }
 
 /**
- * El QR de la sesión se regenera cada ~20 s: se pide fresco cada 3 s y
- * jamás se cachea. Cuando la sesión conecta, el modal lo anuncia y
- * se cierra solo.
+ * QR de vinculación: se pide fresco cada 3s (se regenera cada ~20s) y
+ * nunca se cachea. Al conectar, el modal lo anuncia y se cierra solo.
  */
 function ModalQr(props: {
   tenantId: string;
@@ -187,8 +251,8 @@ function ModalQr(props: {
           <>
             <img className="modal__qr" src={imagen} alt="QR para vincular" />
             <p className="consola__sub">
-              WhatsApp → Dispositivos vinculados → Vincular dispositivo.
-              El código se renueva solo.
+              WhatsApp → Dispositivos vinculados → Vincular dispositivo. El
+              código se renueva solo.
             </p>
           </>
         ) : (

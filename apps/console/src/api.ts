@@ -1,4 +1,5 @@
 import type { Instance, Message } from "@cauce/core";
+export type { Instance, Message } from "@cauce/core";
 
 /**
  * Único canal de la consola hacia el sistema: HTTP al orquestador.
@@ -50,7 +51,8 @@ async function llamar<T>(
     const cuerpo = await res.json().catch(() => null);
     throw new Error(cuerpo?.error ?? `error ${res.status}`);
   }
-  return (await res.json()) as T;
+  if (res.status === 204) return undefined as T;
+  return (await res.json().catch(() => undefined)) as T;
 }
 
 export class ErrorNoAutorizado extends Error {
@@ -84,6 +86,16 @@ export const api = {
     if (!res.ok && res.status !== 204) throw new Error(`error ${res.status}`);
   },
 
+  desconectarInstancia: (tenantId: string, id: string) =>
+    llamar<Instance>(`/api/tenants/${tenantId}/instances/${id}/disconnect`, {
+      method: "POST",
+    }),
+
+  reconectarInstancia: (tenantId: string, id: string) =>
+    llamar<Instance>(`/api/tenants/${tenantId}/instances/${id}/connect`, {
+      method: "POST",
+    }),
+
   qr: async (tenantId: string, id: string) => {
     // El orquestador nuevo responde 200 con codigo:null cuando no hay QR
     // en este estado. Se tolera también el 404 del orquestador anterior
@@ -108,4 +120,97 @@ export const api = {
       `/api/tenants/${tenantId}/instances/${id}/send`,
       { method: "POST", body: JSON.stringify({ telefono, cuerpo }) },
     ),
+
+  // ---- Conexiones (monday) ----
+  monday: {
+    ver: (tenantId: string) =>
+      llamar<MondayVista | null>(`/api/tenants/${tenantId}/conectores/monday`),
+
+    probar: (tenantId: string, apiToken: string) =>
+      llamar<{ ok: boolean; boards: MondayBoard[] }>(
+        `/api/tenants/${tenantId}/conectores/monday/probar`,
+        { method: "POST", body: JSON.stringify({ apiToken }) },
+      ),
+
+    columnas: (tenantId: string, apiToken: string, boardId: string) =>
+      llamar<MondayColumna[]>(
+        `/api/tenants/${tenantId}/conectores/monday/columnas`,
+        { method: "POST", body: JSON.stringify({ apiToken, boardId }) },
+      ),
+
+    guardar: (tenantId: string, alta: MondayAlta) =>
+      llamar<void>(`/api/tenants/${tenantId}/conectores/monday`, {
+        method: "PUT",
+        body: JSON.stringify(alta),
+      }),
+
+    columnasGuardadas: (tenantId: string) =>
+      llamar<MondayColumna[]>(
+        `/api/tenants/${tenantId}/conectores/monday/board-columnas`,
+      ),
+
+    guardarPlantilla: (tenantId: string, plantilla: string) =>
+      llamar<void>(`/api/tenants/${tenantId}/conectores/monday/plantilla`, {
+        method: "PUT",
+        body: JSON.stringify({ plantilla }),
+      }),
+  },
+
+  // ---- Acciones entrantes (disparadores) ----
+  disparadores: (tenantId: string) =>
+    llamar<Disparador[]>(`/api/tenants/${tenantId}/disparadores`),
+
+  guardarDisparadores: (tenantId: string, lista: Disparador[]) =>
+    llamar<void>(`/api/tenants/${tenantId}/disparadores`, {
+      method: "PUT",
+      body: JSON.stringify(lista),
+    }),
 };
+
+export interface MondayBoard {
+  id: string;
+  name: string;
+}
+export interface MondayColumna {
+  id: string;
+  title: string;
+  type: string;
+}
+export interface MondayVista {
+  instanceId: string;
+  boardId: string;
+  columnaTelefono: string;
+  plantilla: string;
+  apiTokenPista: string;
+  tieneSigningSecret: boolean;
+}
+export interface MondayAlta {
+  instanceId: string;
+  boardId: string;
+  apiToken: string;
+  signingSecret: string;
+  columnaTelefono: string;
+  plantilla: string;
+}
+
+export type TipoDisparador =
+  | "primer_contacto"
+  | "palabra_clave"
+  | "cualquiera"
+  | "fuera_horario";
+
+export interface Disparador {
+  id: string;
+  prioridad: number;
+  tipo: TipoDisparador;
+  activo: boolean;
+  respuesta: string;
+  patron?: string;
+  coincidencia?: "contiene" | "igual";
+  horario?: { tz: string; dias: number[]; desde: string; hasta: string };
+}
+
+/** URL del webhook de monday que el usuario pega en la automatización. */
+export function urlWebhookMonday(tenantId: string): string {
+  return `${BASE}/webhooks/monday/${tenantId}`;
+}

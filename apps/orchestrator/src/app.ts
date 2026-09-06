@@ -209,6 +209,39 @@ export function crearApp(
     }
   });
 
+  // Columnas del board ya configurado (editor de Acciones): usa el token
+  // guardado, descifrado en el servidor; la consola no lo maneja.
+  tenantRouter.get("/conectores/monday/board-columnas", async (req, res) => {
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    try {
+      res.json(await opciones.monday.columnasGuardadas(req.tenantId!));
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "monday rechazó la consulta" });
+    }
+  });
+
+  // Actualiza solo la plantilla del mensaje saliente.
+  tenantRouter.put("/conectores/monday/plantilla", async (req, res) => {
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    const { plantilla } = req.body ?? {};
+    if (typeof plantilla !== "string") {
+      res.status(400).json({ error: "se requiere plantilla" });
+      return;
+    }
+    const ok = await opciones.monday.actualizarPlantilla(req.tenantId!, plantilla);
+    if (!ok) {
+      res.status(409).json({ error: "configura primero la conexión monday" });
+      return;
+    }
+    res.status(204).end();
+  });
+
   // Alta/edición del conector: cifra credenciales en reposo.
   tenantRouter.put("/conectores/monday", async (req, res) => {
     if (!opciones.monday) {

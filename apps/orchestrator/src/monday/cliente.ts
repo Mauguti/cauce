@@ -3,7 +3,8 @@
  * Solo lo que el conector necesita: leer las columnas de un item y
  * publicar un update en él. El API token es por tenant.
  */
-const ENDPOINT = "https://api.monday.com/v2";
+// Override por entorno para pruebas / self-host; por defecto la API real.
+const ENDPOINT = process.env.MONDAY_ENDPOINT ?? "https://api.monday.com/v2";
 const API_VERSION = process.env.MONDAY_API_VERSION ?? "2025-07";
 
 export interface ColumnaItem {
