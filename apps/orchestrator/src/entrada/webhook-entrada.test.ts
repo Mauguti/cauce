@@ -39,7 +39,8 @@ describe("webhook entrante → motor de entrada", () => {
     // proactivo previo desde el CRM).
     await repo.saveConectorMonday("demo", {
       instanceId: "i1", boardId: "b1", boardNombre: "B", apiTokenCifrado: "", signingSecretCifrado: "",
-      apiTokenPista: "····", columnaTelefono: "tel", plantilla: "x",
+      apiTokenPista: "····", columnaTelefono: "tel",
+      plantillas: [{ id: "default", nombre: "Principal", cuerpo: "x" }],
     });
     await repo.vincularMonday("demo", "i1", "5215512345678", "item-5");
 

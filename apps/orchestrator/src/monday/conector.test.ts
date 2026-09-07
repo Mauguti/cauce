@@ -212,6 +212,85 @@ describe("ConectorMonday.publicarEnItem", () => {
   });
 });
 
+describe("ConectorMonday plantillas múltiples", () => {
+  it("migra un doc viejo (plantilla) a la plantilla por defecto, y sigue disparando por la URL corta", async () => {
+    const { repo, monday, encolados } = conectorConFake();
+    // Doc con el modelo VIEJO: un solo campo `plantilla`.
+    await repo.saveConectorMonday("demo", {
+      instanceId: "i1", boardId: "b1", boardNombre: "B",
+      columnaTelefono: "telefono",
+      apiTokenCifrado: cripto.cifrar("tok"), signingSecretCifrado: "",
+      apiTokenPista: "····tok",
+      plantilla: "Hola {{nombre}}",
+    } as any);
+
+    const vista = await monday.verConfig("demo");
+    expect(vista!.plantillas).toEqual([
+      { id: "default", nombre: "Plantilla principal", cuerpo: "Hola {{nombre}}" },
+    ]);
+
+    // Sin plantillaId (URL corta) usa la por defecto: la migración no rompe.
+    await monday.procesarEvento("demo", { pulseId: 42 });
+    expect(encolados[0].cuerpo).toBe("Hola Cliente Ejemplo");
+  });
+
+  it("guardarPlantillas + disparo por id usa esa plantilla y registra su estado", async () => {
+    const { repo, monday, encolados } = conectorConFake();
+    await monday.guardarAlta("demo", ALTA); // siembra "default"
+    await monday.guardarPlantillas("demo", [
+      { id: "default", nombre: "Principal", cuerpo: "P {{nombre}}" },
+      { id: "bienve", nombre: "Bienvenida", cuerpo: "Bienvenido {{nombre}}" },
+    ]);
+
+    await monday.procesarEvento("demo", { pulseId: 42 }, "bienve");
+    expect(encolados.at(-1).cuerpo).toBe("Bienvenido Cliente Ejemplo");
+
+    // El estado por plantilla queda en el doc, para el listado.
+    const doc = (await repo.getConectorMonday("demo"))!;
+    const bienve = doc.plantillas.find((p) => p.id === "bienve")!;
+    expect(bienve.ultimoResultado).toMatchObject({ ok: true, itemId: "42" });
+    expect(bienve.ultimoDisparoEn).toBeTruthy();
+    // La otra plantilla no se disparó: sin estado.
+    expect(doc.plantillas.find((p) => p.id === "default")!.ultimoDisparoEn ?? null).toBeNull();
+  });
+
+  it("guardarPlantillas conserva el estado de disparo de las que sobreviven", async () => {
+    const { repo, monday } = conectorConFake();
+    await monday.guardarAlta("demo", ALTA);
+    await monday.procesarEvento("demo", { pulseId: 42 }); // dispara la default
+    // Reedita la lista (renombra la default): su estado debe conservarse.
+    await monday.guardarPlantillas("demo", [
+      { id: "default", nombre: "Renombrada", cuerpo: "otra cosa {{nombre}}" },
+    ]);
+    const doc = (await repo.getConectorMonday("demo"))!;
+    expect(doc.plantillas[0]!.nombre).toBe("Renombrada");
+    expect(doc.plantillas[0]!.ultimoResultado).toMatchObject({ ok: true });
+  });
+
+  it("dispara por la URL /webhooks/monday/:tenant/:plantillaId", async () => {
+    const { repo, monday, encolados } = conectorConFake();
+    await monday.guardarAlta("demo", { ...ALTA, signingSecret: "" }); // sin firma
+    await monday.guardarPlantillas("demo", [
+      { id: "default", nombre: "Principal", cuerpo: "P {{nombre}}" },
+      { id: "recor", nombre: "Recordatorio", cuerpo: "Recuerda {{nombre}}" },
+    ]);
+    const server = crearApp(repo, undefined, { monday }).listen(0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const res = await fetch(`${base}/webhooks/monday/demo/recor`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: { pulseId: 42 } }),
+      });
+      expect(res.status).toBe(200);
+      await new Promise((r) => setTimeout(r, 50)); // el disparo es async tras el 200
+      expect(encolados.at(-1).cuerpo).toBe("Recuerda Cliente Ejemplo");
+    } finally {
+      server.close();
+    }
+  });
+});
+
 describe("ConectorMonday.verificarFirma", () => {
   it("acepta JWT válido, rechaza inválido/ausente, no exige si no hay secret", async () => {
     const { repo, monday } = conectorConFake();

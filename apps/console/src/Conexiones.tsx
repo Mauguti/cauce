@@ -165,7 +165,7 @@ function AsistenteMonday(props: {
         apiToken,
         signingSecret,
         columnaTelefono,
-        plantilla: existente?.plantilla ?? "",
+        // Las plantillas se gestionan en Acciones → Salientes, no aquí.
       });
       setGuardado(true);
       setEstado({ tipo: "ok", texto: "Conexión guardada." });

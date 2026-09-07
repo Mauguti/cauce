@@ -176,10 +176,10 @@ export const api = {
         `/api/tenants/${tenantId}/conectores/monday/registro`,
       ),
 
-    guardarPlantilla: (tenantId: string, plantilla: string) =>
-      llamar<void>(`/api/tenants/${tenantId}/conectores/monday/plantilla`, {
+    guardarPlantillas: (tenantId: string, plantillas: PlantillaSaliente[]) =>
+      llamar<void>(`/api/tenants/${tenantId}/conectores/monday/plantillas`, {
         method: "PUT",
-        body: JSON.stringify({ plantilla }),
+        body: JSON.stringify({ plantillas }),
       }),
   },
 
@@ -203,12 +203,25 @@ export interface MondayColumna {
   title: string;
   type: string;
 }
+/** Resultado del último disparo de una plantilla, para el listado. */
+export type ResultadoPlantilla =
+  | { ok: true; itemId: string; telefono: string; en: string }
+  | { ok: false; error: string; en: string };
+
+export interface PlantillaSaliente {
+  id: string;
+  nombre: string;
+  cuerpo: string;
+  ultimoDisparoEn?: string | null;
+  ultimoResultado?: ResultadoPlantilla | null;
+}
+
 export interface MondayVista {
   instanceId: string;
   boardId: string;
   boardNombre: string;
   columnaTelefono: string;
-  plantilla: string;
+  plantillas: PlantillaSaliente[];
   apiTokenPista: string;
   tieneSigningSecret: boolean;
 }
@@ -219,7 +232,6 @@ export interface MondayAlta {
   apiToken: string;
   signingSecret: string;
   columnaTelefono: string;
-  plantilla: string;
 }
 
 /** Tipos de columna de monday válidos para mapear como teléfono. */
@@ -261,7 +273,11 @@ export interface Disparador {
   horario?: { tz: string; dias: number[]; desde: string; hasta: string };
 }
 
-/** URL del webhook de monday que el usuario pega en la automatización. */
-export function urlWebhookMonday(tenantId: string): string {
-  return `${BASE}/webhooks/monday/${tenantId}`;
+/**
+ * URL del webhook de monday que el usuario pega en la automatización. Con
+ * plantillaId, apunta a esa plantilla; sin él, a la URL corta (plantilla
+ * por defecto), que sigue funcionando para automatizaciones ya creadas.
+ */
+export function urlWebhookMonday(tenantId: string, plantillaId?: string): string {
+  return `${BASE}/webhooks/monday/${tenantId}${plantillaId ? `/${plantillaId}` : ""}`;
 }

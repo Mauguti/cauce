@@ -92,8 +92,15 @@ export function crearApp(
    * seguridad es (1) el challenge de alta y (2) el JWT firmado con el
    * Signing Secret del tenant. El tenantId viene en el path.
    */
-  app.post("/webhooks/monday/:tenantId", async (req, res) => {
+  app.post(
+    ["/webhooks/monday/:tenantId", "/webhooks/monday/:tenantId/:plantillaId"],
+    async (req, res) => {
     const tenantId = String(req.params.tenantId);
+    // Plantilla apuntada por esta URL; ausente = la por defecto (URL corta,
+    // compatible con automatizaciones ya configuradas).
+    const plantillaId = req.params.plantillaId
+      ? String(req.params.plantillaId)
+      : undefined;
     // 1. Handshake de verificación: monday manda {challenge} al registrar
     //    el webhook y espera exactamente ese challenge de vuelta.
     if (req.body?.challenge) {
@@ -120,11 +127,12 @@ export function crearApp(
     // que no debe hacer esperar a monday ni tumbar su reintento.
     res.status(200).json({ ok: true });
     opciones.monday
-      .procesarEvento(tenantId, req.body?.event)
+      .procesarEvento(tenantId, req.body?.event, plantillaId)
       .catch((err) =>
         console.warn(`monday procesarEvento falló: ${err?.message}`),
       );
-  });
+  },
+  );
 
   /**
    * Webhook entrante desde las instancias. No pasa por scopeTenant: su
@@ -326,18 +334,40 @@ export function crearApp(
     }
   });
 
-  // Actualiza solo la plantilla del mensaje saliente.
-  tenantRouter.put("/conectores/monday/plantilla", async (req, res) => {
+  // Reemplaza la lista de plantillas salientes (varias por conexión, cada
+  // una con su propia URL de webhook).
+  tenantRouter.put("/conectores/monday/plantillas", async (req, res) => {
     if (!opciones.monday) {
       res.status(501).json({ error: "conector monday no disponible" });
       return;
     }
-    const { plantilla } = req.body ?? {};
-    if (typeof plantilla !== "string") {
-      res.status(400).json({ error: "se requiere plantilla" });
+    const { plantillas } = req.body ?? {};
+    if (
+      !Array.isArray(plantillas) ||
+      plantillas.length === 0 ||
+      !plantillas.every(
+        (p) =>
+          p &&
+          typeof p.id === "string" &&
+          p.id.length > 0 &&
+          typeof p.nombre === "string" &&
+          typeof p.cuerpo === "string",
+      )
+    ) {
+      res.status(400).json({
+        error: "se requiere al menos una plantilla con id, nombre y cuerpo",
+      });
       return;
     }
-    const ok = await opciones.monday.actualizarPlantilla(req.tenantId!, plantilla);
+    const ids = new Set(plantillas.map((p) => p.id));
+    if (ids.size !== plantillas.length) {
+      res.status(400).json({ error: "hay plantillas con id repetido" });
+      return;
+    }
+    const ok = await opciones.monday.guardarPlantillas(
+      req.tenantId!,
+      plantillas,
+    );
     if (!ok) {
       res.status(409).json({ error: "configura primero la conexión monday" });
       return;
@@ -365,11 +395,10 @@ export function crearApp(
     if (
       typeof instanceId !== "string" ||
       typeof boardId !== "string" ||
-      typeof columnaTelefono !== "string" ||
-      typeof plantilla !== "string"
+      typeof columnaTelefono !== "string"
     ) {
       res.status(400).json({
-        error: "se requieren instanceId, boardId, columnaTelefono y plantilla",
+        error: "se requieren instanceId, boardId y columnaTelefono",
       });
       return;
     }
@@ -396,7 +425,7 @@ export function crearApp(
         apiToken: typeof apiToken === "string" ? apiToken : "",
         signingSecret: typeof signingSecret === "string" ? signingSecret : "",
         columnaTelefono,
-        plantilla,
+        ...(typeof plantilla === "string" ? { plantilla } : {}),
       });
       res.status(204).end();
     } catch (err: any) {

@@ -5,6 +5,32 @@ import type { Repositorio } from "../store.ts";
 import { Cripto, pista } from "../cripto.ts";
 import { ClienteMonday, type BoardMonday, type ColumnaBoard, type ItemMonday } from "./cliente.ts";
 
+/** Id de la plantilla que responde en la URL corta (compatibilidad). */
+export const PLANTILLA_DEFECTO_ID = "default";
+
+/**
+ * Resultado del último disparo de UNA plantilla, para el listado en la UI.
+ */
+export type ResultadoPlantilla =
+  | { ok: true; itemId: string; telefono: string; en: string }
+  | { ok: false; error: string; en: string };
+
+/**
+ * Una plantilla de mensaje saliente. Cada una tiene su propia URL de
+ * webhook (`/webhooks/monday/{tenant}/{id}`), así el cliente apunta
+ * automatizaciones distintas de monday a mensajes distintos. Variables:
+ * {{columnId}} → texto de esa columna; {{nombre}} → nombre del item.
+ */
+export interface PlantillaSaliente {
+  id: string;
+  nombre: string;
+  cuerpo: string;
+  /** ISO del último disparo de esta plantilla; null si nunca. */
+  ultimoDisparoEn?: string | null;
+  /** Cómo terminó el último disparo de esta plantilla. */
+  ultimoResultado?: ResultadoPlantilla | null;
+}
+
 /**
  * Documento guardado del conector monday (por tenant). Las credenciales
  * van CIFRADAS en reposo (ver cripto.ts); la API nunca las devuelve en
@@ -19,11 +45,8 @@ export interface ConectorMondayDoc {
   boardNombre: string;
   /** columnId de monday que contiene el teléfono del cliente. */
   columnaTelefono: string;
-  /**
-   * Plantilla del mensaje. Variables: {{columnId}} se reemplaza por el
-   * texto de esa columna, {{nombre}} por el nombre del item.
-   */
-  plantilla: string;
+  /** Plantillas de mensaje saliente (al menos una). */
+  plantillas: PlantillaSaliente[];
   /** API token de monday, cifrado. */
   apiTokenCifrado: string;
   /** Signing Secret de la app de monday, cifrado ("" si no se configuró). */
@@ -33,17 +56,38 @@ export interface ConectorMondayDoc {
 }
 
 /**
+ * Migra un doc guardado al modelo de varias plantillas. Un doc viejo tiene
+ * un solo campo `plantilla: string`; se convierte en la plantilla por
+ * defecto, que sigue respondiendo en la URL corta ya configurada en
+ * monday, para no romper la automatización existente.
+ */
+export function normalizarPlantillas(raw: any): PlantillaSaliente[] {
+  if (Array.isArray(raw?.plantillas) && raw.plantillas.length > 0) {
+    return raw.plantillas as PlantillaSaliente[];
+  }
+  return [
+    {
+      id: PLANTILLA_DEFECTO_ID,
+      nombre: "Plantilla principal",
+      cuerpo: typeof raw?.plantilla === "string" ? raw.plantilla : "",
+    },
+  ];
+}
+
+/**
  * Datos en claro que la consola envía para dar de alta o editar el
  * conector. Al EDITAR, apiToken/signingSecret pueden venir vacíos: se
  * conservan los ya guardados (el token está enmascarado en la UI y no se
- * repite). En un alta nueva, apiToken es obligatorio.
+ * repite). En un alta nueva, apiToken es obligatorio. `plantilla` es
+ * opcional: siembra la plantilla por defecto solo en el alta nueva; la
+ * gestión de plantillas vive aparte (guardarPlantillas).
  */
 export interface AltaConectorMonday {
   instanceId: string;
   boardId: string;
   boardNombre?: string;
   columnaTelefono: string;
-  plantilla: string;
+  plantilla?: string;
   apiToken: string;
   signingSecret: string;
 }
@@ -65,6 +109,8 @@ export interface ResultadoDisparo {
   itemId: string;
   telefono: string;
   mensajeId: string;
+  /** Plantilla que se usó (la de la URL, o la por defecto). */
+  plantillaId: string;
 }
 
 /**
@@ -119,12 +165,23 @@ export class ConectorMonday {
     const signingSecretCifrado = alta.signingSecret
       ? this.#cripto.cifrar(alta.signingSecret)
       : (previo?.signingSecretCifrado ?? "");
+    // Las plantillas se conservan al editar; en alta nueva se siembra la
+    // por defecto con `alta.plantilla` (o vacía).
+    const plantillas = previo
+      ? normalizarPlantillas(previo)
+      : [
+          {
+            id: PLANTILLA_DEFECTO_ID,
+            nombre: "Plantilla principal",
+            cuerpo: alta.plantilla ?? "",
+          },
+        ];
     await this.#repo.saveConectorMonday(tenantId, {
       instanceId: alta.instanceId,
       boardId: alta.boardId,
       boardNombre: alta.boardNombre ?? previo?.boardNombre ?? "",
       columnaTelefono: alta.columnaTelefono,
-      plantilla: alta.plantilla,
+      plantillas,
       apiTokenCifrado,
       signingSecretCifrado,
       apiTokenPista,
@@ -137,7 +194,7 @@ export class ConectorMonday {
     boardId: string;
     boardNombre: string;
     columnaTelefono: string;
-    plantilla: string;
+    plantillas: PlantillaSaliente[];
     apiTokenPista: string;
     tieneSigningSecret: boolean;
   } | null> {
@@ -148,7 +205,7 @@ export class ConectorMonday {
       boardId: doc.boardId,
       boardNombre: doc.boardNombre ?? "",
       columnaTelefono: doc.columnaTelefono,
-      plantilla: doc.plantilla,
+      plantillas: normalizarPlantillas(doc),
       apiTokenPista: doc.apiTokenPista,
       tieneSigningSecret: doc.signingSecretCifrado !== "",
     };
@@ -191,14 +248,31 @@ export class ConectorMonday {
     return cliente.listarColumnas(doc.boardId);
   }
 
-  /** Actualiza solo la plantilla, sin tocar credenciales. */
-  async actualizarPlantilla(
+  /**
+   * Reemplaza la lista de plantillas, sin tocar credenciales. Conserva el
+   * estado de disparo (ultimoDisparoEn/ultimoResultado) de las plantillas
+   * que sobreviven, para que el listado no pierda el historial al editar.
+   */
+  async guardarPlantillas(
     tenantId: TenantId,
-    plantilla: string,
+    plantillas: PlantillaSaliente[],
   ): Promise<boolean> {
     const doc = await this.#repo.getConectorMonday(tenantId);
     if (!doc) return false;
-    await this.#repo.saveConectorMonday(tenantId, { ...doc, plantilla });
+    const previas = new Map(
+      normalizarPlantillas(doc).map((p) => [p.id, p]),
+    );
+    const fusionadas = plantillas.map((p) => ({
+      id: p.id,
+      nombre: p.nombre,
+      cuerpo: p.cuerpo,
+      ultimoDisparoEn: previas.get(p.id)?.ultimoDisparoEn ?? null,
+      ultimoResultado: previas.get(p.id)?.ultimoResultado ?? null,
+    }));
+    await this.#repo.saveConectorMonday(tenantId, {
+      ...doc,
+      plantillas: fusionadas,
+    });
     return true;
   }
 
@@ -231,23 +305,28 @@ export class ConectorMonday {
   async procesarEvento(
     tenantId: TenantId,
     evento: any,
+    plantillaId?: string,
   ): Promise<ResultadoDisparo> {
     try {
-      const r = await this.#procesarEventoInterno(tenantId, evento);
-      await this.#registrarResultado(tenantId, {
-        ok: true,
+      const r = await this.#procesarEventoInterno(tenantId, evento, plantillaId);
+      const ok = {
+        ok: true as const,
         itemId: r.itemId,
         telefono: r.telefono,
         en: new Date().toISOString(),
-      });
+      };
+      await this.#registrarResultado(tenantId, ok);
+      await this.#registrarDisparoPlantilla(tenantId, r.plantillaId, ok);
       return r;
     } catch (err: any) {
       // El error queda visible en la UI (Salientes), no solo en logs.
-      await this.#registrarResultado(tenantId, {
-        ok: false,
+      const fail = {
+        ok: false as const,
         error: err?.message ?? "error desconocido",
         en: new Date().toISOString(),
-      });
+      };
+      await this.#registrarResultado(tenantId, fail);
+      await this.#registrarDisparoPlantilla(tenantId, plantillaId, fail);
       throw err;
     }
   }
@@ -255,6 +334,7 @@ export class ConectorMonday {
   async #procesarEventoInterno(
     tenantId: TenantId,
     evento: any,
+    plantillaId?: string,
   ): Promise<ResultadoDisparo> {
     const itemId = evento?.pulseId ?? evento?.itemId;
     if (itemId === undefined || itemId === null) {
@@ -262,6 +342,13 @@ export class ConectorMonday {
     }
     const doc = await this.#repo.getConectorMonday(tenantId);
     if (!doc) throw new Error("tenant sin conector monday configurado");
+
+    const plantilla = this.#elegirPlantilla(doc, plantillaId);
+    if (!plantilla) {
+      throw new Error(
+        `la plantilla ${plantillaId ?? "(por defecto)"} no existe en este conector`,
+      );
+    }
 
     const cliente = this.#clienteFactory(this.#cripto.descifrar(doc.apiTokenCifrado));
     const item = await cliente.getItem(String(itemId));
@@ -282,7 +369,7 @@ export class ConectorMonday {
         `el item no tiene teléfono en la columna mapeada (${doc.columnaTelefono})`,
       );
     }
-    const cuerpo = renderPlantilla(doc.plantilla, item);
+    const cuerpo = renderPlantilla(plantilla.cuerpo, item);
     if (!cuerpo.trim()) {
       await this.#registrarFallido(
         tenantId,
@@ -313,7 +400,46 @@ export class ConectorMonday {
       telefono,
       String(itemId),
     );
-    return { itemId: String(itemId), telefono, mensajeId: mensaje.id };
+    return {
+      itemId: String(itemId),
+      telefono,
+      mensajeId: mensaje.id,
+      plantillaId: plantilla.id,
+    };
+  }
+
+  /** Elige la plantilla por id; si no se pasa, la por defecto o la primera. */
+  #elegirPlantilla(
+    doc: ConectorMondayDoc,
+    plantillaId?: string,
+  ): PlantillaSaliente | null {
+    const plantillas = normalizarPlantillas(doc);
+    if (plantillaId) {
+      return plantillas.find((p) => p.id === plantillaId) ?? null;
+    }
+    return (
+      plantillas.find((p) => p.id === PLANTILLA_DEFECTO_ID) ??
+      plantillas[0] ??
+      null
+    );
+  }
+
+  /** Anota en la plantilla usada cuándo y cómo terminó su último disparo. */
+  async #registrarDisparoPlantilla(
+    tenantId: TenantId,
+    plantillaId: string | undefined,
+    resultado: ResultadoPlantilla,
+  ): Promise<void> {
+    const doc = await this.#repo.getConectorMonday(tenantId);
+    if (!doc) return;
+    const objetivo = this.#elegirPlantilla(doc, plantillaId);
+    if (!objetivo) return;
+    const plantillas = normalizarPlantillas(doc).map((p) =>
+      p.id === objetivo.id
+        ? { ...p, ultimoDisparoEn: resultado.en, ultimoResultado: resultado }
+        : p,
+    );
+    await this.#repo.saveConectorMonday(tenantId, { ...doc, plantillas });
   }
 
   /** Deja un mensaje `fallido` en el registro para que se vea en el dashboard. */

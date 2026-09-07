@@ -566,3 +566,14 @@
 .cuenta__contratar { display: flex; flex-direction: column; gap: var(--esp-2); }
 .cuenta__contratar h3 { margin: 0; font-size: var(--texto-m); font-weight: var(--peso-semibold); }
 .cuenta__contratar .boton { text-decoration: none; text-align: center; }
+
+/* ---- Listado de plantillas salientes (Bloque 13) ---- */
+.plantillas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--esp-2); }
+.plantilla-fila {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: var(--esp-4); padding: var(--esp-4);
+  border: var(--borde); border-radius: var(--radio);
+}
+.plantilla-fila__info { display: flex; flex-direction: column; gap: var(--esp-1); min-width: 0; flex: 1; }
+.plantilla-fila__info .registro__cuerpo { max-width: 100%; }
+.plantilla-fila__acciones { display: flex; gap: var(--esp-2); flex: none; }

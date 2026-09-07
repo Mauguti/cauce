@@ -10,7 +10,12 @@ import {
   type Message,
   type Disparador,
   type TipoDisparador,
+  type PlantillaSaliente,
 } from "./api.ts";
+
+// Id de la plantilla por defecto (espejo del backend): responde también en
+// la URL corta ya configurada en las automatizaciones existentes.
+const PLANTILLA_DEFECTO_ID = "default";
 
 export function Acciones(props: {
   yo: Yo;
@@ -63,22 +68,37 @@ function Salientes(props: {
   alCambiar: () => void;
 }) {
   const { yo } = props;
-  const [plantilla, setPlantilla] = useState(props.monday?.plantilla ?? "");
+  const [plantillas, setPlantillas] = useState<PlantillaSaliente[]>(
+    props.monday?.plantillas ?? [],
+  );
+  const [editando, setEditando] = useState<PlantillaSaliente | null>(null);
   const [columnas, setColumnas] = useState<MondayColumna[]>([]);
   const [guardado, setGuardado] = useState(false);
   const [guardarError, setGuardarError] = useState<string | null>(null);
-  const [copiado, setCopiado] = useState(false);
   const [registro, setRegistro] = useState<RegistroMonday | null>(null);
   const [envios, setEnvios] = useState<Message[]>([]);
-  const areaRef = useRef<HTMLTextAreaElement>(null);
 
   const instanceId = props.monday?.instanceId;
+  const enEdicion = editando !== null;
 
   useEffect(() => {
     if (!props.monday) return;
     api.monday.columnasGuardadas(yo.tenantId).then(setColumnas).catch(() => {});
+  }, [yo.tenantId, props.monday]);
+
+  // Refresca el listado (estado/última vez por plantilla), el registro y los
+  // envíos. Mientras se edita, NO recarga las plantillas: así el polling no
+  // pisa lo que el usuario está escribiendo (el bug de sincronía a evitar).
+  useEffect(() => {
+    if (!props.monday) return;
     const cargar = () => {
       api.monday.registro(yo.tenantId).then(setRegistro).catch(() => {});
+      if (!enEdicion) {
+        api.monday
+          .ver(yo.tenantId)
+          .then((v) => v && setPlantillas(v.plantillas))
+          .catch(() => {});
+      }
       if (instanceId) {
         api
           .mensajes(yo.tenantId, instanceId)
@@ -89,7 +109,7 @@ function Salientes(props: {
     cargar();
     const t = setInterval(cargar, 4000);
     return () => clearInterval(t);
-  }, [yo.tenantId, props.monday, instanceId]);
+  }, [yo.tenantId, props.monday, instanceId, enEdicion]);
 
   if (!props.monday) {
     return (
@@ -103,186 +123,122 @@ function Salientes(props: {
     );
   }
 
-  const insertar = (texto: string) => {
-    setGuardado(false);
-    const el = areaRef.current;
-    if (!el) {
-      setPlantilla((p) => p + texto);
+  const persistir = async (lista: PlantillaSaliente[]): Promise<boolean> => {
+    setGuardarError(null);
+    try {
+      await api.monday.guardarPlantillas(yo.tenantId, lista);
+      setPlantillas(lista);
+      setGuardado(true);
+      props.alCambiar();
+      return true;
+    } catch (err: any) {
+      setGuardarError(err?.message ?? "No se pudo guardar la plantilla.");
+      return false;
+    }
+  };
+
+  const guardarUna = async (p: PlantillaSaliente) => {
+    if (!p.nombre.trim()) {
+      setGuardarError("Ponle un nombre a la plantilla.");
       return;
     }
-    const ini = el.selectionStart ?? plantilla.length;
-    const fin = el.selectionEnd ?? plantilla.length;
-    const nueva = plantilla.slice(0, ini) + texto + plantilla.slice(fin);
-    setPlantilla(nueva);
-    // Recoloca el cursor tras lo insertado.
-    requestAnimationFrame(() => {
-      el.focus();
-      el.selectionStart = el.selectionEnd = ini + texto.length;
+    const existe = plantillas.some((x) => x.id === p.id);
+    const lista = existe
+      ? plantillas.map((x) => (x.id === p.id ? p : x))
+      : [...plantillas, p];
+    if (await persistir(lista)) setEditando(null);
+  };
+
+  const quitar = async (id: string) => {
+    if (plantillas.length <= 1) {
+      setGuardarError("Debe quedar al menos una plantilla.");
+      return;
+    }
+    await persistir(plantillas.filter((x) => x.id !== id));
+  };
+
+  const nueva = () => {
+    setGuardado(false);
+    setGuardarError(null);
+    setEditando({
+      id: crypto.randomUUID().slice(0, 8),
+      nombre: "",
+      cuerpo: "",
     });
   };
 
-  const preview = plantilla.replace(
-    /\{\{\s*([\w.-]+)\s*\}\}/g,
-    (_m: string, k: string): string =>
-      k === "nombre" ? EJEMPLO.nombre! : (EJEMPLO[k] ?? `[${k}]`),
-  );
-
-  const guardar = async () => {
-    setGuardarError(null);
-    try {
-      await api.monday.guardarPlantilla(yo.tenantId, plantilla);
-      setGuardado(true); // confirmación persistente hasta la próxima edición
-      props.alCambiar();
-    } catch (err: any) {
-      setGuardarError(err?.message ?? "No se pudo guardar la plantilla.");
-    }
-  };
-
-  const url = urlWebhookMonday(yo.tenantId);
+  if (editando) {
+    return (
+      <PlantillaEditor
+        plantilla={editando}
+        columnas={columnas}
+        // La plantilla por defecto conserva la URL corta ya configurada en
+        // monday; las demás usan su URL propia por id.
+        url={urlWebhookMonday(
+          yo.tenantId,
+          editando.id === PLANTILLA_DEFECTO_ID ? undefined : editando.id,
+        )}
+        error={guardarError}
+        alGuardar={guardarUna}
+        alCancelar={() => {
+          setGuardarError(null);
+          setEditando(null);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="panel">
       <p className="consola__sub">
         Board conectado; columna de teléfono:{" "}
-        <strong>{props.monday.columnaTelefono}</strong>.
+        <strong>{props.monday.columnaTelefono}</strong>. Cada plantilla tiene su
+        propia dirección de webhook: apunta cada automatización de monday a la
+        plantilla que quieras que mande.
       </p>
 
-      <label className="campo-etq">
-        <span>Plantilla del mensaje</span>
-        <div className="editor">
-          <div className="editor__barra">
-            <span className="editor__grupo">
-              {columnas.length === 0 && (
-                <span className="tenue">cargando columnas…</span>
-              )}
-              {columnas.filter((c) => columnaEsVariable(c.type)).map((c) => (
-                <button
-                  key={c.id}
-                  className="chip"
-                  title={`Insertar {{${c.id}}}`}
-                  onClick={() => insertar(`{{${c.id}}}`)}
-                >
-                  {c.title}
-                </button>
-              ))}
-              <button className="chip" onClick={() => insertar("{{nombre}}")}>
-                nombre del item
-              </button>
-            </span>
-            <span className="editor__grupo">
-              {EMOJIS.map((e) => (
-                <button key={e} className="chip chip--emoji" onClick={() => insertar(e)}>
-                  {e}
-                </button>
-              ))}
-            </span>
-          </div>
-          <textarea
-            ref={areaRef}
-            className="campo editor__area"
-            rows={4}
-            value={plantilla}
-            onChange={(e) => {
-              setPlantilla(e.target.value);
-              setGuardado(false);
-            }}
-            placeholder="Hola {{nombre}}, tu saldo de {{saldo}} vence el {{fecha}}."
-          />
-        </div>
-      </label>
-
-      <div className="preview">
-        <span className="preview__etq">Vista previa</span>
-        <p className="preview__cuerpo">{preview || "…"}</p>
-      </div>
-
       <div className="guardar-fila">
-        <button className="boton boton--primario" onClick={guardar}>
-          Guardar plantilla
+        <button className="boton boton--primario" onClick={nueva}>
+          Nueva plantilla
         </button>
-        {guardado && <span className="ok-guardado">Plantilla guardada ✓</span>}
+        {guardado && <span className="ok-guardado">Guardado ✓</span>}
         {guardarError && <span className="mensaje-error">{guardarError}</span>}
       </div>
 
-      <div className="webhook">
-        <h3>Conecta el disparo en monday</h3>
-        <p className="consola__sub">
-          Un <em>webhook</em> es un aviso automático: cuando pasa algo en tu
-          board (p. ej. una fecha llega, un estatus cambia), monday le avisa a
-          Cauce enviando el item a una dirección web. Copia esta dirección y
-          pégala en una automatización de tu board.
-        </p>
-        <div className="fila-inline">
-          <input className="campo webhook__url" readOnly value={url} />
-          <button
-            className="boton"
-            onClick={() => {
-              navigator.clipboard?.writeText(url).then(
-                () => {
-                  setCopiado(true);
-                  setTimeout(() => setCopiado(false), 1500);
-                },
-                () => {},
-              );
-            }}
-          >
-            {copiado ? "Copiado ✓" : "Copiar"}
-          </button>
+      {plantillas.length === 0 ? (
+        <div className="vacio">
+          <p>Aún no tienes plantillas.</p>
+          <p className="consola__sub">
+            Crea la primera (recordatorio de pago, bienvenida, seguimiento…).
+          </p>
         </div>
-
-        <ol className="guia">
-          <li>
-            En tu board de monday, arriba a la derecha abre{" "}
-            <strong>Integrar</strong> (icono de enchufe) y busca la app{" "}
-            <strong>Webhooks</strong>.
-          </li>
-          <li>
-            Elige la receta{" "}
-            <em>"When a column changes, send a webhook"</em> — o{" "}
-            <em>"When status changes to something…"</em> si disparas por estatus.
-            Para cobranza, lo típico es: <strong>cuando la fecha de pago es hoy</strong>{" "}
-            o <strong>cuando el estatus cambia a "Recordar"</strong>.
-          </li>
-          <li>
-            En el paso del <em>webhook URL</em>, pega la URL de arriba y guarda.
-          </li>
-          <li>
-            monday mandará una verificación al guardar (se responde sola). Cuando
-            se cumpla tu condición en un item, dispara el mensaje.
-          </li>
-        </ol>
-        <p className="consola__sub tenue">
-          Alternativa sin app: <em>Automatizaciones → Crear automatización →</em>{" "}
-          acción <em>"Send a webhook"</em> con esta misma URL.
-        </p>
-
-        {registro?.ultimaLlamadaEn ? (
-          <p className="webhook__estado ok-guardado">
-            ✓ Conectado. monday llamó por última vez:{" "}
-            <strong>{fechaLegible(registro.ultimaLlamadaEn)}</strong>
-          </p>
-        ) : (
-          <p className="webhook__estado aviso-pendiente">
-            monday <strong>aún no ha llamado</strong> a este webhook. Si ya creaste
-            la automatización: revisa que la URL esté pegada completa, que la
-            condición se cumpla en algún item, y que la automatización esté activa
-            (no en borrador). En cuanto llegue el primer disparo, aquí lo verás.
-          </p>
-        )}
-        {registro?.ultimoResultado &&
-          (registro.ultimoResultado.ok ? (
-            <p className="webhook__estado">
-              Último disparo: enviado a {registro.ultimoResultado.telefono}{" "}
-              (item {registro.ultimoResultado.itemId}) ·{" "}
-              {fechaLegible(registro.ultimoResultado.en)}
-            </p>
-          ) : (
-            <p className="mensaje-error">
-              Último disparo falló: {registro.ultimoResultado.error} ·{" "}
-              {fechaLegible(registro.ultimoResultado.en)}
-            </p>
+      ) : (
+        <ul className="plantillas">
+          {plantillas.map((p) => (
+            <li key={p.id} className="plantilla-fila">
+              <div className="plantilla-fila__info">
+                <strong>{p.nombre || "(sin nombre)"}</strong>
+                <span className="consola__sub">{estadoPlantilla(p)}</span>
+                <span className="registro__cuerpo tenue">
+                  {p.cuerpo || "(vacía)"}
+                </span>
+              </div>
+              <div className="plantilla-fila__acciones">
+                <button className="boton" onClick={() => { setGuardado(false); setGuardarError(null); setEditando({ ...p }); }}>
+                  Editar
+                </button>
+                <button
+                  className="boton boton--peligro"
+                  onClick={() => quitar(p.id)}
+                  disabled={plantillas.length <= 1}
+                >
+                  Quitar
+                </button>
+              </div>
+            </li>
           ))}
-      </div>
+        </ul>
+      )}
 
       <div className="registro">
         <h3>Registro de envíos</h3>
@@ -322,10 +278,162 @@ function Salientes(props: {
   );
 }
 
+/** Texto de estado de una plantilla para el listado (última vez + resultado). */
+function estadoPlantilla(p: PlantillaSaliente): string {
+  if (!p.ultimoDisparoEn) return "Aún no se ha disparado";
+  const cuando = fechaLegible(p.ultimoDisparoEn);
+  if (p.ultimoResultado?.ok === true) return `Último disparo ${cuando} · enviado`;
+  if (p.ultimoResultado?.ok === false) return `Último disparo ${cuando} · falló`;
+  return `Último disparo ${cuando}`;
+}
+
+/** Editor de UNA plantilla: nombre, cuerpo con variables/emojis, vista previa y su webhook. */
+function PlantillaEditor(props: {
+  plantilla: PlantillaSaliente;
+  columnas: MondayColumna[];
+  url: string;
+  error: string | null;
+  alGuardar: (p: PlantillaSaliente) => void;
+  alCancelar: () => void;
+}) {
+  const [nombre, setNombre] = useState(props.plantilla.nombre);
+  const [cuerpo, setCuerpo] = useState(props.plantilla.cuerpo);
+  const [copiado, setCopiado] = useState(false);
+  const areaRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertar = (texto: string) => {
+    const el = areaRef.current;
+    if (!el) {
+      setCuerpo((c) => c + texto);
+      return;
+    }
+    const ini = el.selectionStart ?? cuerpo.length;
+    const fin = el.selectionEnd ?? cuerpo.length;
+    setCuerpo(cuerpo.slice(0, ini) + texto + cuerpo.slice(fin));
+    requestAnimationFrame(() => {
+      el.focus();
+      el.selectionStart = el.selectionEnd = ini + texto.length;
+    });
+  };
+
+  const preview = cuerpo.replace(
+    /\{\{\s*([\w.-]+)\s*\}\}/g,
+    (_m: string, k: string): string =>
+      k === "nombre" ? EJEMPLO.nombre! : (EJEMPLO[k] ?? `[${k}]`),
+  );
+
+  return (
+    <div className="panel">
+      <label className="campo-etq">
+        <span>Nombre de la plantilla</span>
+        <input
+          className="campo"
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value)}
+          placeholder="Recordatorio de pago"
+        />
+      </label>
+
+      <label className="campo-etq">
+        <span>Mensaje</span>
+        <div className="editor">
+          <div className="editor__barra">
+            <span className="editor__grupo">
+              {props.columnas.length === 0 && (
+                <span className="tenue">cargando columnas…</span>
+              )}
+              {props.columnas.filter((c) => columnaEsVariable(c.type)).map((c) => (
+                <button
+                  key={c.id}
+                  className="chip"
+                  title={`Insertar {{${c.id}}}`}
+                  onClick={() => insertar(`{{${c.id}}}`)}
+                >
+                  {c.title}
+                </button>
+              ))}
+              <button className="chip" onClick={() => insertar("{{nombre}}")}>
+                nombre del item
+              </button>
+            </span>
+            <span className="editor__grupo">
+              {EMOJIS.map((e) => (
+                <button key={e} className="chip chip--emoji" onClick={() => insertar(e)}>
+                  {e}
+                </button>
+              ))}
+            </span>
+          </div>
+          <textarea
+            ref={areaRef}
+            className="campo editor__area"
+            rows={4}
+            value={cuerpo}
+            onChange={(e) => setCuerpo(e.target.value)}
+            placeholder="Hola {{nombre}}, tu saldo de {{saldo}} vence el {{fecha}}."
+          />
+        </div>
+      </label>
+
+      <div className="preview">
+        <span className="preview__etq">Vista previa</span>
+        <p className="preview__cuerpo">{preview || "…"}</p>
+      </div>
+
+      <div className="guardar-fila">
+        <button
+          className="boton boton--primario"
+          onClick={() => props.alGuardar({ ...props.plantilla, nombre, cuerpo })}
+        >
+          Guardar plantilla
+        </button>
+        <button className="boton" onClick={props.alCancelar}>
+          Cancelar
+        </button>
+        {props.error && <span className="mensaje-error">{props.error}</span>}
+      </div>
+
+      <div className="webhook">
+        <h3>Dirección de webhook de esta plantilla</h3>
+        <p className="consola__sub">
+          Un <em>webhook</em> es un aviso automático: cuando se cumple una
+          condición en tu board, monday le avisa a Cauce enviando el item a esta
+          dirección. Pega <strong>esta</strong> dirección en la automatización de
+          monday que deba mandar <strong>este</strong> mensaje.
+        </p>
+        <div className="fila-inline">
+          <input className="campo webhook__url" readOnly value={props.url} />
+          <button
+            className="boton"
+            onClick={() => {
+              navigator.clipboard?.writeText(props.url).then(
+                () => {
+                  setCopiado(true);
+                  setTimeout(() => setCopiado(false), 1500);
+                },
+                () => {},
+              );
+            }}
+          >
+            {copiado ? "Copiado ✓" : "Copiar"}
+          </button>
+        </div>
+        <p className="consola__sub tenue">
+          En monday: <em>Integrar → Webhooks</em> (o{" "}
+          <em>Automatizaciones → "Send a webhook"</em>), elige la condición
+          (p. ej. la fecha de pago es hoy) y pega esta URL. Guárdala una vez por
+          plantilla.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 const ETIQUETA_ENVIO: Record<string, string> = {
   encolado: "Encolado",
   enviando: "Enviando",
   enviado: "Enviado",
+  no_confirmado: "Sin confirmar",
   fallido: "Fallido",
   recibido: "Recibido",
 };
