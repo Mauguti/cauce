@@ -65,7 +65,10 @@ export interface Repositorio {
     instanceId: InstanceId,
     telefono: string,
     timestamp: string,
+    nombre?: string | null,
   ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }>;
+  /** Todas las conversaciones del tenant (para dar contexto al registro). */
+  listConversaciones(tenantId: TenantId): Promise<Conversacion[]>;
   /** Fija (merge) el item de monday vinculado a la conversación. */
   vincularMonday(
     tenantId: TenantId,
@@ -249,6 +252,7 @@ export class RepositorioEnMemoria implements Repositorio {
     instanceId: InstanceId,
     telefono: string,
     timestamp: string,
+    nombre?: string | null,
   ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }> {
     // Sin `await` entre lectura y escritura: en el modelo de un solo hilo
     // de JS esto es atómico frente a otras llamadas concurrentes.
@@ -259,12 +263,19 @@ export class RepositorioEnMemoria implements Repositorio {
       tenantId,
       instanceId,
       telefono,
+      nombre: nombre?.trim() || previa?.nombre || null,
       primerContactoEn: previa?.primerContactoEn ?? timestamp,
       ultimoEntranteEn: timestamp,
       mondayItemId: previa?.mondayItemId ?? null,
     };
     this.#conversaciones.set(clave, conversacion);
     return { conversacion, esPrimerContacto };
+  }
+
+  async listConversaciones(tenantId: TenantId): Promise<Conversacion[]> {
+    return [...this.#conversaciones.values()].filter(
+      (c) => c.tenantId === tenantId,
+    );
   }
 
   async vincularMonday(
@@ -279,6 +290,7 @@ export class RepositorioEnMemoria implements Repositorio {
       tenantId,
       instanceId,
       telefono,
+      nombre: previa?.nombre ?? null,
       primerContactoEn: previa?.primerContactoEn ?? null,
       ultimoEntranteEn: previa?.ultimoEntranteEn ?? null,
       mondayItemId: itemId,

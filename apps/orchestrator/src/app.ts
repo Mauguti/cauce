@@ -193,8 +193,13 @@ export function crearApp(
     if (mensaje) {
       await repo.saveMessage(mensaje);
       if (opciones.motorEntrada) {
+        // Nombre del contacto (pushName) para dar contexto en el registro.
+        const nombre =
+          typeof req.body?.data?.pushName === "string"
+            ? req.body.data.pushName
+            : null;
         opciones.motorEntrada
-          .procesar(tenantId!, instanceId!, mensaje)
+          .procesar(tenantId!, instanceId!, mensaje, nombre)
           .catch((err) =>
             console.warn(`motor de entrada falló: ${err?.message}`),
           );
@@ -604,6 +609,12 @@ export function crearApp(
     const mensajes = await repo.listMessages(req.tenantId!);
     mensajes.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
     res.json(mensajes.slice(0, 200));
+  });
+
+  // Conversaciones del tenant: dan contexto al registro (nombre del
+  // contacto o item de monday, en vez del número crudo).
+  tenantRouter.get("/conversaciones", async (req, res) => {
+    res.json(await repo.listConversaciones(req.tenantId!));
   });
 
   // Reintento manual de un mensaje fallido: re-encola el MISMO mensaje

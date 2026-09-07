@@ -126,6 +126,9 @@ export const api = {
   mensajesTenant: (tenantId: string) =>
     llamar<Message[]>(`/api/tenants/${tenantId}/messages`),
 
+  conversaciones: (tenantId: string) =>
+    llamar<Conversacion[]>(`/api/tenants/${tenantId}/conversaciones`),
+
   reintentar: (tenantId: string, messageId: string) =>
     llamar<{ id: string; estado: string }>(
       `/api/tenants/${tenantId}/messages/${messageId}/retry`,
@@ -246,6 +249,14 @@ export function columnaEsTelefono(tipo: string): boolean {
 }
 export function columnaEsVariable(tipo: string): boolean {
   return TIPOS_VARIABLE.includes(tipo);
+}
+
+export interface Conversacion {
+  instanceId: string;
+  telefono: string;
+  nombre?: string | null;
+  mondayItemId: string | null;
+  ultimoEntranteEn: string | null;
 }
 
 export interface RegistroMonday {

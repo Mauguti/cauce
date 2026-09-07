@@ -577,3 +577,57 @@
 .plantilla-fila__info { display: flex; flex-direction: column; gap: var(--esp-1); min-width: 0; flex: 1; }
 .plantilla-fila__info .registro__cuerpo { max-width: 100%; }
 .plantilla-fila__acciones { display: flex; gap: var(--esp-2); flex: none; }
+
+/* ---- Registro de mensajes como bitácora (Bloque 14) ---- */
+.bitacora__fecha {
+  font-size: var(--texto-xs); text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--texto-secundario); font-weight: var(--peso-semibold);
+  margin: var(--esp-6) 0 var(--esp-1);
+}
+.bitacora__dia:first-child .bitacora__fecha { margin-top: var(--esp-2); }
+.bitacora__lista { list-style: none; margin: 0; padding: 0; }
+
+/* Un renglón de mensaje. La dirección se lee al instante por dos señales
+   que coinciden: la flecha y el sombreado del entrante. */
+.msj {
+  display: flex; gap: var(--esp-3); align-items: flex-start;
+  padding: var(--esp-3); border-bottom: var(--borde);
+}
+.msj--in { background: var(--gris-1); }
+.msj__dir {
+  flex: none; width: 1.1rem; text-align: center;
+  font-weight: var(--peso-bold); line-height: var(--interlineado-cuerpo);
+}
+.msj--out .msj__dir { color: var(--gris-8); }
+.msj--in .msj__dir { color: var(--gris-5); }
+.msj__cuerpo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--esp-1); }
+.msj__cabecera { display: flex; justify-content: space-between; align-items: baseline; gap: var(--esp-3); }
+.msj__contacto {
+  font-weight: var(--peso-medio); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.msj__hora {
+  flex: none; color: var(--texto-secundario); font-size: var(--texto-xs);
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.msj__texto {
+  margin: 0; font-size: var(--texto-s); line-height: var(--interlineado-cuerpo);
+  white-space: pre-wrap; word-break: break-word; cursor: pointer;
+}
+.msj__texto--corto {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.msj__pie {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--esp-2);
+  font-size: var(--texto-xs); margin-top: var(--esp-1);
+}
+/* El estado normal (enviado/recibido) no se pinta: la flecha ya lo dice.
+   Solo resaltan el error y el no confirmado. */
+.marca {
+  font-weight: var(--peso-semibold); display: inline-flex; align-items: center;
+  gap: var(--esp-1); padding: 1px var(--esp-2); border-radius: var(--radio);
+}
+.marca--fallido { color: var(--error-texto); border: 1px solid var(--estado-desconectada); }
+.marca--no_confirmado { color: var(--gris-8); border: 1px solid var(--estado-qr); }
+.msj__causa { color: var(--error-texto); font-weight: var(--error-peso); }

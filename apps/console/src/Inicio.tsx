@@ -5,7 +5,7 @@ import {
   type Message,
   type MessageEstado,
 } from "@cauce/core";
-import { api, type Yo } from "./api.ts";
+import { api, type Yo, type Conversacion } from "./api.ts";
 import { PrimerosPasos } from "./PrimerosPasos.tsx";
 import type { Seccion } from "./App.tsx";
 
@@ -30,17 +30,29 @@ export function Inicio(props: {
   abrirInstancia: (id: string) => void;
 }) {
   const [mensajes, setMensajes] = useState<Message[]>([]);
+  const [conversaciones, setConversaciones] = useState<Conversacion[]>([]);
   const [filtro, setFiltro] = useState<Filtro>("todos");
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   // Los primeros pasos se colapsan cuando están completos; se pueden reabrir.
   const [pasosAbiertos, setPasosAbiertos] = useState(!props.pasosCompletos);
 
   useEffect(() => {
-    const cargar = () =>
+    const cargar = () => {
       api.mensajesTenant(props.yo.tenantId).then(setMensajes).catch(() => {});
+      api.conversaciones(props.yo.tenantId).then(setConversaciones).catch(() => {});
+    };
     cargar();
     const t = setInterval(cargar, 4000);
     return () => clearInterval(t);
   }, [props.yo.tenantId]);
+
+  // Mapa teléfono (solo dígitos) → contexto, para mostrar nombre o item de
+  // monday en vez del número crudo.
+  const contexto = useMemo(() => {
+    const m = new Map<string, Conversacion>();
+    for (const c of conversaciones) m.set(c.telefono.replace(/[^\d]/g, ""), c);
+    return m;
+  }, [conversaciones]);
 
   const conteos = useMemo(() => {
     let enviado = 0, sinConfirmar = 0, fallido = 0, cola = 0, recibido = 0;
@@ -157,46 +169,90 @@ export function Inicio(props: {
           <p>Sin mensajes {filtro === "todos" ? "todavía" : "en este estado"}.</p>
         </div>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Hora</th>
-              <th>Destinatario</th>
-              <th>Mensaje</th>
-              <th>Estado</th>
-              <th aria-label="acción" />
-            </tr>
-          </thead>
-          <tbody>
-            {filtrados.slice(0, 100).map((m) => (
-              <FilaMensaje
-                key={m.id}
-                m={m}
-                tenantId={props.yo.tenantId}
-                abrirInstancia={props.abrirInstancia}
-              />
-            ))}
-          </tbody>
-        </table>
+        <Registro
+          mensajes={filtrados.slice(0, 100)}
+          contexto={contexto}
+          tenantId={props.yo.tenantId}
+          expandidos={expandidos}
+          alExpandir={(id) =>
+            setExpandidos((s) => {
+              const n = new Set(s);
+              n.has(id) ? n.delete(id) : n.add(id);
+              return n;
+            })
+          }
+          abrirInstancia={props.abrirInstancia}
+        />
       )}
     </main>
   );
 }
 
+/**
+ * Registro de mensajes como bitácora agrupada por día. Está pensado para
+ * leerse de un vistazo: la dirección (enviado/recibido) salta sin leer el
+ * estado, el mensaje tiene aire y el estado solo grita cuando algo falló.
+ */
+function Registro(props: {
+  mensajes: Message[];
+  contexto: Map<string, Conversacion>;
+  tenantId: string;
+  expandidos: Set<string>;
+  alExpandir: (id: string) => void;
+  abrirInstancia: (id: string) => void;
+}) {
+  const grupos = agruparPorDia(props.mensajes);
+  // El día vive en la cabecera; los renglones muestran solo la hora. Se
+  // omite la cabecera única cuando todo es de hoy.
+  const mostrarDias =
+    grupos.length > 1 || (grupos.length === 1 && grupos[0]!.dia !== "Hoy");
+
+  return (
+    <div className="bitacora">
+      {grupos.map((g) => (
+        <section key={g.dia} className="bitacora__dia">
+          {mostrarDias && <h3 className="bitacora__fecha">{g.dia}</h3>}
+          <ul className="bitacora__lista">
+            {g.items.map((m) => (
+              <FilaMensaje
+                key={m.id}
+                m={m}
+                contacto={etiquetaContacto(m, props.contexto)}
+                tenantId={props.tenantId}
+                expandido={props.expandidos.has(m.id)}
+                alExpandir={() => props.alExpandir(m.id)}
+                abrirInstancia={props.abrirInstancia}
+              />
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 // Los fallos que NO se corrigen reintentando el mismo mensaje.
 const NO_REINTENTABLE = new Set(["telefono_vacio", "telefono_invalido", "item_incompleto"]);
+// Estados que deben resaltar (todo lo demás es "normal" y va discreto).
+const ESTADO_NOTABLE = new Set<MessageEstado>(["fallido", "no_confirmado"]);
 
 function FilaMensaje(props: {
   m: Message;
+  contacto: string;
   tenantId: string;
+  expandido: boolean;
+  alExpandir: () => void;
   abrirInstancia: (id: string) => void;
 }) {
   const { m } = props;
+  const saliente = m.direccion === "out";
   const [estado, setEstado] = useState<"idle" | "reintentando" | "reintentado" | "error">("idle");
   const [errRetry, setErrRetry] = useState<string | null>(null);
 
   const puedeReintentar =
     m.estado === "fallido" && !NO_REINTENTABLE.has(m.errorCodigo ?? "");
+  const notable = ESTADO_NOTABLE.has(m.estado);
+  const enProgreso = m.estado === "encolado" || m.estado === "enviando";
 
   const reintentar = async () => {
     setEstado("reintentando");
@@ -211,43 +267,118 @@ function FilaMensaje(props: {
   };
 
   return (
-    <>
-      <tr>
-        <td className="celda-heartbeat">{hora(m.timestamp)}</td>
-        <td className="celda-numero">{m.telefono}</td>
-        <td className="registro__cuerpo">{m.cuerpo || <span className="tenue">(vacío)</span>}</td>
-        <td>
-          <span className={`estado-envio estado-envio--${m.estado}`}>
-            {ETIQUETA[m.estado]}
-          </span>
-        </td>
-        <td className="celda-acciones">
-          {m.estado === "fallido" && puedeReintentar && estado !== "reintentado" && (
-            <button className="boton" onClick={reintentar} disabled={estado === "reintentando"}>
-              {estado === "reintentando" ? "Reintentando…" : "Reintentar"}
-            </button>
-          )}
-          {estado === "reintentado" && <span className="tenue">Reencolado ✓</span>}
-        </td>
-      </tr>
-      {m.estado === "fallido" && (m.error || errRetry) && (
-        <tr className="fila-causa">
-          <td />
-          <td colSpan={4}>
-            <span className="causa">{errRetry ?? m.error}</span>
-            {!puedeReintentar && !errRetry && (
-              <button
-                className="boton mini-link"
-                onClick={() => props.abrirInstancia(m.instanceId)}
-              >
-                Ver conversación
+    <li className={`msj msj--${saliente ? "out" : "in"}`}>
+      <span
+        className="msj__dir"
+        title={saliente ? "Enviado" : "Recibido"}
+        aria-label={saliente ? "Enviado" : "Recibido"}
+      >
+        {saliente ? "→" : "←"}
+      </span>
+
+      <div className="msj__cuerpo">
+        <div className="msj__cabecera">
+          <span className="msj__contacto">{props.contacto}</span>
+          <span className="msj__hora">{horaCorta(m.timestamp)}</span>
+        </div>
+        <p
+          className={`msj__texto${props.expandido ? "" : " msj__texto--corto"}`}
+          onClick={props.alExpandir}
+          title={props.expandido ? "" : "Ver completo"}
+        >
+          {m.cuerpo || <span className="tenue">(vacío)</span>}
+        </p>
+
+        {(notable || enProgreso) && (
+          <div className="msj__pie">
+            {notable ? (
+              <span className={`marca marca--${m.estado}`}>{ETIQUETA[m.estado]}</span>
+            ) : (
+              <span className="tenue">{ETIQUETA[m.estado]}</span>
+            )}
+            {m.estado === "fallido" && (m.error || errRetry) && (
+              <span className="msj__causa">{errRetry ?? m.error}</span>
+            )}
+            {m.estado === "fallido" && puedeReintentar && estado !== "reintentado" && (
+              <button className="boton mini-link" onClick={reintentar} disabled={estado === "reintentando"}>
+                {estado === "reintentando" ? "Reintentando…" : "Reintentar"}
               </button>
             )}
-          </td>
-        </tr>
-      )}
-    </>
+            {estado === "reintentado" && <span className="tenue">Reencolado ✓</span>}
+            {(m.estado === "fallido" && !puedeReintentar && !errRetry) ||
+            m.estado === "no_confirmado" ? (
+              <button className="boton mini-link" onClick={() => props.abrirInstancia(m.instanceId)}>
+                Ver conversación
+              </button>
+            ) : null}
+          </div>
+        )}
+      </div>
+    </li>
   );
+}
+
+/** Etiqueta legible del contacto: nombre, item de monday, o teléfono. */
+function etiquetaContacto(m: Message, ctx: Map<string, Conversacion>): string {
+  const c = ctx.get(m.telefono.replace(/[^\d]/g, ""));
+  if (c?.nombre && c.nombre.trim()) return c.nombre.trim();
+  if (c?.mondayItemId) return `monday · item ${c.mondayItemId}`;
+  return formatearTelefono(m.telefono);
+}
+
+/** Agrupa mensajes (ya ordenados desc) en secciones por día. */
+function agruparPorDia(
+  mensajes: Message[],
+): { dia: string; items: Message[] }[] {
+  const hoy = new Date();
+  const grupos: { dia: string; items: Message[] }[] = [];
+  for (const m of mensajes) {
+    const dia = diaLabel(m.timestamp, hoy);
+    const ultimo = grupos.at(-1);
+    if (ultimo && ultimo.dia === dia) ultimo.items.push(m);
+    else grupos.push({ dia, items: [m] });
+  }
+  return grupos;
+}
+
+function mismoDia(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function diaLabel(iso: string, hoy: Date): string {
+  const d = new Date(iso);
+  if (mismoDia(d, hoy)) return "Hoy";
+  const ayer = new Date(hoy);
+  ayer.setDate(hoy.getDate() - 1);
+  if (mismoDia(d, ayer)) return "Ayer";
+  return d.toLocaleDateString("es-MX", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    ...(d.getFullYear() !== hoy.getFullYear() ? { year: "numeric" } : {}),
+  });
+}
+
+/** Hora en una línea (el día lo da la cabecera de sección). */
+function horaCorta(iso: string): string {
+  return new Date(iso).toLocaleTimeString("es-MX", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Teléfono legible: agrupa el número nacional (últimos 10 dígitos). */
+function formatearTelefono(tel: string): string {
+  const d = tel.replace(/[^\d]/g, "");
+  if (d.length < 10) return tel;
+  const nac = d.slice(-10);
+  const pais = d.slice(0, -10);
+  const g = nac.replace(/(\d{3})(\d{3})(\d{4})/, "$1 $2 $3");
+  return `${pais ? `+${pais} ` : ""}${g}`.trim();
 }
 
 function Contador(props: {

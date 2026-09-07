@@ -206,6 +206,7 @@ export class RepositorioFirestore implements Repositorio {
     instanceId: InstanceId,
     telefono: string,
     timestamp: string,
+    nombre?: string | null,
   ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }> {
     const ref = this.#db.doc(
       rutas.conversacion(tenantId, instanceId, telefono),
@@ -221,6 +222,7 @@ export class RepositorioFirestore implements Repositorio {
         tenantId,
         instanceId,
         telefono,
+        nombre: nombre?.trim() || previa?.nombre || null,
         primerContactoEn: previa?.primerContactoEn ?? timestamp,
         ultimoEntranteEn: timestamp,
         mondayItemId: previa?.mondayItemId ?? null,
@@ -228,6 +230,17 @@ export class RepositorioFirestore implements Repositorio {
       tx.set(ref, conversacion);
       return { conversacion, esPrimerContacto };
     });
+  }
+
+  async listConversaciones(tenantId: TenantId): Promise<Conversacion[]> {
+    // Las conversaciones viven en subcolecciones por instancia; una
+    // consulta de grupo de colección las reúne, acotada por tenantId
+    // (índice de campo único, automático para grupos de colección).
+    const snap = await this.#db
+      .collectionGroup("conversaciones")
+      .where("tenantId", "==", tenantId)
+      .get();
+    return snap.docs.map((d) => d.data() as Conversacion);
   }
 
   async vincularMonday(

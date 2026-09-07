@@ -36,15 +36,19 @@ export class MotorEntrada {
     tenantId: TenantId,
     instanceId: InstanceId,
     mensaje: Message,
+    nombre?: string | null,
   ): Promise<void> {
     const telefono = mensaje.telefono.replace(/[^\d]/g, "");
 
     // 1. Conversación: registro atómico; decide primer contacto sin carrera.
+    //    Guarda el nombre del contacto (pushName) para dar contexto al
+    //    registro en vez del número crudo.
     const { conversacion, esPrimerContacto } = await this.#repo.registrarEntrante(
       tenantId,
       instanceId,
       telefono,
       mensaje.timestamp,
+      nombre,
     );
 
     // 2. Disparadores: primera coincidencia por prioridad gana; respuesta

@@ -268,6 +268,12 @@ export interface Conversacion {
   instanceId: InstanceId;
   /** Teléfono de la contraparte en E.164 sin '+' (sirve de doc id). */
   telefono: string;
+  /**
+   * Nombre visible del contacto (pushName de WhatsApp), capturado del
+   * primer/último entrante. Da contexto en el registro en vez del número
+   * crudo. Null/ausente hasta que el contacto escribe.
+   */
+  nombre?: string | null;
   /** ISO del primer mensaje entrante; null si aún no ha escrito. */
   primerContactoEn: string | null;
   /** ISO del último mensaje entrante; null si aún no ha escrito. */
