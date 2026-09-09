@@ -336,6 +336,19 @@ export function crearApp(
     });
   });
 
+  /**
+   * Conectores de CRM ya configurados por el tenant (monday + bitrix).
+   * Es el número contra el que se aplica `limites.conectores` al dar de
+   * alta uno nuevo; editar el existente no cuenta.
+   */
+  async function contarConectores(tenantId: TenantId): Promise<number> {
+    const [m, b] = await Promise.all([
+      opciones.monday?.verConfig(tenantId) ?? null,
+      opciones.bitrix?.verConfig(tenantId) ?? null,
+    ]);
+    return (m ? 1 : 0) + (b ? 1 : 0);
+  }
+
   const tenantRouter = express.Router({ mergeParams: true });
   tenantRouter.use(autenticar(repo, opciones.verificarToken));
 
@@ -432,9 +445,8 @@ export function crearApp(
     if (!yaExiste) {
       const tenant = (await repo.getTenant(req.tenantId!))!;
       const limite = limitesTenant(tenant).conectores;
-      // El conteo suma monday + bitrix; hoy el límite del plan es 1.
-      const actuales =
-        ((await opciones.monday?.verConfig(req.tenantId!)) ? 1 : 0);
+      // El conteo suma todos los CRM conectados; hoy el límite del plan es 1.
+      const actuales = await contarConectores(req.tenantId!);
       if (actuales + 1 > limite) {
         res.status(403).json({
           error: `Tu plan permite ${limite} ${limite === 1 ? "conector" : "conectores"}. Contrata más para agregar otro.`,
@@ -630,7 +642,10 @@ export function crearApp(
     if (!yaExiste) {
       const tenant = (await repo.getTenant(req.tenantId!))!;
       const limite = limitesTenant(tenant).conectores;
-      const conectoresActuales = 0; // monday es el único tipo; ninguno aún
+      // El conteo suma todos los CRM conectados (hoy monday + bitrix). Antes
+      // estaba fijo en 0 y el guard nunca disparaba: con Bitrix ya conectado
+      // se podía agregar monday sin pagar el conector adicional.
+      const conectoresActuales = await contarConectores(req.tenantId!);
       if (conectoresActuales + 1 > limite) {
         res.status(403).json({
           error: `Tu plan permite ${limite} ${limite === 1 ? "conector" : "conectores"}. Contrata más para agregar otro.`,

@@ -324,3 +324,77 @@ describe("POST /messages/:id/retry (reintento manual)", () => {
     } finally { cerrar(); }
   });
 });
+
+describe("límite de conectores del plan (simétrico monday ↔ bitrix)", () => {
+  // Dobles mínimos: solo verConfig y guardarAlta, que es lo que consultan los guards.
+  function levantarConCrm(conectados: { monday: boolean; bitrix: boolean }) {
+    const repo = new RepositorioEnMemoria({
+      tenants: [
+        { id: "a", nombre: "A", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY_A), creadoEn: "2026-09-05T00:00:00Z" },
+      ],
+      instances: [
+        { id: "i1", tenantId: "a", transportType: "mock", contenedorId: null, numero: "+521", estado: "connected", ultimoHeartbeat: null },
+      ],
+    });
+    const altas: string[] = [];
+    const monday = {
+      verConfig: async () => (conectados.monday ? { instanceId: "i1" } : null),
+      guardarAlta: async () => { altas.push("monday"); },
+    };
+    const bitrix = {
+      verConfig: async () => (conectados.bitrix ? { instanceId: "i1" } : null),
+      guardarAlta: async () => { altas.push("bitrix"); },
+    };
+    const server = crearApp(repo, undefined, { monday: monday as any, bitrix: bitrix as any }).listen(0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    return { base, altas, cerrar: () => server.close() };
+  }
+  const put = (base: string, crm: "monday" | "bitrix", body: unknown) =>
+    fetch(`${base}/api/tenants/a/conectores/${crm}`, {
+      method: "PUT",
+      headers: { "x-api-key": KEY_A, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const altaMonday = { instanceId: "i1", boardId: "b1", columnaTelefono: "phone", apiToken: "tok" };
+  const altaBitrix = { instanceId: "i1", entidad: "deal", campoTelefono: "PHONE", webhookUrl: "https://p.bitrix24.mx/rest/1/x/" };
+
+  it("con Bitrix conectado y plan de 1 conector, dar de alta monday → 403 (antes pasaba)", async () => {
+    const { base, altas, cerrar } = levantarConCrm({ monday: false, bitrix: true });
+    try {
+      const res = await put(base, "monday", altaMonday);
+      expect(res.status).toBe(403);
+      expect((await res.json()).error).toBe("Tu plan permite 1 conector. Contrata más para agregar otro.");
+      expect(altas).toEqual([]);
+    } finally {
+      cerrar();
+    }
+  });
+
+  it("con monday conectado, dar de alta Bitrix → 403 (ya era así)", async () => {
+    const { base, altas, cerrar } = levantarConCrm({ monday: true, bitrix: false });
+    try {
+      const res = await put(base, "bitrix", altaBitrix);
+      expect(res.status).toBe(403);
+      expect(altas).toEqual([]);
+    } finally {
+      cerrar();
+    }
+  });
+
+  it("sin conectores, el primero de cualquiera se acepta; editar el existente no cuenta", async () => {
+    const libre = levantarConCrm({ monday: false, bitrix: false });
+    try {
+      expect((await put(libre.base, "monday", altaMonday)).status).toBe(204);
+      expect(libre.altas).toEqual(["monday"]);
+    } finally {
+      libre.cerrar();
+    }
+    const editar = levantarConCrm({ monday: true, bitrix: false });
+    try {
+      expect((await put(editar.base, "monday", { ...altaMonday, apiToken: "" })).status).toBe(204);
+      expect(editar.altas).toEqual(["monday"]);
+    } finally {
+      editar.cerrar();
+    }
+  });
+});
