@@ -1,12 +1,17 @@
-# Cauce
+# Digsol Factory
 
-Capa de mensajería para CRMs. Conecta el CRM que la empresa ya usa con
-el número de WhatsApp que sus clientes ya tienen guardado: el CRM
-dispara el mensaje, Cauce lo envía desde el número propio del cliente,
-y la respuesta vuelve escrita al registro que la originó.
+La fábrica de empleados digitales. Capa de mensajería para CRMs: conecta
+el CRM que la empresa ya usa con el número de WhatsApp que sus clientes ya
+tienen guardado. El CRM dispara el mensaje, Digsol Factory lo envía desde
+el número propio del cliente, y la respuesta vuelve escrita al registro
+que la originó.
 
-> Cauce: el canal natural por donde fluye el agua. Aquí, por donde
-> fluye la conversación — sin importar qué transporte corra debajo.
+> Nota: el nombre interno del proyecto y de sus paquetes sigue siendo
+> `cauce` (paquetes `@cauce/*`, variables `CAUCE_*`, nombre de instancia
+> `cauce-{tenant}-{instance}`, dominio `cauce.digsol.com.mx`). Esos
+> identificadores NO se renombran porque están registrados en producción
+> (contenedores, volúmenes, dispositivos vinculados, automatizaciones de
+> los clientes). Ver `docs/renombrado-digsol-factory.md`.
 
 ## Estructura
 

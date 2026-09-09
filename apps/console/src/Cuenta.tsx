@@ -34,9 +34,9 @@ export function Cuenta(props: {
           ? "Tu prueba termina hoy."
           : `Te quedan ${dias} día${dias === 1 ? "" : "s"} de prueba.`;
 
-  const asunto = encodeURIComponent("Quiero contratar Cauce");
+  const asunto = encodeURIComponent("Quiero contratar Digsol Factory");
   const cuerpo = encodeURIComponent(
-    `Hola, uso Cauce (cuenta ${yo.nombre}) y quiero contratar un plan.`,
+    `Hola, uso Digsol Factory (cuenta ${yo.nombre}) y quiero contratar un plan.`,
   );
   const mailto = `mailto:${CONTACTO_EMAIL}?subject=${asunto}&body=${cuerpo}`;
   const wa = CONTACTO_WHATSAPP

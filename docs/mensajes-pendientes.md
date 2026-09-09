@@ -1,10 +1,10 @@
 # Mensajes que se quedan en PENDING (y cómo evitarlo)
 
-Guía del problema más caro que hemos tenido: **Cauce dice "enviado" pero
-el mensaje nunca llega**. La causa no es de Cauce — es de Evolution API /
+Guía del problema más caro que hemos tenido: **Digsol Factory dice "enviado" pero
+el mensaje nunca llega**. La causa no es de Digsol Factory — es de Evolution API /
 Baileys, la capa que habla con WhatsApp — pero un cliente puede
 dispararla solo. Este documento explica qué es, qué lo provoca, cómo lo
-detecta Cauce ahora, y qué hacer cuando pasa.
+detecta Digsol Factory ahora, y qué hacer cuando pasa.
 
 > Para el operador de soporte: la sección **"Qué decirle al cliente"** de
 > abajo es lo que evita el ticket. Lo demás es el porqué.
@@ -73,9 +73,9 @@ número.
 
 ---
 
-## Cómo lo detecta Cauce (bloque 12)
+## Cómo lo detecta Digsol Factory (bloque 12)
 
-Antes Cauce marcaba `enviado` con solo recibir el `201`. Ahora distingue
+Antes Digsol Factory marcaba `enviado` con solo recibir el `201`. Ahora distingue
 **aceptado** de **entregado**:
 
 - La instancia se suscribe a `MESSAGES_UPDATE`; cada mensaje registra su
@@ -97,7 +97,7 @@ costarnos horas de "pero si dice enviado".
 eliminarlo y crear otro.** Eliminar + crear en ráfaga es justo lo que lo
 degrada.
 
-Cauce ya empuja hacia ahí:
+Digsol Factory ya empuja hacia ahí:
 
 - Al eliminar un número, el botón recomendado es **"Mejor desconectar"**;
   eliminar queda como acción de peligro.
@@ -111,7 +111,7 @@ Cauce ya empuja hacia ahí:
 1. En **Sesiones**, **Desconecta** el número y **Reconéctalo** escaneando
    el QR de nuevo (no lo elimines).
 2. Si sigue igual, desde el **teléfono**: WhatsApp → Dispositivos
-   vinculados → cerrar la sesión de Cauce, y volver a vincular.
+   vinculados → cerrar la sesión de Digsol Factory, y volver a vincular.
 3. Si aun así no entrega, el número necesita **descansar unas horas**
    (WhatsApp lo tiene marcado). No sirve seguir recreándolo — lo empeora.
 4. Para descartar que sea el número: probar un **número distinto** en una

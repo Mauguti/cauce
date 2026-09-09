@@ -20,7 +20,7 @@ export function Expectativas(props: {
       cuerpo: (
         <>
           <p>
-            Cauce vincula tu WhatsApp como un <strong>dispositivo más</strong>,
+            Digsol Factory vincula tu WhatsApp como un <strong>dispositivo más</strong>,
             igual que WhatsApp Web: escaneas un QR desde tu teléfono y listo.
           </p>
           <p className="consola__sub">
@@ -51,7 +51,7 @@ export function Expectativas(props: {
       cuerpo: (
         <>
           <p>
-            Cauce deja pasar <strong>45 a 65 segundos entre cada envío</strong>. No
+            Digsol Factory deja pasar <strong>45 a 65 segundos entre cada envío</strong>. No
             es lento por error: mandar muchos mensajes de golpe es la forma más
             rápida de que WhatsApp bloquee tu número.
           </p>
@@ -67,7 +67,7 @@ export function Expectativas(props: {
       cuerpo: (
         <>
           <p>
-            Cauce está pensado para escribirle a personas que{" "}
+            Digsol Factory está pensado para escribirle a personas que{" "}
             <strong>ya son tus clientes</strong> y esperan tu mensaje (cobranza,
             recordatorios, seguimiento).
           </p>

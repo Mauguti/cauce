@@ -1,4 +1,4 @@
-# Deploy de Cauce
+# Deploy de Digsol Factory
 
 Dos piezas independientes: la **consola** (estática, Firebase Hosting)
 y el **orquestador** (Node en el host de una EC2, detrás de Caddy).
@@ -207,7 +207,7 @@ Unit de systemd con restart automático — `/etc/systemd/system/cauce.service`:
 
 ```ini
 [Unit]
-Description=Cauce orchestrator
+Description=Digsol Factory orchestrator
 After=docker.service
 Requires=docker.service
 

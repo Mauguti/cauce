@@ -126,7 +126,7 @@ export default function App() {
     return (
       <main className="consola consola--angosta">
         {banner}
-        <h1>Cauce</h1>
+        <h1>Digsol Factory</h1>
         <p className={errorProv ? "mensaje-error" : "consola__sub"}>
           {errorProv ?? "Preparando tu cuenta…"}
         </p>
@@ -167,7 +167,7 @@ export default function App() {
     <div className="app">
       {banner}
       <nav className="nav">
-        <span className="nav__marca">Cauce</span>
+        <span className="nav__marca">Digsol Factory</span>
         <div className="nav__links">
           {(["inicio", "sesiones", "conexiones", "acciones"] as Seccion[]).map(
             (s) => (

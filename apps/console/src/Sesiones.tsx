@@ -35,7 +35,7 @@ export function Sesiones(props: {
       setInstancias(await api.instancias(yo.tenantId));
       setError(null);
     } catch {
-      setError("Sin conexión con Cauce. Reintentando…");
+      setError("Sin conexión con Digsol Factory. Reintentando…");
     }
   }, [yo.tenantId]);
 
@@ -257,7 +257,7 @@ export function Sesiones(props: {
               reconectas escaneando el QR, sin perder nada.
             </p>
             <p className="mensaje-error">
-              Eliminar borra el número de Cauce y todo su historial (no se puede
+              Eliminar borra el número de Digsol Factory y todo su historial (no se puede
               deshacer). Además, borrar y volver a crear el mismo número una y
               otra vez hace que WhatsApp lo marque y deje de entregar tus
               mensajes. Si dejó de funcionar, reconéctalo — no lo elimines.

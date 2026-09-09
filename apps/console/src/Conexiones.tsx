@@ -548,7 +548,7 @@ function AsistenteBitrix(props: {
             Para el disparo: crea un <em>Webhook saliente</em> (o una regla de
             automatización que llame un webhook) apuntando a la URL que te
             damos abajo por plantilla, y copia su <strong>application token</strong>{" "}
-            aquí para que Cauce verifique que el disparo es tuyo (opcional).
+            aquí para que Digsol Factory verifique que el disparo es tuyo (opcional).
           </li>
         </ol>
       </details>

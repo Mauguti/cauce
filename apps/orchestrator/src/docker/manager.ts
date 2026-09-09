@@ -307,9 +307,11 @@ export class DockerManager {
         DATABASE_SAVE_MESSAGE_UPDATE: "false",
         CACHE_LOCAL_ENABLED: "true",
         CACHE_REDIS_ENABLED: "false",
-        // Nombre que aparece en WhatsApp → Dispositivos vinculados.
-        // Sin esto Evolution reporta "Google Chrome".
-        CONFIG_SESSION_PHONE_CLIENT: "Cauce",
+        // Nombre que aparece en WhatsApp → Dispositivos vinculados. Es la
+        // marca del producto, no el nombre de instancia (ese sigue siendo
+        // cauce-{tenant}-{instance}); cambiarlo solo afecta sesiones NUEVAS
+        // y no rompe la rehidratación.
+        CONFIG_SESSION_PHONE_CLIENT: "Digsol Factory",
         CONFIG_SESSION_PHONE_NAME: "Chrome",
         // El webhook NO se configura por env: en v2.3.7 el webhook
         // global por variables no dispara (verificado). Se registra por

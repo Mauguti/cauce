@@ -442,7 +442,7 @@ function PlantillaEditor(props: {
         <h3>Dirección de webhook de esta plantilla</h3>
         <p className="consola__sub">
           Un <em>webhook</em> es un aviso automático: cuando se cumple una
-          condición en tu board, monday le avisa a Cauce enviando el item a esta
+          condición en tu board, monday le avisa a Digsol Factory enviando el item a esta
           dirección. Pega <strong>esta</strong> dirección en la automatización de
           monday que deba mandar <strong>este</strong> mensaje.
         </p>

@@ -44,7 +44,7 @@ export function Login() {
 
   return (
     <main className="consola consola--angosta">
-      <h1>Cauce</h1>
+      <h1>Digsol Factory</h1>
       <p className="consola__sub">
         {modo === "registrar"
           ? "Crea tu cuenta para empezar."
