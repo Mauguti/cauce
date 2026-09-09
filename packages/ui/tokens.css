@@ -25,16 +25,26 @@
    * --negro   → SOLO acción primaria y énfasis puntual.
    * --gris-8  → texto de cuerpo y titulares. Nunca #000 en texto corrido.
    */
-  --texto: var(--gris-8);
-  --texto-secundario: var(--gris-6);
+  /* Identidad Digsol Factory (Bloque 16, Camino 2): los VALORES adoptan la
+   * paleta de design-export; los NOMBRES de token no cambian, así ningún
+   * componente se toca. Ver MIGRACION-PLAN.md. */
+  --texto: #111827;            /* sys-text  (era gris-8) */
+  --texto-secundario: #6b7280; /* sys-muted (era gris-6) */
   --texto-deshabilitado: var(--gris-5);
-  --fondo: var(--blanco);
-  --fondo-sutil: var(--gris-1);
+  --fondo: #ffffff;            /* sys-bg */
+  --fondo-sutil: #f9fafb;      /* sys-surface (era gris-1) */
 
-  /* ---- Tipografía: una sola familia sans ---- */
+  /* Acento de marca: azul Factory. Reemplaza el negro en la acción primaria. */
+  --acento: #007acc;
+  --acento-hover: #0069b3;
+
+  /* ---- Tipografía ---- */
   --fuente:
     "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
+  /* Mono para zonas de bitácora / datos. */
+  --fuente-mono:
+    "JetBrains Mono", ui-monospace, "Cascadia Code", "Fira Code", monospace;
 
   /* Escala de 6 tamaños */
   --texto-xs: 0.75rem;   /* 12 — metadatos, etiquetas */
@@ -63,11 +73,16 @@
   --esp-16: 64px;
 
   /* ---- Bordes ---- */
-  --borde-color: var(--gris-3);
+  --borde-color: #e5e7eb; /* sys-border (era gris-3) */
   --borde: 1px solid var(--borde-color);
   --borde-fuerte: 1px solid var(--gris-8);
-  --radio: 2px;
+  --radio: 8px; /* radius-lg de Factory (era 2px) */
   --radio-cero: 0;
+
+  /* ---- Sombras (design-export) ---- */
+  --sombra-clean: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --sombra-card: 0 4px 6px -1px rgba(0, 0, 0, 0.02),
+    0 2px 4px -1px rgba(0, 0, 0, 0.02);
 
   /* ---- Estados interactivos, resueltos en gris ---- */
   --hover-fondo: var(--gris-1);
@@ -87,9 +102,9 @@
    * grises los indicadores siguen distinguiéndose. Es el único color de
    * la interfaz; el resto permanece monocromático.
    */
-  --estado-conectada: #93c9a6;   /* verde tenue */
-  --estado-qr: #e6c38a;          /* ámbar tenue */
-  --estado-desconectada: #d99b96; /* rojo tenue */
+  --estado-conectada: #4ec9b0;   /* accent-green Factory */
+  --estado-qr: #e37933;          /* accent-orange Factory */
+  --estado-desconectada: #ef4444; /* color-error Factory */
 }
 
 /* ---- Base ---- */
@@ -125,14 +140,14 @@ body {
   cursor: not-allowed;
 }
 
-/* Acción primaria: el único lugar donde vive el negro puro. */
+/* Acción primaria: azul de marca Digsol Factory. */
 .boton--primario {
-  background: var(--negro);
+  background: var(--acento);
   color: var(--blanco);
-  border: 1px solid var(--negro);
+  border: 1px solid var(--acento);
 }
-.boton--primario:hover { background: var(--gris-7); border-color: var(--gris-7); }
-.boton--primario:active { background: var(--gris-8); border-color: var(--gris-8); }
+.boton--primario:hover { background: var(--acento-hover); border-color: var(--acento-hover); }
+.boton--primario:active { background: var(--acento-hover); border-color: var(--acento-hover); }
 .boton--primario:disabled {
   background: var(--gris-4);
   border-color: var(--gris-4);
