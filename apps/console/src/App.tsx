@@ -7,6 +7,7 @@ import {
   type Instance,
   type MondayVista,
 } from "./api.ts";
+import { Command } from "lucide-react";
 import { observarSesion, type Sesion } from "./auth.ts";
 import { Login } from "./Login.tsx";
 import { Inicio } from "./Inicio.tsx";
@@ -166,14 +167,23 @@ export default function App() {
   return (
     <div className="app">
       {banner}
-      <nav className="nav">
-        <span className="nav__marca">Digsol Factory</span>
-        <div className="nav__links">
+      <nav className="flex items-center gap-6 border-b border-sys-border bg-sys-bg px-6 py-3">
+        <span className="flex items-center gap-2 text-lg font-bold tracking-tight">
+          <Command className="h-5 w-5 text-accent-blue" strokeWidth={2.5} />
+          <span>
+            Digsol<span className="text-sys-muted">/</span>Factory
+          </span>
+        </span>
+        <div className="flex flex-1 gap-1">
           {(["inicio", "sesiones", "conexiones", "acciones"] as Seccion[]).map(
             (s) => (
               <button
                 key={s}
-                className={`nav__link${seccion === s ? " nav__link--activo" : ""}`}
+                className={`rounded px-3 py-2 text-sm transition-colors ${
+                  seccion === s
+                    ? "bg-sys-surface font-semibold text-sys-text"
+                    : "text-sys-muted hover:bg-sys-surface hover:text-sys-text"
+                }`}
                 onClick={() => setSeccion(s)}
               >
                 {s === "inicio"
@@ -187,16 +197,23 @@ export default function App() {
             ),
           )}
         </div>
-        <div className="nav__cuenta">
+        <div className="flex items-center gap-3">
           <button
-            className={`nav__plan${yo.plan === "prueba" && !yo.pruebaVigente ? " nav__plan--vencido" : ""}`}
+            className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
+              yo.plan === "prueba" && !yo.pruebaVigente
+                ? "border-red-300 text-red-600"
+                : "border-sys-border text-sys-muted hover:bg-sys-surface"
+            }`}
             onClick={() => setMostrarCuenta(true)}
             title="Ver tu cuenta"
           >
             {etiquetaPlan(yo)}
           </button>
-          <span className="nav__tenant">{sesion.email ?? yo.nombre}</span>
-          <button className="boton" onClick={() => sesion.cerrar()}>
+          <span className="text-sm text-sys-muted">{sesion.email ?? yo.nombre}</span>
+          <button
+            className="rounded border border-sys-border px-3 py-1.5 text-sm transition-colors hover:bg-sys-surface"
+            onClick={() => sesion.cerrar()}
+          >
             Salir
           </button>
         </div>
