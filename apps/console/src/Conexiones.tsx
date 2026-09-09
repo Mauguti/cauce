@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { MessageSquare, Database, LayoutGrid, Building2, Workflow } from "lucide-react";
 import type { Instance } from "@cauce/core";
+import type { Seccion } from "./App.tsx";
 import {
   api,
   columnaEsTelefono,
@@ -13,70 +15,143 @@ import {
   type EntidadBitrix,
 } from "./api.ts";
 
-/**
- * Catálogo de CRMs conectables. Hoy solo monday; agregar Bitrix o
- * Pipedrive es añadir una entrada y su asistente, no rediseñar.
- */
-const CRMS = [
-  { id: "monday", nombre: "monday", disponible: true },
-  { id: "bitrix", nombre: "Bitrix24", disponible: true },
-  { id: "pipedrive", nombre: "Pipedrive", disponible: false },
-];
-
 export function Conexiones(props: {
   yo: Yo;
   instancias: Instance[];
   alCambiar: () => void;
+  irA?: (s: Seccion) => void;
 }) {
   const [abierto, setAbierto] = useState<string | null>(null);
+  const conectadas = props.instancias.filter((i) => i.estado === "connected").length;
+  const toggle = (id: string) => setAbierto(abierto === id ? null : id);
 
   return (
-    <main className="seccion">
+    <main className="seccion font-sans">
       <header className="seccion__cabecera">
         <h1>Conexiones</h1>
-        <p className="consola__sub">Conecta las herramientas que ya usas.</p>
+        <p className="consola__sub">Los canales y CRMs con los que opera tu cuenta.</p>
       </header>
 
-      <div className="conexiones">
-        {CRMS.map((crm) => (
-          <div key={crm.id} className="conexion">
-            <div className="conexion__info">
-              <h2>{crm.nombre}</h2>
-              {!crm.disponible && (
-                <span className="tenue">Próximamente</span>
-              )}
-            </div>
-            {crm.disponible ? (
-              <button
-                className="boton"
-                onClick={() => setAbierto(abierto === crm.id ? null : crm.id)}
-              >
-                {abierto === crm.id ? "Cerrar" : "Configurar"}
-              </button>
-            ) : (
-              <button className="boton" disabled>
-                Configurar
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
+      {/* Canales de comunicación */}
+      <SeccionConectores icono={<MessageSquare className="h-4 w-4" />} titulo="Canales de comunicación">
+        <TarjetaConector
+          icono={<MessageSquare className="h-5 w-5 text-accent-green" />}
+          nombre="WhatsApp"
+          descripcion="El número desde el que envías y recibes. Se vincula escaneando el QR."
+          estado={conectadas > 0 ? `${conectadas} conectada${conectadas === 1 ? "" : "s"}` : "Sin conectar"}
+          estadoOk={conectadas > 0}
+          accion={
+            <button className="boton boton--primario" onClick={() => props.irA?.("sesiones")}>
+              {conectadas > 0 ? "Administrar" : "Conectar"}
+            </button>
+          }
+        />
+      </SeccionConectores>
+
+      {/* Gestión de información (CRM) */}
+      <SeccionConectores icono={<Database className="h-4 w-4" />} titulo="Gestión de información (CRM)">
+        <TarjetaConector
+          icono={<LayoutGrid className="h-5 w-5 text-accent-orange" />}
+          nombre="monday"
+          descripcion="Dispara mensajes desde tu board y regresa la respuesta al item."
+          accion={
+            <button className="boton" onClick={() => toggle("monday")}>
+              {abierto === "monday" ? "Cerrar" : "Configurar"}
+            </button>
+          }
+        />
+        <TarjetaConector
+          icono={<Building2 className="h-5 w-5 text-accent-blue" />}
+          nombre="Bitrix24"
+          descripcion="Dispara desde tu CRM y regresa la respuesta al timeline del deal."
+          accion={
+            <button className="boton" onClick={() => toggle("bitrix")}>
+              {abierto === "bitrix" ? "Cerrar" : "Configurar"}
+            </button>
+          }
+        />
+      </SeccionConectores>
 
       {abierto === "monday" && (
-        <AsistenteMonday
-          yo={props.yo}
-          instancias={props.instancias}
-          alGuardar={props.alCambiar}
-        />
+        <AsistenteMonday yo={props.yo} instancias={props.instancias} alGuardar={props.alCambiar} />
       )}
       {abierto === "bitrix" && (
-        <AsistenteBitrix
-          yo={props.yo}
-          instancias={props.instancias}
-          alGuardar={props.alCambiar}
-        />
+        <AsistenteBitrix yo={props.yo} instancias={props.instancias} alGuardar={props.alCambiar} />
       )}
+
+      {/* Próximamente: atenuado y no conectable, para no confundir con lo real. */}
+      <SeccionConectores icono={<Workflow className="h-4 w-4" />} titulo="Próximamente">
+        <TarjetaConector
+          icono={<Workflow className="h-5 w-5 text-sys-muted" />}
+          nombre="Pipedrive"
+          descripcion="Otro CRM en camino."
+          atenuado
+          accion={
+            <button className="boton" disabled>
+              Próximamente
+            </button>
+          }
+        />
+      </SeccionConectores>
+
+      <p className="mt-6 text-xs text-sys-muted">
+        Tus credenciales (tokens, secretos) se guardan cifradas; la consola nunca las muestra en claro.
+      </p>
     </main>
+  );
+}
+
+/** Encabezado de sección con ícono + rejilla de tarjetas de conector. */
+function SeccionConectores(props: {
+  icono: React.ReactNode;
+  titulo: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="mb-8">
+      <h2 className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-sys-muted">
+        {props.icono}
+        {props.titulo}
+      </h2>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {props.children}
+      </div>
+    </section>
+  );
+}
+
+/** Tarjeta de un conector: ícono (genérico, sin logo de tercero), nombre, descripción, estado y acción. */
+function TarjetaConector(props: {
+  icono: React.ReactNode;
+  nombre: string;
+  descripcion: string;
+  estado?: string;
+  estadoOk?: boolean;
+  atenuado?: boolean;
+  accion: React.ReactNode;
+}) {
+  return (
+    <div
+      className={`flex flex-col gap-3 rounded-lg border border-sys-border bg-sys-bg p-4 shadow-card ${props.atenuado ? "opacity-60" : ""}`}
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 flex-none items-center justify-center rounded-lg bg-sys-surface">
+          {props.icono}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-sys-text">{props.nombre}</h3>
+            {props.estado && (
+              <span className={`text-xs ${props.estadoOk ? "text-accent-green" : "text-sys-muted"}`}>
+                · {props.estado}
+              </span>
+            )}
+          </div>
+          <p className="mt-0.5 text-sm text-sys-muted">{props.descripcion}</p>
+        </div>
+      </div>
+      <div className="mt-auto flex justify-end">{props.accion}</div>
+    </div>
   );
 }
 

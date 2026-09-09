@@ -235,7 +235,7 @@ export default function App() {
           <Sesiones yo={yo} alAbrir={setInstanciaAbierta} alCambiar={refrescar} />
         )}
         {seccion === "conexiones" && (
-          <Conexiones yo={yo} instancias={instancias} alCambiar={refrescar} />
+          <Conexiones yo={yo} instancias={instancias} alCambiar={refrescar} irA={setSeccion} />
         )}
         {seccion === "acciones" && (
           <Acciones yo={yo} monday={monday} alCambiar={refrescar} />
