@@ -224,6 +224,18 @@ export function crearApp(
         tenantId!,
         actualizacion.externalId,
       );
+      // WhatsApp acusa varias veces el mismo mensaje (servidor, entrega,
+      // lectura). Si el estado ya es el que reporta el ack, no hay nada
+      // que escribir ni que registrar: una entrega, una línea.
+      const yaAplicado =
+        m !== null &&
+        (actualizacion.ack === "confirmado"
+          ? m.estado === "enviado" && Boolean(m.confirmadoEn)
+          : m.estado === "no_confirmado");
+      if (yaAplicado) {
+        res.status(200).json({ ok: true });
+        return;
+      }
       registrar(
         m ? (actualizacion.ack === "confirmado" ? "entrega.confirmada" : "entrega.error") : "entrega.sin_coincidencia",
         {

@@ -217,4 +217,32 @@ describe("POST /webhooks/:tenantId/:instanceId", () => {
       cerrar();
     }
   });
+
+  it("los acuses repetidos del mismo externalId (servidor, entrega, lectura) no reescriben la confirmación", async () => {
+    const { repo, base, cerrar } = levantar();
+    await repo.saveMessage({
+      id: "m3", tenantId: "a", instanceId: "i1", direccion: "out",
+      telefono: "+5215587654321", cuerpo: "x", estado: "enviado",
+      externalId: "KEY-3ACK", timestamp: "2026-09-06T00:00:00Z",
+    });
+    const ack = (status: string) =>
+      fetch(`${base}/webhooks/a/i1?token=secreto-i1`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "messages.update", data: { keyId: "KEY-3ACK", status } }),
+      });
+    try {
+      expect((await ack("SERVER_ACK")).status).toBe(200);
+      const primera = (await repo.getMessage("a", "m3"))!.confirmadoEn;
+      expect(primera).toBeTruthy();
+      await new Promise((r) => setTimeout(r, 5));
+      expect((await ack("DELIVERY_ACK")).status).toBe(200);
+      expect((await ack("READ")).status).toBe(200);
+      const m = (await repo.getMessage("a", "m3"))!;
+      expect(m.estado).toBe("enviado");
+      expect(m.confirmadoEn).toBe(primera); // no se reescribió con cada acuse
+    } finally {
+      cerrar();
+    }
+  });
 });
