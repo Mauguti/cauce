@@ -143,4 +143,9 @@ crearApp(repo, gestor, {
   ...(adminKey ? { adminKey } : {}),
 }).listen(puerto, () => {
   console.log(`orquestador escuchando en :${puerto} (versión ${process.env.CAUCE_VERSION ?? "dev"})`);
+  // Ya con el puerto abierto: ¿los contenedores rehidratados alcanzan al
+  // orquestador? Antes de este punto la sonda daría un fallo falso.
+  gestor.comprobarAlcanceSesiones().catch((err: any) =>
+    console.warn(`sonda de alcance de webhooks falló: ${err?.message}`),
+  );
 });

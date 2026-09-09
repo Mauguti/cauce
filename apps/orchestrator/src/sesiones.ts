@@ -16,6 +16,7 @@ import type { Repositorio } from "./store.ts";
 
 export interface SesionActiva {
   transport: MessageTransport;
+  tenantId: TenantId;
   contenedorId: string;
   baseUrl: string;
   /** Token que Evolution manda de vuelta en la URL del webhook. */
@@ -103,6 +104,28 @@ export class GestorSesiones {
       },
       r.ok ? "info" : "error",
     );
+  }
+
+  /**
+   * Sonda de alcance de TODAS las sesiones vivas. Se llama una vez que el
+   * orquestador ya escucha (callback de listen), nunca antes: por eso no
+   * forma parte de rehidratar(). Devuelve cuántas fallaron.
+   */
+  async comprobarAlcanceSesiones(): Promise<number> {
+    let fallos = 0;
+    for (const [instanceId, sesion] of this.#sesiones) {
+      const r = await this.#docker.verificarAlcance(sesion.contenedorId, this.#urlPublica);
+      registrar(
+        "webhook.alcance",
+        {
+          tenant: sesion.tenantId, instancia: instanceId, url: this.#urlPublica,
+          resuelve: r.resuelve, resultado: r.ok ? "ok" : "fallo", detalle: r.detalle,
+        },
+        r.ok ? "info" : "error",
+      );
+      if (!r.ok) fallos += 1;
+    }
+    return fallos;
   }
 
   obtener(instanceId: InstanceId): SesionActiva | null {
@@ -220,7 +243,9 @@ export class GestorSesiones {
         webhookToken: enDocker.webhookToken,
       });
       const estado = await transport.status();
-      await this.#comprobarAlcance(enDocker.tenantId, enDocker.instanceId, enDocker.contenedorId);
+      // La sonda de alcance NO va aquí: rehidratar corre antes de que el
+      // orquestador escuche, y /health "no respondería" siempre. Se lanza
+      // desde index.ts al abrir el puerto (comprobarAlcanceSesiones).
       // Re-registra el webhook: al rehidratar no se pasa por connect(),
       // donde normalmente se hace el /webhook/set. Sin esto, una sesión
       // viva conserva los eventos que tenía al conectarse por primera vez
@@ -245,6 +270,7 @@ export class GestorSesiones {
       });
       this.#sesiones.set(enDocker.instanceId, {
         transport,
+        tenantId: enDocker.tenantId,
         contenedorId: enDocker.contenedorId,
         baseUrl: enDocker.baseUrl,
         webhookToken: enDocker.webhookToken,
@@ -322,6 +348,7 @@ export class GestorSesiones {
     }
     this.#sesiones.set(instanceId, {
       transport,
+      tenantId,
       contenedorId: creada.contenedorId,
       baseUrl: creada.baseUrl,
       webhookToken,
