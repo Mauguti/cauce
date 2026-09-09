@@ -1,0 +1,503 @@
+{
+  "brand": {
+    "name": "Digsol",
+    "suffix": "Factory",
+    "fullName": "Digsol/Factory",
+    "tagline": "Digsol | Operational System",
+    "copyright": "2024 Digital Solutions Inc. Todos los derechos reservados.",
+    "metaDescription": "Industrial-futurist landing page for AI digital employees. Features agent showroom, operational dashboard preview, and membership billing structure."
+  },
+
+  "navbar": {
+    "logo": "Digsol/Factory",
+    "links": ["Agentes", "Métricas", "Precios"],
+    "cta": "Iniciar Sistema"
+  },
+
+  "hero": {
+    "badge": "SISTEMA OPERATIVO v2.0",
+    "h1": "Tu Fábrica de Empleados Digitales",
+    "body": "No vendemos software, vendemos capacidad operativa. Contrata una fuerza de trabajo cognitiva que no duerme, no paga IMSS y escala con tu negocio.",
+    "ctaPrimary": ">_ CONFIGURAR MI EQUIPO",
+    "ctaSecondary": "Ver Demo",
+    "trustBadges": ["Sin IMSS", "24/7/365"],
+    "panelTitle": "Panel de Control",
+    "panelItems": [
+      { "area": "Ventas & Prospección", "agent": "Santiago" },
+      { "area": "Administración", "agent": "Elena" },
+      { "area": "Estrategia Digital", "agent": "Mateo" }
+    ],
+    "roiBadgeLabel": "CAPACIDAD ACTUAL",
+    "roiBadgeValue": "100% OPERATIVO"
+  },
+
+  "agentShowroom": {
+    "sectionTitle": "El Dream Team",
+    "sectionSubtitle": "Conoce a los agentes disponibles para tu negocio.",
+    "viewAllCta": "Ver Todos",
+    "cardButtons": {
+      "viewCV": "Ver CV",
+      "hire": "Contratar"
+    }
+  },
+
+  "agents": [
+    {
+      "id": "sys-01",
+      "name": "Santiago",
+      "role": "Especialista en Perfilamiento (Hunter)",
+      "specialty": "Ventas",
+      "description": "\"Mi trabajo es que tus asesores solo se preocupen por cerrar; de las citas me encargo yo.\" Función Principal: Filtrar cada lead que llega a la empresa, calificarlo según el presupuesto (BANT) y agendar la cita directamente en el calendario de tus vendedores humanos.",
+      "skills": ["Respuesta Inmediata", "Calificación BANT", "Manejo de Objeciones", "Agendamiento Automático"],
+      "experience": [
+        "Eliminación del tiempo muerto enviando solo prospectos listos.",
+        "Agendamiento y confirmación de citas (WhatsApp/Calendar).",
+        "Respuesta inmediata a prospectos interesados."
+      ],
+      "certifications": [
+        "WhatsApp Business API",
+        "CRM Management",
+        "Google Calendar/Calendly",
+        "Sales Methodologies"
+      ]
+    },
+    {
+      "id": "sys-02",
+      "name": "Elena",
+      "role": "Control de Flujos y Cobranza",
+      "specialty": "Finanzas",
+      "description": "\"Aseguro que el dinero trabaje para ti y que nadie se olvide de pagar.\" Función Principal: Mantener el flujo de efectivo saludable mediante recordatorios de cobranza impecables y el análisis constante de los movimientos de dinero (Cash Flow).",
+      "skills": ["Recordatorios de Pago", "Análisis Cash Flow", "Conciliación Bancaria", "Alertas de Flujo"],
+      "experience": [
+        "Reducción de la morosidad al mínimo mediante seguimiento.",
+        "Visibilidad real de cuánto dinero tienes hoy y mañana.",
+        "Reporte de facturas pendientes y conciliación en Stripe."
+      ],
+      "certifications": [
+        "Stripe Specialist",
+        "Excel Avanzado / Sheets",
+        "Financial Compliance",
+        "Email Automation"
+      ]
+    },
+    {
+      "id": "sys-03",
+      "name": "Mateo",
+      "role": "Front-Desk & Community Manager",
+      "specialty": "Atención al Cliente",
+      "description": "\"Respondo en segundos, cuido tu marca y conecto el interés con la venta.\" Función Principal: Ser la cara de la empresa en redes sociales. Responde comentarios y DMs al instante para que el interés del cliente no se enfríe.",
+      "skills": ["Monitoreo 24/7", "Resolución de FAQs", "Derivación Inteligente", "Engagement"],
+      "experience": [
+        "Cero mensajes en 'visto'; respuesta en segundos.",
+        "Derivación: Leads a Santiago, Soporte a Valeria.",
+        "Mantenimiento de la comunidad activa y escuchada."
+      ],
+      "certifications": [
+        "Meta Business Suite",
+        "Zendesk / Intercom",
+        "Social Listening",
+        "Brand Voice Adaptation"
+      ]
+    }
+  ],
+
+  "dashboardPreview": {
+    "sectionH2": "Transformamos el caos administrativo en claridad operativa.",
+    "sectionBody": "Ahorra más de 160 horas hombre al mes por solo $1,200 MXN. Monitorea cada interacción y optimiza tu negocio en tiempo real.",
+    "chartTitle": "Eficiencia de Costos (Semanal)",
+    "chartSubtitle": "Nómina Tradicional vs. Digsol",
+    "chartBadge": "ROI Inmediato",
+    "chartSeriesHuman": "Empleado Tradicional",
+    "chartSeriesAI": "Digsol Agent",
+    "kpis": [
+      { "label": "Horas Ahorradas (Mes)", "value": "160h+", "trend": "+24% eficiencia" },
+      { "label": "Consumo de Energía (API)", "value": "Optimizado" },
+      { "label": "Estado de Fábrica", "value": "Sistemas Operativos", "detail": "24/7, sin faltas, sin descansos" }
+    ]
+  },
+
+  "pricing": {
+    "sectionTitle": "Pricing Console",
+    "sectionBody": "Modelo industrial simple: Membresía por infraestructura + Energía bajo demanda.",
+    "membership": {
+      "title": "Membresía Base",
+      "description": "Acceso a la infraestructura de Digsol.",
+      "price": "$1,200",
+      "period": "/mes",
+      "currency": "MXN",
+      "features": [
+        "Infraestructura Operativa",
+        "Mantenimiento de Agente",
+        "Dashboard de Control",
+        "Soporte Prioritario",
+        "Integración WhatsApp",
+        "Actualizaciones Semanales"
+      ],
+      "cta": ">_ INICIAR CONTRATACIÓN",
+      "footer": "Procesado vía Stripe"
+    },
+    "energy": {
+      "title": "Consumo de Energía",
+      "description": "Consumo bajo demanda (WhatsApp API). Optimizamos el flujo para maximizar las conversaciones gratuitas.",
+      "table": [
+        { "type": "Servicio (Iniciada por usuario)", "detail": "Ventana de 24h", "price": "$0.00 MXN" },
+        { "type": "Utilidad", "detail": "Notificaciones de pedido/cita", "price": "~$0.15 MXN" },
+        { "type": "Marketing", "detail": "Difusión y reactivación", "price": "~$0.08 MXN" }
+      ],
+      "optimizationNote": "Digsol Optimization: Nuestros agentes están programados para mantener la mayoría de las interacciones dentro de la ventana gratuita de servicio."
+    }
+  },
+
+  "footer": {
+    "brand": "Digsol/Factory",
+    "copyright": "© 2024 Digital Solutions Inc. Todos los derechos reservados.",
+    "links": ["Términos", "Privacidad", "Estado del Servicio"]
+  },
+
+  "cv": {
+    "backButton": "Volver a la Fábrica",
+    "header": "CURRICULUM VITAE",
+    "sectionProfile": "Perfil Operativo",
+    "profileSuffix": "Diseñado bajo la filosofía de \"Logos\" para aportar racionalidad y orden a los procesos de negocio. Opera 24/7 sin interrupciones, garantizando continuidad operativa y escalabilidad inmediata.",
+    "sectionExperience": "Experiencia & Casos de Uso",
+    "sectionSkills": "Habilidades Técnicas",
+    "sectionCertifications": "Certificaciones",
+    "statusBadge": "DISPONIBLE",
+    "ctaButton": ">_ INICIAR CONTRATACIÓN",
+    "ctaFooter": "Garantía de implementación: 48 horas o devolvemos tu setup fee."
+  },
+
+  "hiringModal": {
+    "title": "Contratar a {agentName}",
+    "subtitle": "Selecciona el método de onboarding preferido.",
+    "optionA": {
+      "title": "Hablar ahora (Fast Track)",
+      "description": "Inicia la configuración inmediata vía WhatsApp con un ingeniero de soluciones."
+    },
+    "optionB": {
+      "title": "Agendar Levantamiento",
+      "description": "Programar una sesión técnica para definir requerimientos y accesos."
+    },
+    "formTitle": "Agendar Sesión",
+    "formSubtitle": "Un ingeniero configurará a {agentName} contigo.",
+    "fields": {
+      "phone": "WhatsApp de Contacto",
+      "date": "Día",
+      "time": "Hora"
+    },
+    "submitButton": "CONFIRMAR AGENDA",
+    "transactionIdPrefix": "ID de transacción:"
+  },
+
+  "login": {
+    "brand": "Digsol Factory",
+    "subtitle": "Sistema Operativo de Agentes Cognitivos",
+    "tabLabel": "Iniciar Sesión",
+    "googleButton": "Entrar con Google",
+    "divider": "O ingresa con Email",
+    "emailPlaceholder": "operador@digsol.com",
+    "passwordPlaceholder": "••••••••",
+    "submitButton": "INGRESAR A CONSOLA",
+    "securityFooter": "Conexión Segura — Firebase Auth (TLS 1.3)",
+    "buildVersion": "Digsol/Factory v0.2.1 — Build 2025.1"
+  },
+
+  "setupPassword": {
+    "brand": "Bienvenido a Digsol Factory",
+    "badge": "CONFIGURACIÓN DE ACCESO",
+    "passwordLabel": "Crea tu contraseña",
+    "confirmLabel": "Confirma tu contraseña",
+    "submitButton": "ACTIVAR MI CONSOLA",
+    "strengthLevels": ["Débil", "Regular", "Fuerte", "Excelente"],
+    "securityFooter": "Tu contraseña se encripta antes de ser almacenada."
+  },
+
+  "dashboard": {
+    "sidebar": {
+      "brand": "Digsol/Factory",
+      "navItems": [
+        { "label": "Dashboard", "icon": "LayoutDashboard" },
+        { "label": "ADN / Conocimiento", "icon": "Dna" },
+        { "label": "Agentes Activos", "icon": "Bot" },
+        { "label": "Integraciones", "icon": "Plug" },
+        { "label": "Billing & Energía", "icon": "CreditCard" },
+        { "label": "Trazabilidad", "icon": "TerminalSquare" }
+      ],
+      "settingsLabel": "Configuración"
+    },
+    "topBar": {
+      "statusConnected": "STATUS: CONNECTED",
+      "environment": "Production Environment",
+      "apiGateway": "API GATEWAY: ONLINE"
+    }
+  },
+
+  "dashboardHome": {
+    "title": "Panel de Control",
+    "liveBadge": "LIVE METRICS",
+    "kpis": [
+      { "label": "ROI", "value": "+312%", "trend": "+12% vs last month" },
+      { "label": "Leads", "value": "1,240", "trend": "+28% vs last month" },
+      { "label": "Flujo", "value": "$84.5k", "trend": "+18% vs last month" },
+      { "label": "Latencia", "value": "1.2s", "trend": "-15% faster" }
+    ],
+    "unitsTitle": "Unidades Operativas",
+    "agentCards": {
+      "santiago": {
+        "metrics": {
+          "conversion": "32%",
+          "citas": "47",
+          "pipeline": "$125k",
+          "leadsSemana": "186"
+        },
+        "chartTitle": "Citas / Semana"
+      },
+      "elena": {
+        "statusLabel": "STANDBY",
+        "metrics": {
+          "morosidad": "0.5%",
+          "cobrado": "$284k MXN",
+          "facturas": "12 pendientes"
+        },
+        "progressLabel": "Ciclo de Cobro",
+        "progressValue": "85%"
+      },
+      "mateo": {
+        "metrics": {
+          "tRespuesta": "12s",
+          "leadsDirigidos": "34",
+          "sentimiento": "98%",
+          "ticketsResueltos": "156"
+        },
+        "liveTraffic": {
+          "label": "TRÁFICO EN VIVO",
+          "sublabel": "67 mensajes procesados hoy"
+        }
+      }
+    },
+    "buttons": {
+      "pause": "Pausar",
+      "resume": "Reanudar",
+      "adjust": "Ajustar"
+    }
+  },
+
+  "activationStepper": {
+    "title": "Progreso de Activación",
+    "stepLabel": "Paso {current} de 3",
+    "steps": [
+      { "label": "Conexión WhatsApp", "description": "Conecta tu número de WhatsApp Business para activar a tu agente de ventas." },
+      { "label": "Integraciones", "description": "Conecta tus herramientas (CRM, Calendar, etc.) para que tus agentes operen." },
+      { "label": "Pago y Activación", "description": "Activa tu membresía y recarga energía para poner todo en marcha." }
+    ],
+    "ctaDone": "Completado",
+    "ctaActive": "Completar",
+    "ctaLocked": "Bloqueado"
+  },
+
+  "onboarding": {
+    "title": "Configuremos tu Factory",
+    "subtitle": "Define tu negocio y la voz de tu marca en 2 pasos.",
+    "badge": "ADN._init",
+    "steps": ["Negocio", "Marca"],
+    "step0": {
+      "sectionTitle": "Radiografía del Negocio",
+      "sectionSubtitle": "Configuración base para el contexto de tus agentes.",
+      "companyLabel": "Nombre de la Empresa",
+      "companyPlaceholder": "Ej. Digsol Tech S.A. de C.V.",
+      "sectorLabel": "Sector / Industria",
+      "sectors": ["SaaS / Tech", "Retail / eCommerce", "Servicios Profesionales", "Salud", "Real Estate", "Educación", "Otro"],
+      "agentLabel": "Selección de Agente Inicial",
+      "agents": [
+        { "id": "santiago", "name": "Santiago", "role": "Hunter / Ventas", "emoji": "🎯" },
+        { "id": "elena", "name": "Elena", "role": "Finanzas & Cobranza", "emoji": "💰" },
+        { "id": "mateo", "name": "Mateo", "role": "Community Manager", "emoji": "📣" }
+      ]
+    },
+    "step1": {
+      "sectionTitle": "Identidad de Marca",
+      "sectionSubtitle": "Define cómo quieres que suenen tus agentes.",
+      "sliders": [
+        { "left": "Casual / Amigable", "right": "Corporativo / Serio" },
+        { "left": "Conciso (Al grano)", "right": "Explicativo (Detallado)" },
+        { "left": "Empático", "right": "Transaccional" }
+      ],
+      "phrasesLabel": "Ejemplos de frases ideales (Voz de Marca)",
+      "phrasesPlaceholder": "Ej: Hola! Qué gusto saludarte, en Digsol entendemos que..."
+    },
+    "success": {
+      "title": "¡Factory Configurada!",
+      "body": "Tu ADN de negocio está listo. Ahora conecta las herramientas que tu empresa utiliza para activar a tus agentes.",
+      "cta": "Ir a Conectar mis Herramientas",
+      "skip": "Hacerlo después →"
+    },
+    "buttons": {
+      "back": "← Anterior",
+      "next": "Continuar",
+      "finish": "🚀 Guardar ADN"
+    }
+  },
+
+  "agentsModule": {
+    "title": "Gestión de Agentes",
+    "sliders": ["Formalidad", "Empatía", "Proactividad"],
+    "viewProfile": "VER PERFIL DE PUESTO"
+  },
+
+  "knowledgeCenter": {
+    "title": "ADN de Negocio",
+    "tabs": ["General", "Productos", "Restricciones", "Voz", "Marca"],
+    "saveButton": "Guardar Cambios"
+  },
+
+  "integrations": {
+    "title": "Integraciones",
+    "categories": [
+      { "label": "Canales de Comunicación", "items": ["WhatsApp", "Telegram", "Instagram", "Messenger"] },
+      { "label": "Gestión de Información", "items": ["Google Sheets", "Notion", "Odoo", "Salesforce", "Bitrix24", "Monday.com", "ClickUp", "HubSpot", "Pipedrive", "Zoho CRM"] },
+      { "label": "Agendas y Citas", "items": ["Google Calendar", "Apple Calendar", "Outlook Calendar", "Cron"] },
+      { "label": "Procesadores de Pago", "items": ["Stripe", "Mercado Pago", "Clip", "PayPal"] }
+    ],
+    "securityNotice": "Las conexiones se establecen vía OAuth 2.0 y tokens de solo lectura cuando es posible. Tus credenciales nunca se almacenan en texto plano."
+  },
+
+  "billing": {
+    "title": "Billing & Energía",
+    "historyButton": "Historial",
+    "membershipCard": {
+      "planName": "Membresía Base",
+      "price": "$1,200 MXN / mes",
+      "renewalLabel": "Próxima renovación",
+      "cardLabel": "Tarjeta guardada"
+    },
+    "energyWallet": {
+      "title": "Wallet de Energía",
+      "balanceLabel": "Saldo Disponible",
+      "cta": "Recargar Saldo"
+    },
+    "securityFooter": "STRIPE · PCI DSS · AES-256"
+  },
+
+  "traceabilityLogs": {
+    "title": "LIVE_TERMINAL_V2",
+    "filterOptions": ["All", "Santiago", "Elena", "Mateo"],
+    "searchPlaceholder": "Grep logs...",
+    "statusLabel": "Status: LISTENING"
+  },
+
+  "accountSettings": {
+    "title": "Configuración de Cuenta",
+    "subtitle": "Acceso · Seguridad · Sesión",
+    "tabs": [
+      { "id": "users", "label": "Usuarios" },
+      { "id": "security", "label": "Seguridad" },
+      { "id": "session", "label": "Sesión" }
+    ],
+    "users": {
+      "sectionTitle": "Gestión de Usuarios",
+      "sectionBody": "Invita miembros a tu equipo para que accedan a la plataforma.",
+      "inviteLabel": "Invitar Nuevo Miembro",
+      "namePlaceholder": "Nombre (opcional)",
+      "emailPlaceholder": "correo@ejemplo.com",
+      "inviteButton": "Invitar",
+      "listLabel": "Usuarios con Acceso",
+      "ownerBadge": "Owner",
+      "invitedBadge": "Invitado",
+      "emptyState": "No hay usuarios invitados aún.",
+      "emptyHint": "Usa el formulario de arriba para invitar a tu equipo."
+    },
+    "security": {
+      "sectionTitle": "Seguridad de la Cuenta",
+      "sectionBody": "Administra tu contraseña y credenciales de acceso.",
+      "resetTitle": "Restablecer Contraseña",
+      "resetBody": "Se enviará un enlace de recuperación al correo electrónico {email}. Desde ahí podrás crear una nueva contraseña.",
+      "resetButton": "Enviar Correo de Recuperación",
+      "resetSuccess": "¡Correo enviado con éxito!",
+      "resetSuccessDetail": "Revisa tu bandeja de entrada en {email}. Si no lo encuentras, revisa la carpeta de Spam."
+    },
+    "session": {
+      "sectionTitle": "Sesión Activa",
+      "sectionBody": "Cierra tu sesión de forma segura en este dispositivo.",
+      "statusLabel": "Sesión Activa",
+      "logoutTitle": "Cerrar Sesión",
+      "logoutBody": "Al cerrar sesión, se limpiará tu estado local y serás redirigido a la pantalla de inicio de sesión. Tus datos permanecerán guardados de forma segura.",
+      "logoutButton": "Cerrar Sesión"
+    }
+  },
+
+  "whatsappConnect": {
+    "title": "Conectar WhatsApp",
+    "body": "Escanea el código QR con tu celular para vincular tu número de WhatsApp Business a tu agente.",
+    "steps": [
+      "Abre WhatsApp en tu celular",
+      "Toca \"Dispositivos Vinculados\"",
+      "Escanea el código QR que aparecerá"
+    ],
+    "generateButton": "Generar Código QR",
+    "creatingLabel": "Generando instancia...",
+    "creatingSubLabel": "Conectando con WPPConnect",
+    "scanningLabel": "Esperando escaneo...",
+    "scanInstruction": "Escanea con tu celular",
+    "scanDetail": "Abre WhatsApp → Dispositivos Vinculados → Vincular Dispositivo",
+    "refreshButton": "Regenerar código QR",
+    "successTitle": "¡WhatsApp Conectado!",
+    "successBody": "Tu número fue vinculado exitosamente. Tu agente ya puede operar por WhatsApp.",
+    "successBadge": "CANAL ACTIVO",
+    "errorTitle": "Error de Conexión",
+    "securityFooter": "CONEXIÓN E2E · WPPCONNECT · N8N WEBHOOKS"
+  },
+
+  "telegramConnect": {
+    "title": "Conectar Telegram",
+    "subtitle": "CONFIGURACIÓN DE BOT",
+    "guideTitle": "Guía de Configuración Rápida",
+    "guideSteps": [
+      "Busca a @BotFather en Telegram.",
+      "Crea un nuevo bot con /newbot y obtén tu API Token.",
+      "Pega el token aquí abajo para activar a tus agentes."
+    ],
+    "tokenLabel": "API Token",
+    "tokenPlaceholder": "0000000000:AAHH-xxxxxxxxx...",
+    "validateButton": "Validar y Conectar",
+    "successTitle": "Conexión Exitosa",
+    "successBody": "Tu bot está listo para operar. Elige qué agente lo va a manejar.",
+    "assignTitle": "Asignar Agente a Telegram",
+    "confirmButton": "Confirmar Agente"
+  },
+
+  "panicButton": {
+    "title": "SOS: Soporte Humano",
+    "body": "Soy Valeria, Directora de Operaciones. Si tienes dudas técnicas, puedo ayudarte ahora.",
+    "cta": "Hablar con Valeria",
+    "hoverLabel": "Soporte Humano"
+  },
+
+  "tour": {
+    "nextButton": "Siguiente",
+    "finishButton": "Entendido, ¡listo!",
+    "skipButton": "Saltar tour",
+    "stepLabel": "Paso {current} / {total}"
+  },
+
+  "oauthCallback": {
+    "title": "Autenticando Google",
+    "statusVerifying": "Verificando conexión, por favor espera...",
+    "statusConnecting": "Conectándose a n8n para validar y guardar de forma segura tus credenciales...",
+    "statusSuccess": "¡Conectado exitosamente! Guardando estado...",
+    "statusMissingCode": "Código o estado ausente. Redirigiendo...",
+    "statusInvalidState": "Estado inválido (posible ataque CSRF). Redirigiendo...",
+    "statusNoService": "Servicio no determinado. Redirigiendo..."
+  },
+
+  "errors": {
+    "agentNotFound": "Agente no encontrado.",
+    "invalidEmail": "Por favor ingresa un correo válido.",
+    "duplicateEmail": "Este correo ya tiene acceso.",
+    "inviteFailed": "Error al guardar la invitación. Intenta de nuevo.",
+    "passwordResetFailed": "Error al enviar el correo. Intenta de nuevo.",
+    "sessionExpired": "Sesión no válida. Inicia sesión nuevamente.",
+    "telegramTokenInvalid": "El token parece ser inválido / muy corto. Revisa y vuelve a intentar.",
+    "telegramTokenEmpty": "El token no puede estar vacío.",
+    "noAuthUser": "No hay usuario autenticado. Inicia sesión e intenta de nuevo."
+  }
+}

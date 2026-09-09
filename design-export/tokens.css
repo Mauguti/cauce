@@ -1,0 +1,102 @@
+/*
+ * Design Tokens — Digsol Factory
+ * Extracted from inline Tailwind config in index.html
+ * Paste these into your new project's global CSS file.
+ */
+
+:root {
+  /* ── System Colors ────────────────────────── */
+  --sys-bg:       #FFFFFF;
+  --sys-surface:  #F9FAFB;
+  --sys-border:   #E5E7EB;
+  --sys-text:     #111827;
+  --sys-muted:    #6B7280;
+
+  /* ── Accent Colors ────────────────────────── */
+  --accent-blue:   #007ACC;
+  --accent-purple: #7D4698;
+  --accent-orange: #E37933;
+  --accent-green:  #4EC9B0;
+
+  /* ── Semantic State Colors ─────────────────── */
+  --color-online:   var(--accent-green);
+  --color-standby:  var(--accent-orange);
+  --color-error:    #EF4444;   /* red-500 */
+  --color-success:  #4ADE80;   /* green-400 */
+  --color-warn:     #FACC15;   /* yellow-400 */
+  --color-info:     #60A5FA;   /* blue-400 */
+
+  /* ── Brand (third-party) ──────────────────── */
+  --whatsapp-green:       #25D366;
+  --whatsapp-green-hover: #128C7E;
+  --telegram-blue:        #26A5E4;
+  --telegram-blue-hover:  #1C88C0;
+
+  /* ── Terminal / Dark Zones ─────────────────── */
+  --terminal-bg:      #0F172A;
+  --terminal-surface:  #1E293B;
+
+  /* ── Typography ────────────────────────────── */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', 'Fira Code', monospace;
+
+  /* ── Spacing (subset most used) ────────────── */
+  --space-1:  0.25rem;  /* 4px  */
+  --space-2:  0.5rem;   /* 8px  */
+  --space-3:  0.75rem;  /* 12px */
+  --space-4:  1rem;     /* 16px */
+  --space-5:  1.25rem;  /* 20px */
+  --space-6:  1.5rem;   /* 24px */
+  --space-8:  2rem;     /* 32px */
+  --space-10: 2.5rem;   /* 40px */
+  --space-12: 3rem;     /* 48px */
+  --space-16: 4rem;     /* 64px */
+  --space-20: 5rem;     /* 80px */
+
+  /* ── Border Radius ─────────────────────────── */
+  --radius-sm:   0.125rem; /* 2px  */
+  --radius:      0.25rem;  /* 4px  */
+  --radius-md:   0.375rem; /* 6px  */
+  --radius-lg:   0.5rem;   /* 8px  */
+  --radius-xl:   0.75rem;  /* 12px */
+  --radius-2xl:  1rem;     /* 16px */
+  --radius-full: 9999px;
+
+  /* ── Shadows ───────────────────────────────── */
+  --shadow-clean: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-card:  0 4px 6px -1px rgba(0, 0, 0, 0.02),
+                  0 2px 4px -1px rgba(0, 0, 0, 0.02);
+
+  /* ── Max Widths ────────────────────────────── */
+  --max-w-sm:  24rem;  /* 384px  */
+  --max-w-md:  28rem;  /* 448px  */
+  --max-w-lg:  32rem;  /* 512px  */
+  --max-w-xl:  36rem;  /* 576px  */
+  --max-w-2xl: 42rem;  /* 672px  */
+  --max-w-4xl: 56rem;  /* 896px  */
+  --max-w-6xl: 72rem;  /* 1152px */
+  --max-w-7xl: 80rem;  /* 1280px */
+}
+
+/* ── Base Styles ─────────────────────────────── */
+body {
+  font-family: var(--font-sans);
+  background-color: var(--sys-bg);
+  color: var(--sys-text);
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--accent-blue);
+  color: white;
+}
+
+/* ── Custom Animations ───────────────────────── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.animate-blink {
+  animation: blink 1s step-end infinite;
+}
