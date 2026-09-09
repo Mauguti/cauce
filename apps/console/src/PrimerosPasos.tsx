@@ -59,24 +59,26 @@ export function PrimerosPasos(props: {
         {pasos.map((p) => (
           <li
             key={p.n}
-            className={`flex items-center gap-4 rounded-lg border border-sys-border bg-sys-bg p-4 shadow-clean ${p.hecho ? "opacity-70" : ""}`}
+            className={`flex flex-col gap-3 rounded-lg border border-sys-border bg-sys-bg p-4 shadow-clean sm:flex-row sm:items-center sm:gap-4 ${p.hecho ? "opacity-70" : ""}`}
           >
-            <span
-              aria-hidden
-              className={`flex h-9 w-9 flex-none items-center justify-center rounded-full text-sm font-semibold ${
-                p.hecho
-                  ? "bg-accent-green/15 text-accent-green"
-                  : "border-2 border-accent-blue text-accent-blue"
-              }`}
-            >
-              {p.hecho ? <Check className="h-5 w-5" strokeWidth={3} /> : p.n}
-            </span>
-            <div className="flex-1">
-              <h2 className="text-base font-semibold text-sys-text">{p.titulo}</h2>
-              <p className="text-sm text-sys-muted">{p.texto}</p>
+            <div className="flex items-start gap-4 sm:contents">
+              <span
+                aria-hidden
+                className={`flex h-9 w-9 flex-none items-center justify-center rounded-full text-sm font-semibold ${
+                  p.hecho
+                    ? "bg-accent-green/15 text-accent-green"
+                    : "border-2 border-accent-blue text-accent-blue"
+                }`}
+              >
+                {p.hecho ? <Check className="h-5 w-5" strokeWidth={3} /> : p.n}
+              </span>
+              <div className="flex-1">
+                <h2 className="text-base font-semibold text-sys-text">{p.titulo}</h2>
+                <p className="text-sm text-sys-muted">{p.texto}</p>
+              </div>
             </div>
             <button
-              className={p.hecho ? "boton" : "boton boton--primario"}
+              className={`${p.hecho ? "boton" : "boton boton--primario"} w-full shrink-0 sm:w-auto`}
               onClick={() => props.irA(p.seccion)}
             >
               {p.hecho ? "Revisar" : p.accion}
