@@ -1,3 +1,5 @@
+import { Check } from "lucide-react";
+
 type Seccion = "inicio" | "sesiones" | "conexiones" | "acciones";
 
 /**
@@ -53,18 +55,25 @@ export function PrimerosPasos(props: {
         </p>
       </header>
 
-      <ol className="pasos">
+      <ol className="flex flex-col gap-3">
         {pasos.map((p) => (
           <li
             key={p.n}
-            className={`paso${p.hecho ? " paso--hecho" : ""}`}
+            className={`flex items-center gap-4 rounded-lg border border-sys-border bg-sys-bg p-4 shadow-clean ${p.hecho ? "opacity-70" : ""}`}
           >
-            <span className="paso__marca" aria-hidden>
-              {p.hecho ? "●" : p.n}
+            <span
+              aria-hidden
+              className={`flex h-9 w-9 flex-none items-center justify-center rounded-full text-sm font-semibold ${
+                p.hecho
+                  ? "bg-accent-green/15 text-accent-green"
+                  : "border-2 border-accent-blue text-accent-blue"
+              }`}
+            >
+              {p.hecho ? <Check className="h-5 w-5" strokeWidth={3} /> : p.n}
             </span>
-            <div className="paso__cuerpo">
-              <h2>{p.titulo}</h2>
-              <p>{p.texto}</p>
+            <div className="flex-1">
+              <h2 className="text-base font-semibold text-sys-text">{p.titulo}</h2>
+              <p className="text-sm text-sys-muted">{p.texto}</p>
             </div>
             <button
               className={p.hecho ? "boton" : "boton boton--primario"}
