@@ -4,6 +4,75 @@ Adoptar la identidad visual de Digsol Factory (paquete en `design-export/`)
 en la consola. **Regla dura:** backend, orquestador, rutas de API, lógica
 de sesiones e integraciones NO se tocan. Solo capa visual y copy.
 
+---
+
+## DECISIÓN TOMADA — 9 sep 2026: **Camino 2 (tokens)**
+
+Mau eligió el **Camino 2** para la consola. Esto revierte la elección
+previa de "Tailwind completo" con la que se hicieron los commits
+`5053f8d` y `2e82110`. No se revierte código: se cambia el alcance.
+
+**Qué se conserva de lo ya commiteado:**
+
+- **Tailwind sigue instalado** (`5053f8d`). Carga antes de los estilos
+  existentes y no rompe nada. Se queda porque la landing (Parte C) sí es
+  Tailwind y porque ya está verificado.
+- **El nav reescrito en Tailwind se conserva** (`2e82110`). Es el chrome,
+  no es una pantalla de producción, ya compila y ya da la identidad
+  Factory en lo primero que ve el usuario.
+
+**Qué cambia:**
+
+- **NO** se reescribe pantalla por pantalla en Tailwind. Las 7 pantallas
+  pendientes (Inicio, Sesiones, Conexiones, Acciones, Cuenta, Login,
+  Expectativas) se re-skinean **remapeando los valores de
+  `packages/ui/tokens.css`**, sin tocar sus componentes.
+
+El resultado es un híbrido deliberado: **chrome en Tailwind, cuerpo por
+tokens, landing en Tailwind.**
+
+### Mapeo de tokens (consola → design-export)
+
+Los **nombres** de token no cambian; solo sus valores.
+
+| Token de la consola | Valor nuevo | Origen en Factory |
+|---|---|---|
+| `--fondo` | `#FFFFFF` | `--sys-bg` (ya coincide) |
+| `--fondo-sutil` | `#F9FAFB` | `--sys-surface` |
+| `--borde-color` | `#E5E7EB` | `--sys-border` |
+| `--texto` | `#111827` | `--sys-text` |
+| `--texto-secundario` | `#6B7280` | `--sys-muted` |
+| `--radio` | `8px` (era `2px`) | `--radius-lg` |
+| `.boton--primario` fondo | `#007ACC` (era negro) | `--accent-blue` |
+| `--estado-conectada` | `#4EC9B0` | `--accent-green` |
+| `--estado-qr` | `#E37933` | `--accent-orange` |
+| `--estado-desconectada` | `#EF4444` | `--color-error` |
+
+Agregar además: `--sombra-clean` / `--sombra-card` (de `--shadow-clean`
+/ `--shadow-card`) y `--fuente-mono` (JetBrains Mono) para las zonas de
+bitácora.
+
+**La §0.B sigue siendo regla dura:** los acentos de color se adoptan
+*encima* de la forma existente (punto sólido / aro punteado / aro hueco /
+cruz), nunca en su lugar. Se verifica con la página en escala de grises.
+
+### Orden de ejecución vigente
+
+1. `tokens.css` remapeado. La app entera cambia de aspecto sin tocar un
+   componente. — *Parte B·1*
+2. Tarjetas, botones y campos en `app.css`. — *Parte B·2*
+3. Estados de sesión y mensaje (regla §0.B). — *Parte B·3*
+4. Inicio: contadores reales + vacíos honestos donde no hay dato. — *Parte B·4*
+5. Conexiones, Acciones, Cuenta, Login, Expectativas. — *Parte B·5*
+6. Verificación en escala de grises de todas las pantallas.
+
+Un commit por paso, app compilando y verificada entre cada uno.
+
+**Meta de negocio:** lanzamiento público el **20 de octubre de 2026**.
+Tablero completo en Notion: "Digsol Factory · Lanzamiento".
+
+---
+
 ## 0. Los dos conflictos que hay que resolver ANTES de codear
 
 ### A. Sistema de estilo (el grande)
