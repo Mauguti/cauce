@@ -25,14 +25,34 @@ export interface RegistroBitrix {
   campos: Record<string, unknown>;
 }
 
+/**
+ * Normaliza la URL de un webhook entrante a la base REST con una sola
+ * barra final: `https://<dominio>/rest/<id>/<token>/`.
+ *
+ * Bitrix muestra dos formas en la misma pantalla y cualquiera pega
+ * cualquiera de ellas:
+ *   .../rest/1/token/              (webhook para llamar a la API REST)
+ *   .../rest/1/token/profile.json  (generador de solicitudes, la más visible)
+ * Además pueden pegarla sin barra final. Se quita cualquier segmento final
+ * `<algo>.json` y las diagonales sobrantes, de modo que las tres formas
+ * produzcan la misma base y `<metodo>.json` se concatene bien.
+ */
+export function normalizarWebhookBitrix(webhookUrl: string): string {
+  const base = webhookUrl
+    .trim()
+    .replace(/[?#].*$/, "") // por si viene con query/fragmento
+    .replace(/\/[^/]+\.json\/*$/i, "") // quita /profile.json (o cualquier método) final
+    .replace(/\/+$/, ""); // quita diagonales sobrantes
+  return base + "/";
+}
+
 export class ClienteBitrix {
   readonly #base: string;
   readonly #fetch: typeof fetch;
   readonly #timeoutMs: number;
 
   constructor(webhookUrl: string, opciones: { fetchImpl?: typeof fetch; timeoutMs?: number } = {}) {
-    // Normaliza a base con una sola barra final: `.../rest/1/code/`.
-    this.#base = webhookUrl.trim().replace(/\/+$/, "") + "/";
+    this.#base = normalizarWebhookBitrix(webhookUrl);
     this.#fetch = opciones.fetchImpl ?? fetch;
     this.#timeoutMs = opciones.timeoutMs ?? 15_000;
   }
@@ -52,7 +72,14 @@ export class ClienteBitrix {
     }
     if (res.status >= 400 || json?.error) {
       const detalle = json?.error_description ?? json?.error ?? `HTTP ${res.status}`;
-      throw new Error(`Bitrix rechazó ${metodo}: ${detalle}`);
+      // "Method not found" casi siempre es una URL mal formada (un método
+      // pegado en la base), no un problema de permisos: dirige a revisar la
+      // URL, no la lista de permisos.
+      const esMetodo = /method not found|not found/i.test(String(detalle));
+      const pista = esMetodo
+        ? "Revisa que pegaste la URL del webhook ENTRANTE completa (termina en /rest/<id>/<token>/), no la del generador de solicitudes ni un método suelto."
+        : "Revisa la URL del webhook y que tenga permiso de CRM en Bitrix.";
+      throw new Error(`Bitrix no aceptó la llamada (${metodo}): ${detalle}. ${pista}`);
     }
     return json?.result;
   }

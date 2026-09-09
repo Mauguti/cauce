@@ -417,6 +417,21 @@ function AsistenteMonday(props: {
  * — el mismo flujo que monday. El application_token del webhook SALIENTE
  * es opcional (verifica los disparos). Nada se guarda en claro.
  */
+/**
+ * Limpia la URL del webhook entrante de Bitrix: quita un segmento final
+ * tipo `<metodo>.json` (p. ej. `/profile.json` del generador de
+ * solicitudes) y las diagonales sobrantes, dejando la base `…/rest/id/token/`.
+ * Espejo de la del backend (packages/apps/orchestrator/src/bitrix/cliente.ts).
+ */
+function normalizarWebhookBitrix(webhookUrl: string): string {
+  const base = webhookUrl
+    .trim()
+    .replace(/[?#].*$/, "")
+    .replace(/\/[^/]+\.json\/*$/i, "")
+    .replace(/\/+$/, "");
+  return base + "/";
+}
+
 function AsistenteBitrix(props: {
   yo: Yo;
   instancias: Instance[];
@@ -569,6 +584,9 @@ function AsistenteBitrix(props: {
           className="campo"
           value={webhookUrl}
           onChange={(e) => setWebhookUrl(e.target.value)}
+          // Al salir del campo, limpia lo pegado (p. ej. quita /profile.json)
+          // para que el usuario VEA la URL base antes de guardar.
+          onBlur={() => webhookUrl.trim() && setWebhookUrl(normalizarWebhookBitrix(webhookUrl))}
           placeholder="https://tu-portal.bitrix24.mx/rest/1/xxxxxxxx/"
         />
       </label>

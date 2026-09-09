@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AddressInfo } from "node:net";
 import { ConectorBitrix, extraerId, type AltaConectorBitrix } from "./conector.ts";
-import { valorCampo, type EntidadBitrix, type RegistroBitrix } from "./cliente.ts";
+import { normalizarWebhookBitrix, valorCampo, type EntidadBitrix, type RegistroBitrix } from "./cliente.ts";
 import { Cripto } from "../cripto.ts";
 import { crearApp } from "../app.ts";
 import { RepositorioEnMemoria } from "../store.ts";
@@ -46,6 +46,22 @@ function conectorConFake(getRegistro: (e: EntidadBitrix, id: string) => Promise<
   const bitrix = new ConectorBitrix({ repo, cola, cripto, clienteFactory: () => cliente as any });
   return { repo, bitrix, encolados, timeline };
 }
+
+describe("normalizarWebhookBitrix", () => {
+  const esperado = "https://portal.bitrix24.mx/rest/1/abc123/";
+  it("acepta las tres formas y produce la misma base", () => {
+    // Con barra final (webhook REST).
+    expect(normalizarWebhookBitrix("https://portal.bitrix24.mx/rest/1/abc123/")).toBe(esperado);
+    // Sin barra final.
+    expect(normalizarWebhookBitrix("https://portal.bitrix24.mx/rest/1/abc123")).toBe(esperado);
+    // Con /profile.json (generador de solicitudes) — la que revienta hoy.
+    expect(normalizarWebhookBitrix("https://portal.bitrix24.mx/rest/1/abc123/profile.json")).toBe(esperado);
+  });
+  it("tolera espacios, doble barra y query", () => {
+    expect(normalizarWebhookBitrix("  https://portal.bitrix24.mx/rest/1/abc123//  ")).toBe(esperado);
+    expect(normalizarWebhookBitrix("https://portal.bitrix24.mx/rest/1/abc123/crm.deal.get.json?ID=1")).toBe(esperado);
+  });
+});
 
 describe("helpers de Bitrix", () => {
   it("valorCampo resuelve el multifield PHONE y los escalares", () => {
