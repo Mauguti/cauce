@@ -43,12 +43,15 @@ const tenantDemo: Tenant = {
 
 let repo: Repositorio;
 if (usaFirestore) {
-  repo = new RepositorioFirestore();
+  const repoFs = new RepositorioFirestore();
+  repo = repoFs;
   // Alta idempotente del tenant demo: garantiza que la key del entorno
   // funcione. Reescribe solo el doc del tenant, no sus instancias ni
   // mensajes, así que no pierde historial entre reinicios.
   await repo.saveTenant(tenantDemo);
-  console.log("repositorio: Firestore");
+  // La base se imprime para poder verificar en el log que un orquestador
+  // apunta a su propia base (CAUCE_FIRESTORE_DB) y no a la de otro.
+  console.log(`repositorio: Firestore (base: ${repoFs.databaseId})`);
 } else {
   repo = new RepositorioEnMemoria({ tenants: [tenantDemo] });
   console.log("repositorio: en memoria (sin persistencia)");

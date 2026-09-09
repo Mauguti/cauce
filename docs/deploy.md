@@ -149,6 +149,25 @@ Sin `GOOGLE_APPLICATION_CREDENTIALS` (ni `FIRESTORE_PROJECT_ID`) el
 orquestador cae al repositorio en memoria y pierde el historial en cada
 reinicio; en producción esa variable es obligatoria.
 
+### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)
+
+Dos orquestadores sobre el mismo proyecto Firebase compartirían la base
+`(default)` y se verían los tenants entre sí. Para aislarlos, cada uno
+apunta a su propia base con nombre dentro del proyecto:
+
+```
+CAUCE_FIRESTORE_DB=factory
+```
+
+- **Sin la variable** el comportamiento es idéntico al de siempre: base
+  `(default)`. El orquestador de Cauce no la define.
+- La base hay que crearla antes en la consola de Firebase (Firestore →
+  Agregar base de datos) y desplegarle sus propias reglas; las reglas de
+  `(default)` no aplican a las bases con nombre.
+- Al arrancar, el log dice `repositorio: Firestore (base: <id>)`; ahí se
+  confirma a cuál apunta. Cambiarla exige reiniciar el servicio
+  (`sudo systemctl restart cauce`).
+
 Variables nuevas del bloque 8:
 
 - `CAUCE_ADMIN_KEY` — protege el endpoint de cambio de plan

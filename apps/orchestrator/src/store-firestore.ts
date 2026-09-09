@@ -23,9 +23,32 @@ import type { DisparadorEntrada } from "./entrada/disparadores.ts";
  * service account) en el entorno del servicio, nunca en el repo. El
  * project id sale de la credencial o de FIRESTORE_PROJECT_ID.
  *
+ * Base de datos: por CAUCE_FIRESTORE_DB (id de una base con nombre dentro
+ * del mismo proyecto). Sin la variable se usa la base por defecto
+ * `(default)`, exactamente como hasta ahora. Permite que dos orquestadores
+ * del mismo proyecto Firebase (p. ej. Cauce y Digsol Factory) no vean los
+ * tenants del otro.
+ *
  * `ignoreUndefinedProperties` deja que campos opcionales (p. ej.
  * Tenant.envioIntervaloMs) simplemente no se escriban cuando faltan.
  */
+/**
+ * Opciones del cliente de Firestore a partir del entorno. Pura, para
+ * poder probarla sin emulador: `databaseId` solo aparece cuando
+ * CAUCE_FIRESTORE_DB está definida y no vacía; `projectId` solo con
+ * FIRESTORE_PROJECT_ID. Sin variables, el objeto no fuerza nada.
+ */
+export function opcionesFirestoreDesdeEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): { projectId?: string; databaseId?: string } {
+  const projectId = env.FIRESTORE_PROJECT_ID?.trim();
+  const databaseId = env.CAUCE_FIRESTORE_DB?.trim();
+  return {
+    ...(projectId ? { projectId } : {}),
+    ...(databaseId ? { databaseId } : {}),
+  };
+}
+
 export class RepositorioFirestore implements Repositorio {
   readonly #db: Firestore;
 
@@ -34,10 +57,13 @@ export class RepositorioFirestore implements Repositorio {
       db ??
       new Firestore({
         ignoreUndefinedProperties: true,
-        ...(process.env.FIRESTORE_PROJECT_ID
-          ? { projectId: process.env.FIRESTORE_PROJECT_ID }
-          : {}),
+        ...opcionesFirestoreDesdeEnv(),
       });
+  }
+
+  /** Id de la base en uso (`(default)` si no se fijó otra). Para logs. */
+  get databaseId(): string {
+    return this.#db.databaseId;
   }
 
   async getTenant(tenantId: TenantId): Promise<Tenant | null> {
