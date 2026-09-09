@@ -196,16 +196,41 @@ Los planes son `prueba | basico | estandar | pro` con capacidades
 orquestador los lee como `estandar` mientras no se migren, así que el
 **orden seguro es desplegar primero y migrar después**, nunca al revés.
 
+**Procedimiento acordado (9-sep-2026), en este orden y sin saltarse pasos:**
+
+1. **México** (Factory): desplegar el código → revisar el journal (arranque,
+   `repositorio: Firestore (base: factory)`, `webhook.alcance resultado=ok`
+   después de "escuchando") → migración en modo reporte → `--aplicar`.
+2. Revisar el reporte de México.
+3. **Ohio** (Cauce, con Procesa y We Build): desplegar el código → journal →
+   migración **solo en modo reporte**.
+4. **Mandar el reporte de Ohio a Mau antes de aplicar.** Ahí se confirma que
+   los tenants en `base` quedan en `estandar` y conservan bots. No se aplica
+   sin que lo lea.
+5. Ohio `--aplicar`.
+6. **En la misma sesión, correr el reporte de `api_keys`** de la plataforma
+   (higiene de llaves antes de salir a público):
+   `GOOGLE_APPLICATION_CREDENTIALS=/etc/factory-firestore.json NODE_PATH=/opt/factory/node_modules node api-keys-reporte.mjs`
+   (el script vive en `scripts/` del repo de la plataforma).
+
 ```bash
 # reporte (no escribe)
 GOOGLE_APPLICATION_CREDENTIALS=/etc/cauce-firestore.json node scripts/migrar-planes.mjs
-# aplicar
+# aplicar: registra cada tenant tocado (Firestore migraciones/planes-capacidades + JSON local)
 GOOGLE_APPLICATION_CREDENTIALS=/etc/cauce-firestore.json node scripts/migrar-planes.mjs --aplicar
+# marcha atrás: devuelve a su estado previo exacto los tenants registrados
+GOOGLE_APPLICATION_CREDENTIALS=/etc/cauce-firestore.json node scripts/migrar-planes.mjs --revertir
 ```
 
 En Factory, agrega `CAUCE_FIRESTORE_DB=factory`. Un plan desconocido se
-registra y no se toca. Los 403 por capacidad salen en la bitácora como
-`plan.rechazado`; los cambios como `plan.cambio` y `plan.aplicado`.
+registra y no se toca.
+
+**Rollback completo** = primero `--revertir` (el orquestador nuevo tolera
+los ids legado), después volver al código anterior. Nunca al revés: el
+orquestador viejo no conoce `estandar` y truena al leer un tenant migrado.
+
+Los 403 por capacidad salen en la bitácora como `plan.rechazado`; los
+cambios como `plan.cambio` y `plan.aplicado`.
 
 ### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)
 
