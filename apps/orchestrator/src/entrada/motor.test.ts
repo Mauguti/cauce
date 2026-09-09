@@ -18,8 +18,11 @@ function entrante(cuerpo: string, telefono = "+525512345678"): Message {
   };
 }
 
-function armar(disparadores: DisparadorEntrada[] = []) {
-  const repo = new RepositorioEnMemoria();
+function armar(disparadores: DisparadorEntrada[] = [], plan: "basico" | "estandar" | "pro" = "estandar") {
+  // El tenant importa: los bots solo corren si su plan los incluye.
+  const repo = new RepositorioEnMemoria({
+    tenants: [{ id: "demo", nombre: "Demo", plan, estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z" }],
+  });
   void repo.saveDisparadores("demo", disparadores);
   const enviados: { telefono: string; cuerpo: string }[] = [];
   const motor = new MotorEntrada({
@@ -76,6 +79,27 @@ describe("MotorEntrada", () => {
       motor.procesar("demo", "i1", entrante("hola 2")),
     ]);
     // Exactamente una bienvenida, no dos.
+    expect(enviados).toHaveLength(1);
+  });
+});
+
+describe("MotorEntrada por plan", () => {
+  it("un tenant Básico conserva sus disparadores configurados pero NO responde: los bots quedan en pausa", async () => {
+    const { motor, enviados, repo } = armar(
+      [{ id: "d1", prioridad: 10, tipo: "cualquiera", activo: true, respuesta: "Hola" }],
+      "basico",
+    );
+    await motor.procesar("demo", "i1", entrante("hola"));
+    expect(enviados).toEqual([]);
+    expect(await repo.getDisparadores("demo")).toHaveLength(1); // configuración intacta
+  });
+
+  it("el mismo tenant en Estándar sí responde", async () => {
+    const { motor, enviados } = armar(
+      [{ id: "d1", prioridad: 10, tipo: "cualquiera", activo: true, respuesta: "Hola" }],
+      "estandar",
+    );
+    await motor.procesar("demo", "i1", entrante("hola"));
     expect(enviados).toHaveLength(1);
   });
 });

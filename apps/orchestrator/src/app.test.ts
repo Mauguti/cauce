@@ -12,8 +12,8 @@ const KEY_B = "key-tenant-b-1111111111111111";
 function levantar() {
   const repo = new RepositorioEnMemoria({
     tenants: [
-      { id: "a", nombre: "A", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY_A), creadoEn: "2026-09-05T00:00:00Z" },
-      { id: "b", nombre: "B", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY_B), creadoEn: "2026-09-05T00:00:00Z" },
+      { id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: hashApiKey(KEY_A), creadoEn: "2026-09-05T00:00:00Z" },
+      { id: "b", nombre: "B", plan: "estandar", estado: "activo", apiKeyHash: hashApiKey(KEY_B), creadoEn: "2026-09-05T00:00:00Z" },
     ],
     instances: [
       { id: "i1", tenantId: "a", transportType: "mock", contenedorId: null, numero: "+521", estado: "connected", ultimoHeartbeat: null },
@@ -133,7 +133,7 @@ describe("GET /instances/:id/qr", () => {
   function levantarConQr(qr: QrPayload | null) {
     const repo = new RepositorioEnMemoria({
       tenants: [
-        { id: "a", nombre: "A", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY_A), creadoEn: "2026-09-05T00:00:00Z" },
+        { id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: hashApiKey(KEY_A), creadoEn: "2026-09-05T00:00:00Z" },
       ],
       instances: [
         { id: "i1", tenantId: "a", transportType: "evolution", contenedorId: "c1", numero: null, estado: "qr", ultimoHeartbeat: null },
@@ -194,12 +194,12 @@ describe("autenticación con ID token de Firebase", () => {
   function levantarFirebase() {
     const repo = new RepositorioEnMemoria({
       tenants: [
-        { id: "a", nombre: "A", plan: "base", estado: "activo", apiKeyHash: "z".repeat(64), creadoEn: "2026-09-05T00:00:00Z" },
+        { id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: "z".repeat(64), creadoEn: "2026-09-05T00:00:00Z" },
       ],
     });
     // Asocia uid-ana → tenant a (como haría el provisioning).
     void repo.provisionarTenant("uid-ana", () => ({
-      id: "a", nombre: "A", plan: "base", estado: "activo", apiKeyHash: "z".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
+      id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: "z".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
     }));
     const server = crearApp(repo, undefined, { verificarToken: verificar }).listen(0);
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -237,7 +237,7 @@ describe("DELETE /instances/:id (logout confirmado antes de destruir)", () => {
   const KEY = "key-del-00000000000000000000000000";
   function levantar(fakeEliminar: GestorSesiones["eliminar"]) {
     const repo = new RepositorioEnMemoria({
-      tenants: [{ id: "t", nombre: "T", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2026-09-06T00:00:00Z" }],
+      tenants: [{ id: "t", nombre: "T", plan: "estandar", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2026-09-06T00:00:00Z" }],
       instances: [{ id: "i1", tenantId: "t", transportType: "evolution", contenedorId: "c", numero: null, estado: "connected", ultimoHeartbeat: null }],
     });
     const gestor = { eliminar: fakeEliminar } as unknown as GestorSesiones;
@@ -280,7 +280,7 @@ describe("POST /messages/:id/retry (reintento manual)", () => {
   const KEY = "key-retry-0000000000000000000000";
   function levantar(msg: any, sesionActiva = true) {
     const repo = new RepositorioEnMemoria({
-      tenants: [{ id: "t", nombre: "T", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2026-09-06T00:00:00Z" }],
+      tenants: [{ id: "t", nombre: "T", plan: "estandar", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2026-09-06T00:00:00Z" }],
       instances: [{ id: "i1", tenantId: "t", transportType: "evolution", contenedorId: "c", numero: null, estado: "connected", ultimoHeartbeat: null }],
     });
     void repo.saveMessage(msg);
@@ -330,7 +330,7 @@ describe("límite de conectores del plan (simétrico monday ↔ bitrix)", () => 
   function levantarConCrm(conectados: { monday: boolean; bitrix: boolean }) {
     const repo = new RepositorioEnMemoria({
       tenants: [
-        { id: "a", nombre: "A", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY_A), creadoEn: "2026-09-05T00:00:00Z" },
+        { id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: hashApiKey(KEY_A), creadoEn: "2026-09-05T00:00:00Z" },
       ],
       instances: [
         { id: "i1", tenantId: "a", transportType: "mock", contenedorId: null, numero: "+521", estado: "connected", ultimoHeartbeat: null },

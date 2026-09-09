@@ -72,7 +72,7 @@ describe("límites por plan al crear sesión", () => {
   });
 
   it("plan extras respeta el límite contratado", async () => {
-    const { base, cerrar } = levantar(tenant({ plan: "extras", limiteLineas: 3 }));
+    const { base, cerrar } = levantar(tenant({ plan: "estandar", limitesOverride: { lineas: 3 } }));
     try {
       for (let i = 0; i < 3; i++) {
         const r = await fetch(`${base}/api/tenants/t1/instances`, { method: "POST", ...conKey });
@@ -105,7 +105,8 @@ describe("límites por plan al crear sesión", () => {
       const r = await fetch(`${base}/api/me`, conKey);
       const yo = await r.json();
       expect(yo).toMatchObject({ plan: "prueba", pruebaVigente: true, terminosAceptados: false });
-      expect(yo.limites).toEqual({ lineas: 1, conectores: 1 });
+      expect(yo.limites).toEqual({ lineas: 1, conectores: 1, agentes: 0 });
+      expect(yo.capacidades).toEqual(["salientes", "entrantes", "bots"]);
     } finally {
       cerrar();
     }
@@ -194,18 +195,18 @@ describe("cambio de plan (admin)", () => {
       const sinKey = await fetch(`${base}/api/admin/tenants/t1/plan`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ plan: "base" }),
+        body: JSON.stringify({ plan: "estandar" }),
       });
       expect(sinKey.status).toBe(401);
 
       const ok = await fetch(`${base}/api/admin/tenants/t1/plan`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-admin-key": "secreto-admin" },
-        body: JSON.stringify({ plan: "base" }),
+        body: JSON.stringify({ plan: "estandar" }),
       });
       expect(ok.status).toBe(200);
       const t = await repo.getTenant("t1");
-      expect(t!.plan).toBe("base");
+      expect(t!.plan).toBe("estandar");
       expect(t!.pruebaExpiraEn).toBeNull();
     } finally {
       server.close();

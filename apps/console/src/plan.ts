@@ -18,8 +18,9 @@ export function diasRestantesPrueba(
 
 const NOMBRE_PLAN: Record<Yo["plan"], string> = {
   prueba: "Prueba",
-  base: "Base",
-  extras: "Extras",
+  basico: "Básico",
+  estandar: "Estándar",
+  pro: "Pro",
 };
 
 export function nombrePlan(plan: Yo["plan"]): string {

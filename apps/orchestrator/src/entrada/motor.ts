@@ -1,4 +1,6 @@
 import type { InstanceId, Message, TenantId } from "@cauce/core";
+import { tieneCapacidad, type Capacidad } from "@cauce/core";
+import { registrarCadaMs } from "../log.ts";
 import type { Repositorio } from "../store.ts";
 import type { ConectorMonday } from "../monday/conector.ts";
 import type { ConectorBitrix } from "../bitrix/conector.ts";
@@ -56,20 +58,32 @@ export class MotorEntrada {
       nombre,
     );
 
+    // Capacidades del plan AHORA: los bots y el write-back se pausan si el
+    // plan no los incluye o la prueba venció. La configuración se conserva.
+    const tenant = await this.#repo.getTenant(tenantId);
+    const puede = (c: Capacidad) => (tenant ? tieneCapacidad(tenant, c) : false);
+
     // 2. Disparadores: primera coincidencia por prioridad gana; respuesta
     //    por el carril inmediato (sin rate limiting).
-    const disparadores = await this.#repo.getDisparadores(tenantId);
-    const disparador = primeroQueCoincide(disparadores, {
-      texto: mensaje.cuerpo,
-      esPrimerContacto,
-      ahora: new Date(mensaje.timestamp),
-    });
-    if (disparador) {
-      await this.#enviar(tenantId, instanceId, mensaje.telefono, disparador.respuesta);
+    if (puede("bots")) {
+      const disparadores = await this.#repo.getDisparadores(tenantId);
+      const disparador = primeroQueCoincide(disparadores, {
+        texto: mensaje.cuerpo,
+        esPrimerContacto,
+        ahora: new Date(mensaje.timestamp),
+      });
+      if (disparador) {
+        await this.#enviar(tenantId, instanceId, mensaje.telefono, disparador.respuesta);
+      }
+    } else if (tenant) {
+      registrarCadaMs(`bots-pausados:${tenantId}`, 10 * 60_000, "bots.pausados", {
+        tenant: tenantId, plan: tenant.plan, motivo: "el plan no incluye bots o la cuenta está en solo lectura",
+      }, "warn");
     }
 
     // 3. Write-back al CRM: la respuesta del cliente vuelve al registro que
     //    la originó (item de monday o timeline de la entidad de Bitrix).
+    if (!puede("entrantes")) return;
     const texto = `📥 ${mensaje.cuerpo}`;
     if (this.#monday && conversacion.mondayItemId) {
       await this.#monday.publicarEnItem(tenantId, conversacion.mondayItemId, texto);

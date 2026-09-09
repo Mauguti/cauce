@@ -43,7 +43,7 @@ const cripto = new Cripto(Buffer.alloc(32, 7));
 function conectorConFake() {
   const repo = new RepositorioEnMemoria({
     tenants: [
-      { id: "demo", nombre: "Demo", plan: "base", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-06T00:00:00Z" },
+      { id: "demo", nombre: "Demo", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-06T00:00:00Z" },
     ],
   });
   const encolados: any[] = [];

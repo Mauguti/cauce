@@ -30,7 +30,7 @@ const ALTA: AltaConectorBitrix = {
 
 function conectorConFake(getRegistro: (e: EntidadBitrix, id: string) => Promise<RegistroBitrix | null> = async () => DEAL) {
   const repo = new RepositorioEnMemoria({
-    tenants: [{ id: "demo", nombre: "D", plan: "base", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-08T00:00:00Z" }],
+    tenants: [{ id: "demo", nombre: "D", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-08T00:00:00Z" }],
   });
   const encolados: any[] = [];
   const cola = { encolar: async (m: any) => encolados.push(m) } as any;

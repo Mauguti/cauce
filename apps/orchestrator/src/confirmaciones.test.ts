@@ -20,7 +20,7 @@ describe("barrerSinConfirmar", () => {
   it("marca no_confirmado los enviados viejos sin confirmar; respeta el resto", async () => {
     const ahora = new Date("2026-09-06T12:10:00Z"); // 10 min después
     const repo = new RepositorioEnMemoria({
-      tenants: [{ id: "a", nombre: "A", plan: "base", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: T }],
+      tenants: [{ id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: T }],
     });
     // Viejo sin confirmar → debe marcarse.
     await repo.saveMessage(saliente({ id: "viejo" }));
@@ -42,7 +42,7 @@ describe("barrerSinConfirmar", () => {
   it("es idempotente y respeta el umbral configurable", async () => {
     const ahora = new Date(new Date(T).getTime() + UMBRAL_SIN_CONFIRMAR_MS + 1000);
     const repo = new RepositorioEnMemoria({
-      tenants: [{ id: "a", nombre: "A", plan: "base", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: T }],
+      tenants: [{ id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: T }],
     });
     await repo.saveMessage(saliente({ id: "m1" }));
     expect(await barrerSinConfirmar(repo, ahora)).toBe(1);

@@ -188,6 +188,25 @@ sudo journalctl -u factory --no-pager | grep -E "envio\.(fallido|reintento)|entr
 sudo journalctl -u factory --no-pager | grep -c "webhook.recibido"
 ```
 
+### Planes y migración de ids legado
+
+Los planes son `prueba | basico | estandar | pro` con capacidades
+(`salientes`, `entrantes`, `bots`, `agentes`) y límites por override
+(`limitesOverride`). Los ids `base` y `extras` ya no existen: el
+orquestador los lee como `estandar` mientras no se migren, así que el
+**orden seguro es desplegar primero y migrar después**, nunca al revés.
+
+```bash
+# reporte (no escribe)
+GOOGLE_APPLICATION_CREDENTIALS=/etc/cauce-firestore.json node scripts/migrar-planes.mjs
+# aplicar
+GOOGLE_APPLICATION_CREDENTIALS=/etc/cauce-firestore.json node scripts/migrar-planes.mjs --aplicar
+```
+
+En Factory, agrega `CAUCE_FIRESTORE_DB=factory`. Un plan desconocido se
+registra y no se toca. Los 403 por capacidad salen en la bitácora como
+`plan.rechazado`; los cambios como `plan.cambio` y `plan.aplicado`.
+
 ### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)
 
 Dos orquestadores sobre el mismo proyecto Firebase compartirían la base

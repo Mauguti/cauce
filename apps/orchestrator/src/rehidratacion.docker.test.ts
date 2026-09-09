@@ -21,7 +21,7 @@ try {
 const TENANT: Tenant = {
   id: "rehtest",
   nombre: "Rehidratación",
-  plan: "base",
+  plan: "estandar",
   estado: "activo",
   apiKeyHash: "x".repeat(64),
   creadoEn: "2026-09-05T00:00:00Z",

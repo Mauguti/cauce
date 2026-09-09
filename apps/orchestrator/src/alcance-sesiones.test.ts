@@ -32,7 +32,7 @@ function dobleDocker(instancias: { tenantId: string; instanceId: string }[]) {
 describe("sonda de alcance del webhook", () => {
   it("rehidratar() NO sondea; comprobarAlcanceSesiones() sondea una vez por sesión viva", async () => {
     const repo = new RepositorioEnMemoria({
-      tenants: [{ id: "t1", nombre: "T", plan: "base", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z" }],
+      tenants: [{ id: "t1", nombre: "T", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z" }],
     });
     const { docker, llamadas } = dobleDocker([
       { tenantId: "t1", instanceId: "i1" },

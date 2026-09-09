@@ -7,7 +7,7 @@ import { RepositorioEnMemoria } from "./store.ts";
 const KEY = "key-conv-0000000000000000000000";
 function repoConTenant() {
   return new RepositorioEnMemoria({
-    tenants: [{ id: "t", nombre: "T", plan: "base", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2026-09-07T00:00:00Z" }],
+    tenants: [{ id: "t", nombre: "T", plan: "estandar", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2026-09-07T00:00:00Z" }],
   });
 }
 

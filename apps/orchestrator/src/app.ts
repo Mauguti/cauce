@@ -12,7 +12,11 @@ import type { MotorEntrada } from "./entrada/motor.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 import type { VerificadorToken } from "./firebase.ts";
 import type { Provisioning } from "./provisioning.ts";
-import { churnReciente, limitesTenant, pruebaVigente } from "@cauce/core";
+import {
+  churnReciente, limitesTenant, pruebaVigente, capacidadesTenant, tieneCapacidad,
+  mensajeRequierePlan, soloLectura, planDe, normalizarPlan, esPlanConocido, esSubida,
+  PLANES, type Capacidad, type TenantPlan,
+} from "@cauce/core";
 import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
 import { enmascararTelefono, registrar, registrarCadaMs, registrarError } from "./log.ts";
 
@@ -326,7 +330,14 @@ export function crearApp(
     res.json({
       tenantId: tenant.id,
       nombre: tenant.nombre,
-      plan: tenant.plan,
+      // Id normalizado (los legado base/extras se reportan como estandar).
+      plan: normalizarPlan(tenant.plan),
+      planNombre: planDe(tenant).nombre,
+      // Lo que el tenant puede hacer AHORA; el servidor es quien lo aplica.
+      capacidades: capacidadesTenant(tenant),
+      soloLectura: soloLectura(tenant),
+      planPendiente: tenant.planPendiente ?? null,
+      cicloCorteEn: tenant.cicloCorteEn ?? null,
       limites,
       pruebaExpiraEn: tenant.pruebaExpiraEn ?? null,
       pruebaVigente: pruebaVigente(tenant),
@@ -347,6 +358,30 @@ export function crearApp(
       opciones.bitrix?.verConfig(tenantId) ?? null,
     ]);
     return (m ? 1 : 0) + (b ? 1 : 0);
+  }
+
+  /**
+   * 403 con el mensaje literal del plan si el tenant no tiene la
+   * capacidad AHORA (plan o prueba vencida). El servidor decide; la
+   * plataforma solo atenúa.
+   */
+  function requiere(capacidad: Capacidad) {
+    return async (req: Request, res: Response, next: NextFunction) => {
+      const tenant = await repo.getTenant(req.tenantId!);
+      if (!tenant || tieneCapacidad(tenant, capacidad)) {
+        next();
+        return;
+      }
+      const motivo = soloLectura(tenant)
+        ? "Tu prueba terminó y la cuenta está en solo lectura. Contrata un plan para volver a enviar."
+        : mensajeRequierePlan(capacidad);
+      registrar("plan.rechazado", { tenant: tenant.id, capacidad, plan: normalizarPlan(tenant.plan), ruta: `${req.method} ${req.originalUrl.split("?")[0]}` }, "warn");
+      res.status(403).json({ error: motivo, requierePlan: soloLectura(tenant) ? null : planQueHabilitaId(capacidad) });
+    };
+  }
+  function planQueHabilitaId(c: Capacidad): TenantPlan {
+    const orden: TenantPlan[] = ["basico", "estandar", "pro"];
+    return orden.find((p) => PLANES[p].capacidades.includes(c)) ?? "pro";
   }
 
   const tenantRouter = express.Router({ mergeParams: true });
@@ -681,11 +716,11 @@ export function crearApp(
   });
 
   // Disparadores de entrada del tenant: se listan y se reemplazan enteros.
-  tenantRouter.get("/disparadores", async (req, res) => {
+  tenantRouter.get("/disparadores", requiere("bots"), async (req, res) => {
     res.json(await repo.getDisparadores(req.tenantId!));
   });
 
-  tenantRouter.put("/disparadores", async (req, res) => {
+  tenantRouter.put("/disparadores", requiere("bots"), async (req, res) => {
     const lista = req.body;
     if (!Array.isArray(lista)) {
       res.status(400).json({ error: "se espera un arreglo de disparadores" });
@@ -816,7 +851,7 @@ export function crearApp(
 
   // Encola y responde 202 de inmediato; el envío real lo hace el worker
   // de la cola respetando el ritmo por instancia.
-  tenantRouter.post("/instances/:instanceId/send", async (req, res) => {
+  tenantRouter.post("/instances/:instanceId/send", requiere("salientes"), async (req, res) => {
     const sesion = await sesionScopeada(req, res);
     if (!sesion) return;
     if (!opciones.cola) {
@@ -863,7 +898,7 @@ export function crearApp(
   // Reintento manual de un mensaje fallido: re-encola el MISMO mensaje
   // (sin recrear la acción ni esperar otro evento). Solo si la causa era
   // reintentable — un teléfono vacío no se arregla reintentando.
-  tenantRouter.post("/messages/:messageId/retry", async (req, res) => {
+  tenantRouter.post("/messages/:messageId/retry", requiere("salientes"), async (req, res) => {
     if (!opciones.cola) {
       res.status(501).json({ error: "orquestador sin cola de envíos" });
       return;
@@ -980,21 +1015,46 @@ export function crearApp(
       res.status(404).json({ error: "tenant no encontrado" });
       return;
     }
-    const { plan, limiteLineas, limiteConectores } = req.body ?? {};
-    if (plan !== "prueba" && plan !== "base" && plan !== "extras") {
-      res.status(400).json({ error: "plan inválido (prueba|base|extras)" });
+    const { plan, limitesOverride, cicloCorteEn, aplicarAhora } = req.body ?? {};
+    if (typeof plan !== "string" || !esPlanConocido(plan)) {
+      res.status(400).json({ error: "plan inválido (prueba|basico|estandar|pro)" });
       return;
     }
+    const actual = normalizarPlan(tenant.plan) as TenantPlan;
+    const override =
+      limitesOverride === null
+        ? null
+        : limitesOverride && typeof limitesOverride === "object"
+          ? {
+              ...(typeof limitesOverride.lineas === "number" ? { lineas: limitesOverride.lineas } : {}),
+              ...(typeof limitesOverride.conectores === "number" ? { conectores: limitesOverride.conectores } : {}),
+              ...(typeof limitesOverride.agentes === "number" ? { agentes: limitesOverride.agentes } : {}),
+            }
+          : undefined;
+    // A la baja aplica al cierre del ciclo pagado (salvo aplicarAhora);
+    // a la alza, inmediato. Nunca se borra configuración: lo que el plan
+    // nuevo no incluye queda en pausa por capacidad.
+    const esBajada = plan !== actual && !esSubida(actual, plan);
+    const corte = typeof cicloCorteEn === "string" ? cicloCorteEn : tenant.cicloCorteEn ?? null;
+    const difiere = esBajada && !aplicarAhora && corte && new Date(corte) > new Date();
     const actualizado = {
       ...tenant,
-      plan,
+      plan: difiere ? actual : plan,
+      planPendiente: difiere ? { plan, aplicaEn: corte } : null,
+      cicloCorteEn: corte,
       // Al pasar a un plan pagado se limpia la caducidad de prueba.
       pruebaExpiraEn: plan === "prueba" ? tenant.pruebaExpiraEn ?? null : null,
-      ...(typeof limiteLineas === "number" ? { limiteLineas } : {}),
-      ...(typeof limiteConectores === "number" ? { limiteConectores } : {}),
+      ...(override !== undefined ? { limitesOverride: override } : {}),
     };
+    // Los campos deprecados se retiran al tocar el plan: ya viven en el override.
+    delete (actualizado as any).limiteLineas;
+    delete (actualizado as any).limiteConectores;
     await repo.saveTenant(actualizado);
-    res.json({ tenantId: actualizado.id, plan: actualizado.plan });
+    registrar("plan.cambio", {
+      tenant: tenant.id, de: actual, a: plan, aplica: difiere ? `al corte ${corte}` : "ahora",
+      ...(override !== undefined ? { override: JSON.stringify(override) } : {}),
+    });
+    res.json({ tenantId: actualizado.id, plan: actualizado.plan, planPendiente: actualizado.planPendiente });
   });
 
   // Último recurso: cualquier excepción no manejada en una ruta queda en

@@ -26,7 +26,7 @@ describe("webhook entrante → motor de entrada", () => {
   it("primer contacto: guarda conversación, responde inmediato y actualiza monday", async () => {
     const repo = new RepositorioEnMemoria({
       tenants: [
-        { id: "demo", nombre: "Demo", plan: "base", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-06T00:00:00Z" },
+        { id: "demo", nombre: "Demo", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-06T00:00:00Z" },
       ],
       instances: [
         { id: "i1", tenantId: "demo", transportType: "evolution", contenedorId: "c1", numero: null, estado: "connected", ultimoHeartbeat: null },

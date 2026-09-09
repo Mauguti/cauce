@@ -6,6 +6,7 @@ import { ColaEnvios } from "./cola.ts";
 import { DockerManager } from "./docker/manager.ts";
 import { GestorSesiones } from "./sesiones.ts";
 import { barrerSinConfirmar } from "./confirmaciones.ts";
+import { aplicarPlanesVencidos } from "./planes.ts";
 import { RepositorioEnMemoria, type Repositorio } from "./store.ts";
 import { RepositorioFirestore } from "./store-firestore.ts";
 import { ConectorMonday } from "./monday/conector.ts";
@@ -35,7 +36,7 @@ const usaFirestore = Boolean(
 const tenantDemo: Tenant = {
   id: "demo",
   nombre: "Tenant demo",
-  plan: "base",
+  plan: "estandar",
   estado: "activo",
   apiKeyHash: hashApiKey(apiKey),
   creadoEn: new Date().toISOString(),
@@ -130,6 +131,19 @@ const barrerConfirmaciones = async () => {
 };
 void barrerConfirmaciones();
 setInterval(barrerConfirmaciones, 60_000);
+
+// Cambios de plan a la baja pendientes: aplican al cierre del ciclo pagado.
+// Cada 5 min; idempotente.
+const aplicarPlanesPendientes = async () => {
+  try {
+    const n = await aplicarPlanesVencidos(repo);
+    if (n > 0) console.log(`planes pendientes aplicados: ${n}`);
+  } catch (err: any) {
+    console.warn(`barrido de planes pendientes falló: ${err?.message}`);
+  }
+};
+void aplicarPlanesPendientes();
+setInterval(aplicarPlanesPendientes, 5 * 60_000);
 
 crearApp(repo, gestor, {
   corsOrigenes,

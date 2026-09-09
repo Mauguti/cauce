@@ -14,7 +14,7 @@ const hayEmulador = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const tenant: Tenant = {
   id: "t-fs",
   nombre: "Firestore test",
-  plan: "base",
+  plan: "estandar",
   estado: "activo",
   apiKeyHash: "a".repeat(64),
   creadoEn: "2026-09-06T00:00:00Z",

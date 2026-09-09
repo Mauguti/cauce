@@ -11,11 +11,77 @@ export type InstanceId = string;
 export type MessageId = string;
 
 /**
- * Planes (ver bloque 8). `prueba` caduca; `base` es el pago mínimo;
- * `extras` lleva límites contratados explícitos.
+ * Planes. Un plan define QUÉ PUEDE HACER el tenant (capacidades) y sus
+ * límites por defecto. `prueba` caduca a los 14 días y cae a solo
+ * lectura; `basico`, `estandar` y `pro` son los planes vendidos.
+ *
+ * Los ids antiguos `base` y `extras` ya no existen en el modelo: se
+ * migran a `estandar` (extras además con límites por override). Mientras
+ * la migración no haya corrido, `normalizarPlan` los traduce al leer, así
+ * que el código nuevo funciona con datos viejos y viceversa nunca hace
+ * falta.
  */
-export type TenantPlan = "prueba" | "base" | "extras";
+export type TenantPlan = "prueba" | "basico" | "estandar" | "pro";
 export type TenantEstado = "activo" | "suspendido";
+
+/**
+ * Capacidades que un plan habilita:
+ * - salientes: mensajes disparados desde el CRM (automatizaciones) y envíos manuales.
+ * - entrantes: los mensajes que llegan se vinculan al CRM (write-back a monday/Bitrix).
+ * - bots: respuestas automáticas a entrantes (disparadores: primer contacto, palabra clave…).
+ * - agentes: agentes de IA.
+ */
+export type Capacidad = "salientes" | "entrantes" | "bots" | "agentes";
+
+export interface DefinicionPlan {
+  nombre: string;
+  capacidades: readonly Capacidad[];
+  /** Límites por defecto; `Tenant.limitesOverride` los sustituye. */
+  limites: { lineas: number; conectores: number; agentes: number };
+}
+
+export const PLANES: Record<TenantPlan, DefinicionPlan> = {
+  prueba: {
+    nombre: "Prueba",
+    // Lo mismo que Estándar, sin agentes: el agente consume API real desde el primer mensaje.
+    capacidades: ["salientes", "entrantes", "bots"],
+    limites: { lineas: 1, conectores: 1, agentes: 0 },
+  },
+  basico: {
+    nombre: "Básico",
+    capacidades: ["salientes"],
+    limites: { lineas: 1, conectores: 1, agentes: 0 },
+  },
+  estandar: {
+    nombre: "Estándar",
+    capacidades: ["salientes", "entrantes", "bots"],
+    limites: { lineas: 1, conectores: 1, agentes: 0 },
+  },
+  pro: {
+    nombre: "Pro",
+    capacidades: ["salientes", "entrantes", "bots", "agentes"],
+    limites: { lineas: 1, conectores: 1, agentes: 1 },
+  },
+};
+
+/** Ids de plan que existieron antes del modelo de capacidades. */
+export const PLANES_LEGADO = ["base", "extras"] as const;
+
+/**
+ * Traduce un plan guardado a uno del modelo actual. `base` y `extras`
+ * eran, en capacidades, exactamente Estándar (extras con límites
+ * contratados, que ahora viven en `limitesOverride`). Un id desconocido
+ * se devuelve tal cual para que quien lo lea lo registre, no lo oculte.
+ */
+export function normalizarPlan(plan: string): TenantPlan | string {
+  if (plan === "base" || plan === "extras") return "estandar";
+  return plan;
+}
+
+/** ¿Es un id de plan del modelo actual? */
+export function esPlanConocido(plan: string): plan is TenantPlan {
+  return plan in PLANES;
+}
 
 /** Documento en `tenants/{tenantId}` */
 export interface Tenant {
@@ -28,9 +94,22 @@ export interface Tenant {
    * guarda; el tenant se deriva de la key presentada, no del path.
    */
   apiKeyHash: string;
-  /** Máximo de líneas (instancias). Ausente → según plan. */
+  /**
+   * Límites contratados que sustituyen a los del plan. Null/ausente en
+   * casi todos los tenants; solo se llena en contratos especiales.
+   */
+  limitesOverride?: { lineas?: number; conectores?: number; agentes?: number } | null;
+  /**
+   * Cambio de plan a la baja pendiente: aplica al cierre del ciclo pagado
+   * (`aplicaEn`, ISO 8601), no al momento del clic. A la alza aplica
+   * inmediato y este campo queda null.
+   */
+  planPendiente?: { plan: TenantPlan; aplicaEn: string } | null;
+  /** ISO 8601 de la fecha de corte del ciclo pagado en curso; null si no aplica. */
+  cicloCorteEn?: string | null;
+  /** @deprecated Migrado a `limitesOverride.lineas`. Se lee solo por compatibilidad. */
   limiteLineas?: number;
-  /** Máximo de conectores CRM. Ausente → según plan. */
+  /** @deprecated Migrado a `limitesOverride.conectores`. Se lee solo por compatibilidad. */
   limiteConectores?: number;
   /**
    * Fin de la prueba (ISO 8601). Solo aplica al plan `prueba`;
@@ -58,34 +137,84 @@ export interface Tenant {
   creadoEn: string;
 }
 
-/** Límites por plan. `extras` se sobreescribe con los campos del tenant. */
-export const LIMITES_PLAN: Record<
-  TenantPlan,
-  { lineas: number; conectores: number }
-> = {
-  prueba: { lineas: 1, conectores: 1 },
-  base: { lineas: 1, conectores: 1 },
-  extras: { lineas: 99, conectores: 99 },
-};
-
 /** Duración de la prueba, en días. */
 export const DIAS_PRUEBA = 14;
 
-/** Límites efectivos del tenant (campos explícitos o los del plan). */
+/** Definición efectiva del plan del tenant; tolera ids legado sin migrar. */
+export function planDe(t: Pick<Tenant, "plan">): DefinicionPlan {
+  const id = normalizarPlan(t.plan);
+  return PLANES[esPlanConocido(id) ? id : "basico"];
+}
+
+/**
+ * Límites efectivos del tenant: override contratado, o los del plan.
+ * Los campos deprecados `limiteLineas`/`limiteConectores` se siguen
+ * leyendo hasta que la migración los mueva a `limitesOverride`.
+ */
 export function limitesTenant(t: Tenant): {
   lineas: number;
   conectores: number;
+  agentes: number;
 } {
+  const base = planDe(t).limites;
+  const o = t.limitesOverride ?? {};
   return {
-    lineas: t.limiteLineas ?? LIMITES_PLAN[t.plan].lineas,
-    conectores: t.limiteConectores ?? LIMITES_PLAN[t.plan].conectores,
+    lineas: o.lineas ?? t.limiteLineas ?? base.lineas,
+    conectores: o.conectores ?? t.limiteConectores ?? base.conectores,
+    agentes: o.agentes ?? base.agentes,
   };
 }
 
 /** ¿El tenant está vigente? Falso solo si su prueba ya caducó. */
 export function pruebaVigente(t: Tenant, ahora: Date = new Date()): boolean {
-  if (t.plan !== "prueba" || !t.pruebaExpiraEn) return true;
+  if (normalizarPlan(t.plan) !== "prueba" || !t.pruebaExpiraEn) return true;
   return ahora < new Date(t.pruebaExpiraEn);
+}
+
+/**
+ * ¿El tenant está en solo lectura? Prueba vencida: la bandeja y el
+ * historial se ven, el envío se apaga y los bots se pausan. La
+ * configuración no se borra.
+ */
+export function soloLectura(t: Tenant, ahora: Date = new Date()): boolean {
+  return !pruebaVigente(t, ahora);
+}
+
+/**
+ * Capacidades activas del tenant AHORA: las del plan, salvo que esté en
+ * solo lectura (prueba vencida), en cuyo caso ninguna. Bajar de plan no
+ * borra configuración: lo que el plan nuevo no incluye queda en pausa.
+ */
+export function capacidadesTenant(t: Tenant, ahora: Date = new Date()): Capacidad[] {
+  if (soloLectura(t, ahora)) return [];
+  return [...planDe(t).capacidades];
+}
+
+export function tieneCapacidad(t: Tenant, c: Capacidad, ahora: Date = new Date()): boolean {
+  return capacidadesTenant(t, ahora).includes(c);
+}
+
+/** El plan que habilita una capacidad, para el mensaje de "requiere plan X". */
+export function planQueHabilita(c: Capacidad): TenantPlan {
+  const orden: TenantPlan[] = ["basico", "estandar", "pro"];
+  return orden.find((p) => PLANES[p].capacidades.includes(c)) ?? "pro";
+}
+
+/** Mensaje literal para un 403 por capacidad ausente. */
+export function mensajeRequierePlan(c: Capacidad): string {
+  const nombres: Record<Capacidad, string> = {
+    salientes: "Los mensajes salientes",
+    entrantes: "Las automatizaciones de entrantes",
+    bots: "Los flujos de bots",
+    agentes: "Los agentes de IA",
+  };
+  return `${nombres[c]} vienen en el plan ${PLANES[planQueHabilita(c)].nombre}.`;
+}
+
+/** Orden de los planes vendidos, para saber si un cambio es a la alza o a la baja. */
+export const ORDEN_PLANES: readonly TenantPlan[] = ["prueba", "basico", "estandar", "pro"];
+export function esSubida(de: TenantPlan, a: TenantPlan): boolean {
+  return ORDEN_PLANES.indexOf(a) > ORDEN_PLANES.indexOf(de);
 }
 
 /** Ventana y umbral para considerar que un tenant está haciendo churn. */

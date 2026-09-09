@@ -47,7 +47,7 @@ export class ErrorNoAutorizado extends Error {
 export interface Yo {
   tenantId: string;
   nombre: string;
-  plan: "prueba" | "base" | "extras";
+  plan: "prueba" | "basico" | "estandar" | "pro";
   limites: { lineas: number; conectores: number };
   pruebaExpiraEn: string | null;
   pruebaVigente: boolean;
