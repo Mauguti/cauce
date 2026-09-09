@@ -304,7 +304,11 @@ export class DockerManager {
         DATABASE_CONNECTION_URI: `postgresql://${DB_USUARIO}:${password}@${DB_CONTENEDOR}:5432/${bd}?schema=public`,
         DATABASE_CONNECTION_CLIENT_NAME: nombre,
         DATABASE_SAVE_DATA_INSTANCE: "true",
-        DATABASE_SAVE_MESSAGE_UPDATE: "false",
+        // Debe ir en "true": en v2.3.7 procesar/guardar el update es lo que
+        // habilita el evento MESSAGES_UPDATE (SERVER_ACK). En "false" el
+        // saliente nunca recibe confirmación y queda "sin confirmar" aunque
+        // sí se entregó. Solo aplica a sesiones NUEVAS (contenedores nuevos).
+        DATABASE_SAVE_MESSAGE_UPDATE: "true",
         CACHE_LOCAL_ENABLED: "true",
         CACHE_REDIS_ENABLED: "false",
         // Nombre que aparece en WhatsApp → Dispositivos vinculados. Es la

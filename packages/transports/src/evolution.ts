@@ -130,6 +130,11 @@ export class EvolutionTransport implements MessageTransport {
    * contra v2.3.7 real (POST /webhook/set con objeto `webhook` anidado;
    * queda persistido y sobrevive reinicios del contenedor).
    */
+  /** Re-registra el webhook sin reconectar (para rehidratación). */
+  async asegurarWebhook(): Promise<void> {
+    await this.#registrarWebhook();
+  }
+
   async #registrarWebhook(): Promise<void> {
     if (!this.#webhookUrl) return;
     const res = await this.#llamar("POST", `/webhook/set/${this.#instanceName}`, {

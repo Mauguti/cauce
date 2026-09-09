@@ -45,6 +45,13 @@ export interface MessageTransport {
   disconnect(): Promise<void>;
   status(): Promise<TransportStatus>;
   /**
+   * Registra (o re-registra) el webhook de eventos, sin reconectar la
+   * sesión. Necesario al rehidratar: un proceso que reinicia no vuelve a
+   * pasar por connect(), pero el webhook (p. ej. MESSAGES_UPDATE) debe
+   * quedar activo. Idempotente; opcional para transportes sin webhook.
+   */
+  asegurarWebhook?(): Promise<void>;
+  /**
    * Número (E.164) de la cuenta conectada, o null si no se conoce (sesión
    * no conectada, o el transporte no lo expone).
    */

@@ -204,6 +204,17 @@ export function crearApp(
       res.status(404).json({ error: "instancia desconocida" });
       return;
     }
+    // Diagnóstico: qué evento llega y (para updates) si el id casa. Con
+    // CAUCE_LOG_WEBHOOKS=1 vuelca el payload crudo completo — para partir
+    // en dos el bug de "sin confirmar" en la EC2 sin adivinar.
+    const evento = req.body?.event;
+    if (process.env.CAUCE_LOG_WEBHOOKS) {
+      console.log(
+        `[webhook ${instanceId}] ${JSON.stringify(req.body).slice(0, 2000)}`,
+      );
+    } else {
+      console.log(`[webhook ${instanceId}] event=${evento}`);
+    }
     // Confirmación de entrega de un saliente (MESSAGES_UPDATE): registra la
     // transición real. Sin SERVER_ACK, el barrido lo pasará a no_confirmado.
     const actualizacion = normalizarActualizacion(req.body);
@@ -211,6 +222,9 @@ export function crearApp(
       const m = await repo.getMessagePorExternalId(
         tenantId!,
         actualizacion.externalId,
+      );
+      console.log(
+        `[webhook ${instanceId}] messages.update externalId=${actualizacion.externalId} ack=${actualizacion.ack} → ${m ? `mensaje ${m.id}` : "SIN COINCIDENCIA (id no casa con ningún enviado)"}`,
       );
       if (m) {
         await repo.saveMessage(

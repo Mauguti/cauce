@@ -185,6 +185,19 @@ export class GestorSesiones {
         webhookToken: enDocker.webhookToken,
       });
       const estado = await transport.status();
+      // Re-registra el webhook: al rehidratar no se pasa por connect(),
+      // donde normalmente se hace el /webhook/set. Sin esto, una sesión
+      // viva conserva los eventos que tenía al conectarse por primera vez
+      // (p. ej. le faltaría MESSAGES_UPDATE si se conectó antes de que se
+      // agregara). Best-effort: un fallo aquí no debe abortar la
+      // rehidratación de las demás.
+      try {
+        await transport.asegurarWebhook?.();
+      } catch (err: any) {
+        console.warn(
+          `no se pudo re-registrar el webhook de ${enDocker.instanceId}: ${err?.message}`,
+        );
+      }
       await this.#repo.saveInstance({
         id: enDocker.instanceId,
         tenantId: enDocker.tenantId,

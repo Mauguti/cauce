@@ -53,25 +53,39 @@ describe("barrerSinConfirmar", () => {
 describe("sesionPareceDegradada", () => {
   const m = (id: string, estado: Message["estado"]): Message =>
     saliente({ id, estado, timestamp: `2026-09-06T12:0${id}:00Z` });
+  const confirmado = (id: string): Message =>
+    saliente({ id, estado: "enviado", confirmadoEn: `2026-09-06T12:0${id}:30Z`, timestamp: `2026-09-06T12:0${id}:00Z` });
 
-  it("verdadero con >= 3 salientes sin confirmar recientes", () => {
+  it("verdadero con >= 3 sin confirmar recientes SI el canal confirmó antes", () => {
+    // Un envío previo confirmado prueba que el canal funciona; la racha
+    // de no_confirmados que sigue sí es degradación real.
+    expect(
+      sesionPareceDegradada([
+        confirmado("1"),
+        m("2", "no_confirmado"),
+        m("3", "no_confirmado"),
+        m("4", "no_confirmado"),
+      ]),
+    ).toBe(true);
+  });
+
+  it("FALSO si NUNCA se confirmó nada (tubería rota, no número degradado)", () => {
+    // El caso del falso positivo en producción: 25 sin confirmar y 0
+    // confirmados => es el webhook/emisión, no el número. No se alerta.
     expect(
       sesionPareceDegradada([
         m("1", "no_confirmado"),
         m("2", "no_confirmado"),
         m("3", "no_confirmado"),
-      ]),
-    ).toBe(true);
-  });
-
-  it("falso si los envíos se confirmaron o no hay suficientes", () => {
-    expect(
-      sesionPareceDegradada([
-        m("1", "enviado"),
-        m("2", "no_confirmado"),
-        m("3", "enviado"),
+        m("4", "no_confirmado"),
       ]),
     ).toBe(false);
-    expect(sesionPareceDegradada([m("1", "no_confirmado")])).toBe(false);
+  });
+
+  it("falso si los envíos recientes se confirmaron o no hay suficientes", () => {
+    expect(
+      sesionPareceDegradada([confirmado("1"), confirmado("2"), confirmado("3")]),
+    ).toBe(false);
+    expect(sesionPareceDegradada([confirmado("1"), m("2", "no_confirmado")])).toBe(false);
   });
 });

@@ -154,13 +154,23 @@ export function sesionPareceDegradada(
   mensajes: Message[],
   umbral: number = SESION_DEGRADADA_UMBRAL,
 ): boolean {
-  const intentados = mensajes
+  const salientes = mensajes.filter((m) => m.direccion === "out");
+  // Calibración: "no confirmado" solo es evidencia de degradación si el
+  // canal de confirmación (MESSAGES_UPDATE/SERVER_ACK) demostrablemente
+  // funciona para esta instancia — es decir, si ALGÚN saliente llegó a
+  // confirmarse. Si NUNCA se confirmó nada, la ausencia de confirmación
+  // apunta a la tubería (webhook mal registrado, evento suprimido), no a
+  // un número quemado; en ese caso no afirmamos degradación (evita el
+  // falso positivo que manda a desconectar un número sano).
+  const algunaVezConfirmado = salientes.some((m) => Boolean(m.confirmadoEn));
+  if (!algunaVezConfirmado) return false;
+
+  const intentados = salientes
     .filter(
       (m) =>
-        m.direccion === "out" &&
-        (m.estado === "enviado" ||
-          m.estado === "no_confirmado" ||
-          m.estado === "fallido"),
+        m.estado === "enviado" ||
+        m.estado === "no_confirmado" ||
+        m.estado === "fallido",
     )
     .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
     .slice(0, Math.max(umbral, 5));
