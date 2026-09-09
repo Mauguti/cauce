@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Command } from "lucide-react";
 import {
   esDev,
   entrarDev,
@@ -43,62 +44,69 @@ export function Login() {
   };
 
   return (
-    <main className="consola consola--angosta">
-      <h1>Digsol Factory</h1>
-      <p className="consola__sub">
-        {modo === "registrar"
-          ? "Crea tu cuenta para empezar."
-          : "Entra a tu cuenta."}
-        {esDev && " (modo desarrollo)"}
-      </p>
+    <main className="flex min-h-screen items-center justify-center bg-sys-surface px-4 font-sans">
+      <div className="w-full max-w-sm rounded-lg border border-sys-border bg-sys-bg p-8 shadow-card">
+        <div className="mb-1 flex items-center gap-2 text-xl font-bold tracking-tight text-sys-text">
+          <Command className="h-6 w-6 text-accent-blue" strokeWidth={2.5} />
+          <span>
+            Digsol<span className="text-sys-muted">/</span>Factory
+          </span>
+        </div>
+        <p className="mb-6 text-sm text-sys-muted">
+          {modo === "registrar"
+            ? "Crea tu cuenta para empezar."
+            : "Entra a tu cuenta."}
+          {esDev && " (modo desarrollo)"}
+        </p>
 
-      <form className="login" onSubmit={enviar}>
-        <input
-          className="campo"
-          type="email"
-          placeholder="tu@correo.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoFocus
-          required
-        />
-        {!esDev && (
+        <form className="flex flex-col gap-3" onSubmit={enviar}>
           <input
             className="campo"
-            type="password"
-            placeholder="Contraseña"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
+            type="email"
+            placeholder="tu@correo.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoFocus
             required
-            minLength={6}
           />
+          {!esDev && (
+            <input
+              className="campo"
+              type="password"
+              placeholder="Contraseña"
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              required
+              minLength={6}
+            />
+          )}
+          <button className="boton boton--primario" type="submit" disabled={ocupado}>
+            {esDev
+              ? "Entrar (dev)"
+              : modo === "registrar"
+                ? "Crear cuenta"
+                : "Entrar"}
+          </button>
+        </form>
+
+        {!esDev && (
+          <>
+            <button className="boton mt-2 w-full" onClick={conGoogle}>
+              Continuar con Google
+            </button>
+            <button
+              className="mt-3 w-full text-sm text-accent-blue underline"
+              onClick={() => setModo(modo === "entrar" ? "registrar" : "entrar")}
+            >
+              {modo === "entrar"
+                ? "¿No tienes cuenta? Regístrate"
+                : "¿Ya tienes cuenta? Entra"}
+            </button>
+          </>
         )}
-        <button className="boton boton--primario" type="submit" disabled={ocupado}>
-          {esDev
-            ? "Entrar (dev)"
-            : modo === "registrar"
-              ? "Crear cuenta"
-              : "Entrar"}
-        </button>
-      </form>
 
-      {!esDev && (
-        <>
-          <button className="boton login__google" onClick={conGoogle}>
-            Continuar con Google
-          </button>
-          <button
-            className="login__cambiar"
-            onClick={() => setModo(modo === "entrar" ? "registrar" : "entrar")}
-          >
-            {modo === "entrar"
-              ? "¿No tienes cuenta? Regístrate"
-              : "¿Ya tienes cuenta? Entra"}
-          </button>
-        </>
-      )}
-
-      {error && <p className="mensaje-error">{error}</p>}
+        {error && <p className="mt-3 mensaje-error">{error}</p>}
+      </div>
     </main>
   );
 }

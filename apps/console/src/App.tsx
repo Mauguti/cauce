@@ -167,14 +167,14 @@ export default function App() {
   return (
     <div className="app">
       {banner}
-      <nav className="flex items-center gap-6 border-b border-sys-border bg-sys-bg px-6 py-3">
-        <span className="flex items-center gap-2 text-lg font-bold tracking-tight">
+      <nav className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-sys-border bg-sys-bg px-4 py-3 sm:px-6">
+        <span className="flex shrink-0 items-center gap-2 text-lg font-bold tracking-tight">
           <Command className="h-5 w-5 text-accent-blue" strokeWidth={2.5} />
           <span>
             Digsol<span className="text-sys-muted">/</span>Factory
           </span>
         </span>
-        <div className="flex flex-1 gap-1">
+        <div className="flex flex-wrap gap-1">
           {(["inicio", "sesiones", "conexiones", "acciones"] as Seccion[]).map(
             (s) => (
               <button
@@ -197,7 +197,7 @@ export default function App() {
             ),
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2 sm:gap-3">
           <button
             className={`rounded border px-2 py-1 text-xs font-medium transition-colors ${
               yo.plan === "prueba" && !yo.pruebaVigente
@@ -209,7 +209,7 @@ export default function App() {
           >
             {etiquetaPlan(yo)}
           </button>
-          <span className="text-sm text-sys-muted">{sesion.email ?? yo.nombre}</span>
+          <span className="hidden text-sm text-sys-muted md:inline">{sesion.email ?? yo.nombre}</span>
           <button
             className="rounded border border-sys-border px-3 py-1.5 text-sm transition-colors hover:bg-sys-surface"
             onClick={() => sesion.cerrar()}

@@ -390,11 +390,13 @@ function Contador(props: {
 }) {
   return (
     <button
-      className={`contador${props.activo ? " contador--activo" : ""}${props.destacado ? " contador--alerta" : ""}`}
       onClick={props.onClick}
+      className={`flex min-w-[120px] flex-1 flex-col gap-1 rounded-lg border bg-sys-bg p-4 text-left shadow-clean transition-colors hover:bg-sys-surface ${
+        props.activo ? "border-accent-blue ring-1 ring-accent-blue" : "border-sys-border"
+      } ${props.destacado ? "border-l-4 border-l-accent-orange" : ""}`}
     >
-      <span className="contador__n">{props.n}</span>
-      <span className="contador__etq">{props.etq}</span>
+      <span className="text-3xl font-bold leading-none text-sys-text">{props.n}</span>
+      <span className="text-sm text-sys-muted">{props.etq}</span>
     </button>
   );
 }
