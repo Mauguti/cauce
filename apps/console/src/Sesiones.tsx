@@ -181,59 +181,67 @@ export function Sesiones(props: {
           </p>
         </div>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Número</th>
-              <th>Estado</th>
-              <th>Último heartbeat</th>
-              <th aria-label="acciones" />
-            </tr>
-          </thead>
-          <tbody>
-            {instancias.map((inst) => (
-              <tr key={inst.id}>
-                <td className="celda-numero">
-                  {inst.numero ?? <span className="tenue">Escanea el QR para vincular</span>}
-                </td>
-                <td>
-                  <span className={`estado estado--${inst.estado}`}>
-                    {ETIQUETAS[inst.estado]}
-                  </span>
-                </td>
-                <td className="celda-heartbeat">
-                  {inst.ultimoHeartbeat
-                    ? new Date(inst.ultimoHeartbeat).toLocaleTimeString("es-MX")
-                    : "—"}
-                </td>
-                <td className="celda-acciones">
-                  {inst.estado === "qr" && (
-                    <button className="boton" onClick={() => setQrDe(inst.id)}>
-                      Ver QR
-                    </button>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {instancias.map((inst) => (
+            <div
+              key={inst.id}
+              className="flex flex-col gap-3 rounded-lg border border-sys-border bg-sys-bg p-4 shadow-card"
+            >
+              {/* Cabecera: el número es el título; el estado va debajo,
+                  jerarquizado, con su FORMA (punto/aro) heredada de .estado. */}
+              <div className="flex flex-col gap-2">
+                <div className="font-mono text-base font-semibold text-sys-text">
+                  {inst.numero ?? (
+                    <span className="font-sans text-sm font-normal text-sys-muted">
+                      Escanea el QR para vincular
+                    </span>
                   )}
-                  {inst.estado === "connected" && (
-                    <button className="boton" onClick={() => props.alAbrir(inst.id)}>
-                      Conversaciones
-                    </button>
-                  )}
-                  {inst.estado === "disconnected" ? (
-                    <button className="boton" onClick={() => reconectar(inst.id)}>
-                      Reconectar
-                    </button>
-                  ) : (
-                    <button className="boton" onClick={() => setADesconectar(inst)}>
-                      Desconectar WhatsApp
-                    </button>
-                  )}
-                  <button className="boton" onClick={() => setAEliminar(inst)}>
-                    Eliminar
+                </div>
+                <span className={`estado estado--${inst.estado}`}>
+                  {ETIQUETAS[inst.estado]}
+                </span>
+              </div>
+
+              {/* Heartbeat: metadato secundario, tenue y en letra menor. */}
+              <p className="text-xs text-sys-muted">
+                Último heartbeat:{" "}
+                {inst.ultimoHeartbeat
+                  ? new Date(inst.ultimoHeartbeat).toLocaleTimeString("es-MX")
+                  : "—"}
+              </p>
+
+              {/* Acciones agrupadas al pie; Eliminar (destructiva) separada
+                  a la derecha y marcada con .boton--peligro. */}
+              <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-sys-border pt-3">
+                {inst.estado === "qr" && (
+                  <button className="boton" onClick={() => setQrDe(inst.id)}>
+                    Ver QR
                   </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                )}
+                {inst.estado === "connected" && (
+                  <button className="boton" onClick={() => props.alAbrir(inst.id)}>
+                    Conversaciones
+                  </button>
+                )}
+                {inst.estado === "disconnected" ? (
+                  <button className="boton" onClick={() => reconectar(inst.id)}>
+                    Reconectar
+                  </button>
+                ) : (
+                  <button className="boton" onClick={() => setADesconectar(inst)}>
+                    Desconectar WhatsApp
+                  </button>
+                )}
+                <button
+                  className="boton boton--peligro ml-auto"
+                  onClick={() => setAEliminar(inst)}
+                >
+                  Eliminar
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
 
       {qrDe && (
