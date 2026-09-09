@@ -1,5 +1,28 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { DockerManager, RED } from "./manager.ts";
+import { createServer } from "node:http";
+import { DockerManager, RED, comandoAlcance, interpretarAlcance } from "./manager.ts";
+
+describe("alcance del webhook (puro)", () => {
+  it("arma un sh con getent y wget contra /health", () => {
+    const [sh, c, script] = comandoAlcance("http://host.docker.internal:3001/");
+    expect(sh).toBe("sh");
+    expect(c).toBe("-c");
+    expect(script).toContain("getent hosts host.docker.internal");
+    expect(script).toContain('wget -q -O - -T 4 "http://host.docker.internal:3001/health"');
+  });
+
+  it("interpreta ok, nombre sin http, y nombre que no resuelve", () => {
+    expect(interpretarAlcance("resuelve=172.17.0.1\nhttp=ok\n")).toMatchObject({
+      ok: true, resuelve: "172.17.0.1",
+    });
+    const sinHttp = interpretarAlcance("resuelve=172.17.0.1\nhttp=fallo\n");
+    expect(sinHttp.ok).toBe(false);
+    expect(sinHttp.detalle).toMatch(/firewall/);
+    const noResuelve = interpretarAlcance("resuelve=?\nhttp=fallo\n");
+    expect(noResuelve).toMatchObject({ ok: false, resuelve: null });
+    expect(noResuelve.detalle).toMatch(/no resuelve/);
+  });
+});
 
 /**
  * Integración contra Docker real. Se omiten si no hay daemon corriendo.
@@ -36,6 +59,31 @@ describe.skipIf(!manager.disponible)("DockerManager (integración)", () => {
       await docker().eliminarVolumen(vol);
     }
   });
+
+  it("verifica desde dentro del contenedor si alcanza al orquestador (host-gateway)", async () => {
+    // Servidor /health en el host, puerto efímero, todas las interfaces.
+    const servidor = createServer((_req, res) => res.end('{"ok":true}'));
+    await new Promise<void>((r) => servidor.listen(0, "0.0.0.0", () => r()));
+    const puerto = (servidor.address() as { port: number }).port;
+    try {
+      const id = await docker().lanzarContenedor({
+        nombre: `cauce-test-alcance-${Date.now()}`,
+        imagen: IMAGEN_PRUEBA,
+        cmd: ["sleep", "300"],
+      });
+      creados.push(id);
+      const ok = await docker().verificarAlcance(id, `http://host.docker.internal:${puerto}`);
+      expect(ok.ok).toBe(true);
+      expect(ok.resuelve).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+      // Puerto sin nadie escuchando: el nombre resuelve pero /health no responde.
+      const fallo = await docker().verificarAlcance(id, "http://host.docker.internal:1");
+      expect(fallo.ok).toBe(false);
+      expect(fallo.detalle).toMatch(/firewall/);
+      await docker().detener(id);
+    } finally {
+      servidor.close();
+    }
+  }, 60_000);
 
   it("crea la red cauce-net de forma idempotente", async () => {
     await docker().asegurarRed();

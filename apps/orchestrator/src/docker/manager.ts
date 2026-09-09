@@ -18,6 +18,48 @@ const LABEL_DB_PASSWORD = "cauce.db.password";
 
 export type EstadoContenedor = "corriendo" | "detenido" | "ausente";
 
+export interface ResultadoAlcance {
+  /** true si `GET <url>/health` respondió desde dentro del contenedor. */
+  ok: boolean;
+  /** IP a la que resolvió el host de la URL dentro del contenedor; null si no resolvió. */
+  resuelve: string | null;
+  detalle: string;
+}
+
+/**
+ * Comando de shell que corre dentro del contenedor (Alpine/busybox: solo
+ * `sh`, `getent` y `wget -T`). Pura, para probarla sin Docker.
+ */
+export function comandoAlcance(url: string): string[] {
+  const base = url.replace(/\/$/, "");
+  const host = new URL(base).hostname;
+  // getent (Alpine con musl-utils, como la imagen de Evolution) y, si no
+  // está (busybox pelado), la última línea "Address" de nslookup, que es
+  // la respuesta (la primera es el servidor DNS, con :53).
+  const script =
+    `r=$(getent hosts ${host} 2>/dev/null | awk '{print $1}' | head -1); ` +
+    `[ -z "$r" ] && r=$(nslookup ${host} 2>/dev/null | awk '/^Address/ {a=$2} END {sub(/:53$/, "", a); print a}'); ` +
+    `echo "resuelve=\${r:-?}"; ` +
+    `if wget -q -O - -T 4 "${base}/health" >/dev/null 2>&1; then echo http=ok; else echo http=fallo; fi`;
+  return ["sh", "-c", script];
+}
+
+/** Pura: interpreta la salida de `comandoAlcance`. */
+export function interpretarAlcance(salida: string): ResultadoAlcance {
+  const limpia = salida.replace(/[^\x20-\x7e\n]/g, "");
+  const resuelve = /resuelve=(\S+)/.exec(limpia)?.[1];
+  const ok = /http=ok/.test(limpia);
+  return {
+    ok,
+    resuelve: resuelve && resuelve !== "?" ? resuelve : null,
+    detalle: ok
+      ? "health respondió desde el contenedor"
+      : resuelve && resuelve !== "?"
+        ? "el nombre resuelve pero /health no responde: revisa firewall del host (ufw) y el puerto de CAUCE_URL_WEBHOOKS"
+        : "el nombre no resuelve dentro del contenedor",
+  };
+}
+
 export interface ContenedorSpec {
   nombre: string;
   imagen: string;
@@ -208,6 +250,23 @@ export class DockerManager {
     ]);
     if (salida.includes("1")) return;
     await this.#exec(DB_CONTENEDOR, ["createdb", "-U", DB_USUARIO, nombre]);
+  }
+
+  /**
+   * Comprueba, DESDE DENTRO del contenedor, que el orquestador es
+   * alcanzable en `url` (la base de los webhooks): resuelve el nombre y
+   * pide `/health`. Es la prueba que faltaba: `host.docker.internal` se
+   * agrega con host-gateway al crear, pero un firewall del host (ufw) o
+   * un puerto distinto al configurado dejan los webhooks sin llegar en
+   * silencio. Nunca lanza: devuelve el resultado para la bitácora.
+   */
+  async verificarAlcance(contenedorId: string, url: string): Promise<ResultadoAlcance> {
+    try {
+      const salida = await this.#exec(contenedorId, comandoAlcance(url));
+      return interpretarAlcance(salida);
+    } catch (err: any) {
+      return { ok: false, resuelve: null, detalle: `exec falló: ${err?.message ?? String(err)}` };
+    }
   }
 
   async #exec(nombreCont: string, cmd: string[]): Promise<string> {

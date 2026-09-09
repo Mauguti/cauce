@@ -163,6 +163,20 @@ Eventos: `tenant.provisionar`, `instancia.crear|estado|reconectar|desconectar|el
 `entrada.motor|monday|bitrix`, `auth.rechazada`, `prueba.vencida`, `http.error`.
 Los teléfonos van enmascarados (`+52••••5347`). `CAUCE_LOG_WEBHOOKS=1` agrega el payload crudo a `webhook.recibido`.
 
+Al crear o rehidratar una instancia, el orquestador comprueba **desde
+dentro del contenedor** que alcanza `CAUCE_URL_WEBHOOKS` y lo registra
+como `webhook.alcance resultado=ok|fallo`. Si falla con el nombre
+resuelto, casi siempre es el firewall del host bloqueando el tráfico del
+bridge de Docker hacia el puerto del orquestador:
+
+```bash
+sudo ufw status
+sudo ufw allow from 172.16.0.0/12 to any port 3001 proto tcp comment "webhooks Evolution → orquestador"
+```
+
+(`host.docker.internal` se inyecta con `host-gateway` al crear cada
+contenedor; en Linux no existe por sí solo.)
+
 Recetas:
 
 ```bash

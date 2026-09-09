@@ -84,6 +84,27 @@ export class GestorSesiones {
     });
   }
 
+  /**
+   * ¿El contenedor alcanza al orquestador en la URL de webhooks? Solo
+   * registra: un fallo aquí explica "no llegan confirmaciones ni
+   * entrantes" sin adivinar, pero no debe impedir crear ni rehidratar.
+   */
+  async #comprobarAlcance(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    contenedorId: string,
+  ): Promise<void> {
+    const r = await this.#docker.verificarAlcance(contenedorId, this.#urlPublica);
+    registrar(
+      "webhook.alcance",
+      {
+        tenant: tenantId, instancia: instanceId, url: this.#urlPublica,
+        resuelve: r.resuelve, resultado: r.ok ? "ok" : "fallo", detalle: r.detalle,
+      },
+      r.ok ? "info" : "error",
+    );
+  }
+
   obtener(instanceId: InstanceId): SesionActiva | null {
     return this.#sesiones.get(instanceId) ?? null;
   }
@@ -199,6 +220,7 @@ export class GestorSesiones {
         webhookToken: enDocker.webhookToken,
       });
       const estado = await transport.status();
+      await this.#comprobarAlcance(enDocker.tenantId, enDocker.instanceId, enDocker.contenedorId);
       // Re-registra el webhook: al rehidratar no se pasa por connect(),
       // donde normalmente se hace el /webhook/set. Sin esto, una sesión
       // viva conserva los eventos que tenía al conectarse por primera vez
@@ -254,6 +276,7 @@ export class GestorSesiones {
         webhookToken,
       });
       await this.#docker.esperarListo(creada.baseUrl);
+      await this.#comprobarAlcance(tenantId, instanceId, creada.contenedorId);
     } catch (err) {
       registrarError("instancia.crear", err, {
         tenant: tenantId, instancia: instanceId, fase: "contenedor", ms: fin(),
