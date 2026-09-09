@@ -149,6 +149,31 @@ Sin `GOOGLE_APPLICATION_CREDENTIALS` (ni `FIRESTORE_PROJECT_ID`) el
 orquestador cae al repositorio en memoria y pierde el historial en cada
 reinicio; en producción esa variable es obligatoria.
 
+### Bitácora de operación
+
+Cada operación deja una línea en el journal, en formato `clave=valor`:
+
+```
+<ISO> <nivel> <evento> tenant=… instancia=… resultado=… ms=…
+```
+
+Eventos: `tenant.provisionar`, `instancia.crear|estado|reconectar|desconectar|eliminar|rehidratar`,
+`qr.servido` (a lo sumo una vez por minuto e instancia), `envio.solicitado|encolado|enviado|reintento|fallido|directo|reintento_manual`,
+`webhook.recibido|rechazado`, `entrega.confirmada|error|sin_coincidencia`, `entrante.guardado`,
+`entrada.motor|monday|bitrix`, `auth.rechazada`, `prueba.vencida`, `http.error`.
+Los teléfonos van enmascarados (`+52••••5347`). `CAUCE_LOG_WEBHOOKS=1` agrega el payload crudo a `webhook.recibido`.
+
+Recetas:
+
+```bash
+# Todo lo de una instancia
+sudo journalctl -u factory --no-pager | grep "instancia=f77d6518"
+# Envíos que no salieron, y entregas que WhatsApp no confirmó
+sudo journalctl -u factory --no-pager | grep -E "envio\.(fallido|reintento)|entrega\.(error|sin_coincidencia)"
+# ¿Llegan los webhooks de Evolution? (si no hay líneas, no llegan)
+sudo journalctl -u factory --no-pager | grep -c "webhook.recibido"
+```
+
 ### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)
 
 Dos orquestadores sobre el mismo proyecto Firebase compartirían la base

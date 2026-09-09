@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { InstanceId, Message } from "@cauce/core";
 import type { MessageTransport } from "@cauce/transports";
 import type { Repositorio } from "./store.ts";
+import { cronometro, enmascararTelefono, registrar } from "./log.ts";
 import { diagnosticarEnvio, telefonoValido } from "./errores.ts";
 
 /**
@@ -104,7 +105,7 @@ export class ColaEnvios {
       }
       return pendientes;
     } catch {
-      console.warn(`cola de ${instanceId} ilegible; se arranca vacía`);
+      registrar("cola.cargar", { instancia: instanceId, resultado: "ilegible; se arranca vacía" }, "warn");
       return [];
     }
   }
@@ -159,6 +160,10 @@ export class ColaEnvios {
     });
     this.#persistir(inst);
     await this.#repo.saveMessage(mensaje);
+    registrar("envio.encolado", {
+      tenant: mensaje.tenantId, instancia: mensaje.instanceId, mensaje: mensaje.id,
+      telefono: enmascararTelefono(mensaje.telefono), pendientes: inst.pendientes.length,
+    });
     inst.despertar?.();
   }
 
@@ -202,6 +207,11 @@ export class ColaEnvios {
     // La ventana de ritmo corre desde el intento, vaya bien o mal.
     inst.proximoPermitido =
       Date.now() + inst.intervaloMs + Math.floor(Math.random() * o.jitterMaxMs);
+    const fin = cronometro();
+    const base = {
+      tenant: p.mensaje.tenantId, instancia: p.mensaje.instanceId, mensaje: p.mensaje.id,
+      telefono: enmascararTelefono(p.mensaje.telefono), intento: p.intentos,
+    };
 
     try {
       // Teléfono inválido: no lo mandes al transporte; es una causa
@@ -221,6 +231,7 @@ export class ColaEnvios {
       inst.pendientes = inst.pendientes.filter((x) => x !== p);
       this.#persistir(inst);
       await this.#repo.saveMessage({ ...p.mensaje });
+      registrar("envio.enviado", { ...base, externalId: recibo.externalId, ms: fin() });
     } catch (err: any) {
       const diag = diagnosticarEnvio(err?.message ?? String(err));
       // Un teléfono inválido no mejora reintentando: falla de una vez.
@@ -232,6 +243,10 @@ export class ColaEnvios {
         inst.pendientes = inst.pendientes.filter((x) => x !== p);
         this.#persistir(inst);
         await this.#repo.saveMessage({ ...p.mensaje });
+        registrar("envio.fallido", {
+          ...base, codigo: diag.codigo, reintentable: diag.reintentable,
+          error: err?.message ?? String(err), ms: fin(),
+        }, "error");
       } else {
         p.mensaje.estado = "encolado";
         p.mensaje.error = diag.mensaje; // causa del último intento
@@ -240,6 +255,10 @@ export class ColaEnvios {
           Date.now() + o.backoffBaseMs * o.backoffFactor ** (p.intentos - 1);
         this.#persistir(inst);
         await this.#repo.saveMessage({ ...p.mensaje });
+        registrar("envio.reintento", {
+          ...base, codigo: diag.codigo, error: err?.message ?? String(err),
+          proximoEnMs: p.disponibleEn - Date.now(), ms: fin(),
+        }, "warn");
       }
     }
   }

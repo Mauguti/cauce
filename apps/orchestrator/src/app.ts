@@ -14,6 +14,7 @@ import type { VerificadorToken } from "./firebase.ts";
 import type { Provisioning } from "./provisioning.ts";
 import { churnReciente, limitesTenant, pruebaVigente } from "@cauce/core";
 import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
+import { enmascararTelefono, registrar, registrarCadaMs, registrarError } from "./log.ts";
 
 declare global {
   namespace Express {
@@ -137,7 +138,7 @@ export function crearApp(
     opciones.monday
       .procesarEvento(tenantId, req.body?.event, plantillaId)
       .catch((err) =>
-        console.warn(`monday procesarEvento falló: ${err?.message}`),
+        registrarError("entrada.monday", err, { tenant: tenantId, plantilla: plantillaId ?? null }),
       );
   },
   );
@@ -174,7 +175,7 @@ export function crearApp(
       opciones.bitrix
         .procesarEvento(tenantId, req.body, plantillaId)
         .catch((err) =>
-          console.warn(`bitrix procesarEvento falló: ${err?.message}`),
+          registrarError("entrada.bitrix", err, { tenant: tenantId, plantilla: plantillaId ?? null }),
         );
     },
   );
@@ -191,30 +192,30 @@ export function crearApp(
     };
     const sesion = gestor?.obtener(instanceId);
     if (!sesion) {
+      registrar("webhook.rechazado", { tenant: tenantId, instancia: instanceId, motivo: "sin sesión en este host" }, "warn");
       res.status(404).json({ error: "instancia desconocida" });
       return;
     }
     const token = req.query.token ?? req.headers["x-cauce-token"];
     if (!tokenValido(token, sesion.webhookToken)) {
+      registrar("webhook.rechazado", { tenant: tenantId, instancia: instanceId, motivo: "token inválido" }, "warn");
       res.status(401).json({ error: "token inválido" });
       return;
     }
     const instancia = await repo.getInstance(tenantId!, instanceId!);
     if (!instancia) {
+      registrar("webhook.rechazado", { tenant: tenantId, instancia: instanceId, motivo: "instancia sin registro" }, "warn");
       res.status(404).json({ error: "instancia desconocida" });
       return;
     }
     // Diagnóstico: qué evento llega y (para updates) si el id casa. Con
-    // CAUCE_LOG_WEBHOOKS=1 vuelca el payload crudo completo — para partir
+    // CAUCE_LOG_WEBHOOKS=1 vuelca además el payload crudo — para partir
     // en dos el bug de "sin confirmar" en la EC2 sin adivinar.
     const evento = req.body?.event;
-    if (process.env.CAUCE_LOG_WEBHOOKS) {
-      console.log(
-        `[webhook ${instanceId}] ${JSON.stringify(req.body).slice(0, 2000)}`,
-      );
-    } else {
-      console.log(`[webhook ${instanceId}] event=${evento}`);
-    }
+    registrar("webhook.recibido", {
+      tenant: tenantId, instancia: instanceId, evento,
+      ...(process.env.CAUCE_LOG_WEBHOOKS ? { payload: JSON.stringify(req.body).slice(0, 2000) } : {}),
+    });
     // Confirmación de entrega de un saliente (MESSAGES_UPDATE): registra la
     // transición real. Sin SERVER_ACK, el barrido lo pasará a no_confirmado.
     const actualizacion = normalizarActualizacion(req.body);
@@ -223,8 +224,14 @@ export function crearApp(
         tenantId!,
         actualizacion.externalId,
       );
-      console.log(
-        `[webhook ${instanceId}] messages.update externalId=${actualizacion.externalId} ack=${actualizacion.ack} → ${m ? `mensaje ${m.id}` : "SIN COINCIDENCIA (id no casa con ningún enviado)"}`,
+      registrar(
+        m ? (actualizacion.ack === "confirmado" ? "entrega.confirmada" : "entrega.error") : "entrega.sin_coincidencia",
+        {
+          tenant: tenantId, instancia: instanceId, externalId: actualizacion.externalId,
+          ack: actualizacion.ack, mensaje: m?.id ?? null,
+          ...(m ? {} : { nota: "el id no casa con ningún enviado" }),
+        },
+        m && actualizacion.ack === "confirmado" ? "info" : "warn",
       );
       if (m) {
         await repo.saveMessage(
@@ -251,6 +258,10 @@ export function crearApp(
     const mensaje = normalizarEntrante(tenantId!, instanceId!, req.body);
     if (mensaje) {
       await repo.saveMessage(mensaje);
+      registrar("entrante.guardado", {
+        tenant: tenantId, instancia: instanceId, mensaje: mensaje.id,
+        telefono: enmascararTelefono(mensaje.telefono),
+      });
       if (opciones.motorEntrada) {
         // Nombre del contacto (pushName) para dar contexto en el registro.
         const nombre =
@@ -260,7 +271,7 @@ export function crearApp(
         opciones.motorEntrada
           .procesar(tenantId!, instanceId!, mensaje, nombre)
           .catch((err) =>
-            console.warn(`motor de entrada falló: ${err?.message}`),
+            registrarError("entrada.motor", err, { tenant: tenantId, instancia: instanceId, mensaje: mensaje.id }),
           );
       }
     }
@@ -283,6 +294,9 @@ export function crearApp(
       return;
     }
     const { tenant, apiKey } = await opciones.provisioning.provisionar(identidad);
+    registrar("tenant.provisionar", {
+      tenant: tenant.id, uid: identidad.uid, plan: tenant.plan, resultado: apiKey ? "creado" : "existente",
+    });
     res.status(200).json({
       tenantId: tenant.id,
       nombre: tenant.nombre,
@@ -688,6 +702,7 @@ export function crearApp(
     // Límites por plan: validados en el servidor, con mensaje claro.
     const tenant = (await repo.getTenant(req.tenantId!))!;
     if (!pruebaVigente(tenant)) {
+      registrar("instancia.crear", { tenant: tenant.id, resultado: "rechazada", motivo: "prueba vencida" }, "warn");
       res.status(403).json({
         error:
           "Tu prueba terminó. Contrata un plan para conectar números; tus datos y conversaciones siguen guardados.",
@@ -697,6 +712,10 @@ export function crearApp(
     const limites = limitesTenant(tenant);
     const actuales = await repo.listInstances(req.tenantId!);
     if (actuales.length >= limites.lineas) {
+      registrar("instancia.crear", {
+        tenant: tenant.id, resultado: "rechazada", motivo: "límite de líneas del plan",
+        lineas: actuales.length, limite: limites.lineas,
+      }, "warn");
       res.status(403).json({
         error: `Tu plan permite ${limites.lineas} ${limites.lineas === 1 ? "línea" : "líneas"}. Elimina una o contrata más para agregar otra.`,
       });
@@ -731,6 +750,9 @@ export function crearApp(
     const sesion = await sesionScopeada(req, res);
     if (!sesion) return;
     const qr = await sesion.transport.getQr();
+    registrarCadaMs(`qr:${req.params.instanceId}:${qr ? "si" : "no"}`, 60_000, "qr.servido", {
+      tenant: req.tenantId, instancia: String(req.params.instanceId), resultado: qr ? "con_qr" : "sin_qr",
+    });
     res.json({
       codigo: qr?.codigo ?? null,
       imagenBase64: qr?.imagenBase64 ?? null,
@@ -790,6 +812,10 @@ export function crearApp(
       externalId: null,
       timestamp: new Date().toISOString(),
     };
+    registrar("envio.solicitado", {
+      tenant: req.tenantId, instancia: mensaje.instanceId, mensaje: mensaje.id,
+      telefono: enmascararTelefono(telefono), origen: "api",
+    });
     await opciones.cola.encolar(mensaje);
     res.status(202).json({ id: mensaje.id, estado: mensaje.estado });
   });
@@ -838,6 +864,10 @@ export function crearApp(
       return;
     }
     // Re-encola el mismo mensaje (mismo id → upsert; se limpia el error).
+    registrar("envio.reintento_manual", {
+      tenant: req.tenantId, instancia: mensaje.instanceId, mensaje: mensaje.id,
+      codigoPrevio: mensaje.errorCodigo ?? null,
+    });
     await opciones.cola.encolar({
       ...mensaje,
       estado: "encolado",
@@ -938,6 +968,22 @@ export function crearApp(
     };
     await repo.saveTenant(actualizado);
     res.json({ tenantId: actualizado.id, plan: actualizado.plan });
+  });
+
+  // Último recurso: cualquier excepción no manejada en una ruta queda en
+  // la bitácora con ruta y tenant, y responde JSON en vez de la página
+  // HTML por defecto de Express. No cambia ninguna respuesta que ya
+  // estuviera manejada arriba.
+  app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+    registrarError("http.error", err, {
+      ruta: `${req.method} ${req.originalUrl.split("?")[0]}`,
+      tenant: req.tenantId ?? null,
+    });
+    if (res.headersSent) {
+      next(err);
+      return;
+    }
+    res.status(500).json({ error: "error interno del orquestador" });
   });
 
   return app;

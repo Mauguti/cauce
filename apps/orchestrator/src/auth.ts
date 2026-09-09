@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
 import type { Tenant } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
+import { registrar } from "./log.ts";
 import { pareceJwt, type VerificadorToken } from "./firebase.ts";
 
 export function hashApiKey(key: string): string {
@@ -63,12 +64,22 @@ export function autenticar(repo: Repositorio, verificar?: VerificadorToken) {
     }
 
     if (!autenticado || autenticado.estado !== "activo") {
+      registrar("auth.rechazada", {
+        ruta: `${req.method} ${req.originalUrl.split("?")[0]}`,
+        motivo: !autenticado
+          ? bearer || apiKeyHeader ? "credencial inválida o sin tenant" : "sin credencial"
+          : `tenant ${autenticado.estado}`,
+      }, "warn");
       res.status(401).json({ error: "no autorizado" });
       return;
     }
 
     const tenantEnPath = req.params.tenantId;
     if (typeof tenantEnPath === "string" && tenantEnPath !== autenticado.id) {
+      registrar("auth.rechazada", {
+        ruta: `${req.method} ${req.originalUrl.split("?")[0]}`, tenant: autenticado.id,
+        motivo: "tenant del path no coincide",
+      }, "warn");
       res.status(401).json({ error: "no autorizado" });
       return;
     }

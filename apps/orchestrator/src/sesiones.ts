@@ -9,6 +9,7 @@ import {
 } from "@cauce/core";
 import { createTransport, type MessageTransport } from "@cauce/transports";
 import { diagnosticarEnvio, telefonoValido } from "./errores.ts";
+import { cronometro, enmascararTelefono, registrar, registrarError } from "./log.ts";
 import type { ColaEnvios } from "./cola.ts";
 import { DockerManager, nombreContenedor } from "./docker/manager.ts";
 import type { Repositorio } from "./store.ts";
@@ -138,6 +139,7 @@ export class GestorSesiones {
       externalId: null,
       timestamp: new Date().toISOString(),
     };
+    const fin = cronometro();
     try {
       if (!telefonoValido(telefono)) {
         throw new Error("teléfono inválido (formato)");
@@ -145,11 +147,21 @@ export class GestorSesiones {
       const recibo = await sesion.transport.send({ telefono, cuerpo });
       mensaje.estado = "enviado";
       mensaje.externalId = recibo.externalId;
+      registrar("envio.directo", {
+        tenant: tenantId, instancia: instanceId, mensaje: mensaje.id,
+        telefono: enmascararTelefono(telefono), resultado: "enviado",
+        externalId: recibo.externalId, ms: fin(),
+      });
     } catch (err: any) {
       const diag = diagnosticarEnvio(err?.message ?? String(err));
       mensaje.estado = "fallido";
       mensaje.error = diag.mensaje;
       mensaje.errorCodigo = diag.codigo;
+      registrar("envio.directo", {
+        tenant: tenantId, instancia: instanceId, mensaje: mensaje.id,
+        telefono: enmascararTelefono(telefono), resultado: "fallido",
+        codigo: diag.codigo, error: err?.message ?? String(err), ms: fin(),
+      }, "warn");
     }
     await this.#repo.saveMessage(mensaje);
     return mensaje;
@@ -166,15 +178,17 @@ export class GestorSesiones {
     for (const enDocker of await this.#docker.listarInstancias()) {
       const tenant = await this.#repo.getTenant(enDocker.tenantId);
       if (!tenant) {
-        console.warn(
-          `contenedor de instancia ${enDocker.instanceId} pertenece al tenant desconocido "${enDocker.tenantId}"; se deja corriendo sin registrar`,
-        );
+        registrar("instancia.rehidratar", {
+          tenant: enDocker.tenantId, instancia: enDocker.instanceId,
+          resultado: "omitida", motivo: "tenant desconocido; el contenedor se deja corriendo sin registrar",
+        }, "warn");
         continue;
       }
       if (!enDocker.baseUrl) {
-        console.warn(
-          `instancia ${enDocker.instanceId} sin binding loopback; se omite`,
-        );
+        registrar("instancia.rehidratar", {
+          tenant: enDocker.tenantId, instancia: enDocker.instanceId,
+          resultado: "omitida", motivo: "sin binding loopback",
+        }, "warn");
         continue;
       }
       const transport = this.#construirTransporte({
@@ -194,9 +208,9 @@ export class GestorSesiones {
       try {
         await transport.asegurarWebhook?.();
       } catch (err: any) {
-        console.warn(
-          `no se pudo re-registrar el webhook de ${enDocker.instanceId}: ${err?.message}`,
-        );
+        registrarError("webhook.registrar", err, {
+          tenant: enDocker.tenantId, instancia: enDocker.instanceId, fase: "rehidratar",
+        });
       }
       await this.#repo.saveInstance({
         id: enDocker.instanceId,
@@ -218,6 +232,10 @@ export class GestorSesiones {
         enDocker.instanceId,
         transport,
       );
+      registrar("instancia.rehidratar", {
+        tenant: enDocker.tenantId, instancia: enDocker.instanceId,
+        contenedor: enDocker.contenedorId.slice(0, 12), estado, resultado: "ok",
+      });
       rehidratadas += 1;
     }
     return rehidratadas;
@@ -227,12 +245,21 @@ export class GestorSesiones {
     const instanceId = randomUUID().slice(0, 8);
     const apiKey = randomBytes(24).toString("hex");
     const webhookToken = randomBytes(24).toString("hex");
+    const fin = cronometro();
 
-    const creada = await this.#docker.crear(tenantId, instanceId, {
-      apiKey,
-      webhookToken,
-    });
-    await this.#docker.esperarListo(creada.baseUrl);
+    let creada;
+    try {
+      creada = await this.#docker.crear(tenantId, instanceId, {
+        apiKey,
+        webhookToken,
+      });
+      await this.#docker.esperarListo(creada.baseUrl);
+    } catch (err) {
+      registrarError("instancia.crear", err, {
+        tenant: tenantId, instancia: instanceId, fase: "contenedor", ms: fin(),
+      });
+      throw err;
+    }
 
     const transport = this.#construirTransporte({
       tenantId,
@@ -241,7 +268,15 @@ export class GestorSesiones {
       apiKey,
       webhookToken,
     });
-    await transport.connect();
+    try {
+      await transport.connect();
+    } catch (err) {
+      registrarError("instancia.crear", err, {
+        tenant: tenantId, instancia: instanceId, contenedor: creada.contenedorId.slice(0, 12),
+        fase: "conectar transporte", ms: fin(),
+      });
+      throw err;
+    }
 
     const instancia: Instance = {
       id: instanceId,
@@ -269,6 +304,10 @@ export class GestorSesiones {
       webhookToken,
     });
     await this.#registrarEnCola(tenantId, instanceId, transport);
+    registrar("instancia.crear", {
+      tenant: tenantId, instancia: instanceId,
+      contenedor: creada.contenedorId.slice(0, 12), resultado: "ok", ms: fin(),
+    });
     return instancia;
   }
 
@@ -286,6 +325,13 @@ export class GestorSesiones {
     let numero = instancia.numero;
     if (estado === "connected" && !numero) {
       numero = (await sesion.transport.numero()) ?? null;
+    }
+    // Solo los cambios: el sondeo de la consola llama esto cada pocos segundos.
+    if (estado !== instancia.estado) {
+      registrar("instancia.estado", {
+        tenant: tenantId, instancia: instanceId, de: instancia.estado, a: estado,
+        ...(estado === "connected" ? { numero: enmascararTelefono(numero) } : {}),
+      }, estado === "disconnected" ? "warn" : "info");
     }
     const actualizada: Instance = {
       ...instancia,
@@ -309,7 +355,12 @@ export class GestorSesiones {
     const instancia = await this.#repo.getInstance(tenantId, instanceId);
     const sesion = this.#sesiones.get(instanceId);
     if (!instancia || !sesion) return instancia;
-    await sesion.transport.disconnect();
+    try {
+      await sesion.transport.disconnect();
+    } catch (err) {
+      registrarError("instancia.desconectar", err, { tenant: tenantId, instancia: instanceId });
+      throw err;
+    }
     const actualizada: Instance = {
       ...instancia,
       estado: "disconnected",
@@ -317,6 +368,9 @@ export class GestorSesiones {
       ultimoHeartbeat: new Date().toISOString(),
     };
     await this.#repo.saveInstance(actualizada);
+    registrar("instancia.desconectar", {
+      tenant: tenantId, instancia: instanceId, desde: instancia.estado, resultado: "ok",
+    });
     return actualizada;
   }
 
@@ -331,7 +385,13 @@ export class GestorSesiones {
     const instancia = await this.#repo.getInstance(tenantId, instanceId);
     const sesion = this.#sesiones.get(instanceId);
     if (!instancia || !sesion) return instancia;
-    await sesion.transport.connect();
+    try {
+      await sesion.transport.connect();
+    } catch (err) {
+      registrarError("instancia.reconectar", err, { tenant: tenantId, instancia: instanceId });
+      throw err;
+    }
+    registrar("instancia.reconectar", { tenant: tenantId, instancia: instanceId, resultado: "ok" });
     return this.refrescar(tenantId, instanceId);
   }
 
@@ -355,6 +415,10 @@ export class GestorSesiones {
         cerrada = false; // contenedor inalcanzable: no podemos confirmar
       }
       if (!cerrada) {
+        registrar("instancia.eliminar", {
+          tenant: tenantId, instancia: instanceId, resultado: "rechazada",
+          motivo: "logout sin confirmar; no se destruye nada",
+        }, "warn");
         throw new SesionNoCerrada(instanceId); // NO destruir, NO borrar
       }
       this.#cola?.baja(instanceId, true);
@@ -363,6 +427,11 @@ export class GestorSesiones {
       this.#sesiones.delete(instanceId);
     }
     await this.#repo.deleteInstance(tenantId, instanceId);
+    registrar("instancia.eliminar", {
+      tenant: tenantId, instancia: instanceId, resultado: "ok",
+      contenedor: sesion ? sesion.contenedorId.slice(0, 12) : null,
+      ...(sesion ? {} : { nota: "solo registro; sin sesión en este host" }),
+    });
   }
 
   /**
@@ -381,9 +450,11 @@ export class GestorSesiones {
         if (!this.#sesiones.has(inst.id)) continue;
         try {
           await this.desconectar(tenant.id, inst.id);
+          registrar("prueba.vencida", { tenant: tenant.id, instancia: inst.id, resultado: "desconectada" });
           desconectadas += 1;
-        } catch {
+        } catch (err) {
           // El contenedor puede estar caído; se reintenta en el próximo barrido.
+          registrarError("prueba.vencida", err, { tenant: tenant.id, instancia: inst.id });
         }
       }
     }
