@@ -1,6 +1,8 @@
 import type { InstanceId, Message, TenantId } from "@cauce/core";
 import type { Repositorio } from "../store.ts";
 import type { ConectorMonday } from "../monday/conector.ts";
+import type { ConectorBitrix } from "../bitrix/conector.ts";
+import type { EntidadBitrix } from "../bitrix/cliente.ts";
 import { primeroQueCoincide } from "./disparadores.ts";
 
 /** Envía por el carril inmediato (sin cola). Lo provee GestorSesiones. */
@@ -21,15 +23,18 @@ export class MotorEntrada {
   readonly #repo: Repositorio;
   readonly #enviar: EnviarInmediato;
   readonly #monday: ConectorMonday | null;
+  readonly #bitrix: ConectorBitrix | null;
 
   constructor(opciones: {
     repo: Repositorio;
     enviarInmediato: EnviarInmediato;
     monday?: ConectorMonday;
+    bitrix?: ConectorBitrix;
   }) {
     this.#repo = opciones.repo;
     this.#enviar = opciones.enviarInmediato;
     this.#monday = opciones.monday ?? null;
+    this.#bitrix = opciones.bitrix ?? null;
   }
 
   async procesar(
@@ -63,13 +68,18 @@ export class MotorEntrada {
       await this.#enviar(tenantId, instanceId, mensaje.telefono, disparador.respuesta);
     }
 
-    // 3. Write-back al CRM: si la conversación está vinculada a un item de
-    //    monday, la respuesta del cliente vuelve como update.
+    // 3. Write-back al CRM: la respuesta del cliente vuelve al registro que
+    //    la originó (item de monday o timeline de la entidad de Bitrix).
+    const texto = `📥 ${mensaje.cuerpo}`;
     if (this.#monday && conversacion.mondayItemId) {
-      await this.#monday.publicarEnItem(
+      await this.#monday.publicarEnItem(tenantId, conversacion.mondayItemId, texto);
+    }
+    if (this.#bitrix && conversacion.bitrixEntidad) {
+      await this.#bitrix.publicarEnItem(
         tenantId,
-        conversacion.mondayItemId,
-        `📥 ${mensaje.cuerpo}`,
+        conversacion.bitrixEntidad.tipo as EntidadBitrix,
+        conversacion.bitrixEntidad.id,
+        texto,
       );
     }
   }

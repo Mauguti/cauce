@@ -9,6 +9,7 @@ import { barrerSinConfirmar } from "./confirmaciones.ts";
 import { RepositorioEnMemoria, type Repositorio } from "./store.ts";
 import { RepositorioFirestore } from "./store-firestore.ts";
 import { ConectorMonday } from "./monday/conector.ts";
+import { ConectorBitrix } from "./bitrix/conector.ts";
 import { MotorEntrada } from "./entrada/motor.ts";
 import { Cripto } from "./cripto.ts";
 import { crearVerificadorToken } from "./firebase.ts";
@@ -82,10 +83,13 @@ if (await docker.disponible()) {
   console.warn("Docker no disponible; se arranca sin sesiones");
 }
 
-const monday = new ConectorMonday({ repo, cola, cripto: new Cripto() });
+const cripto = new Cripto();
+const monday = new ConectorMonday({ repo, cola, cripto });
+const bitrix = new ConectorBitrix({ repo, cola, cripto });
 const motorEntrada = new MotorEntrada({
   repo,
   monday,
+  bitrix,
   // Carril inmediato: las respuestas automáticas no pasan por la cola.
   enviarInmediato: (t, i, tel, cuerpo) =>
     gestor.enviarDirecto(t, i, tel, cuerpo),
@@ -128,6 +132,7 @@ crearApp(repo, gestor, {
   corsOrigenes,
   cola,
   monday,
+  bitrix,
   motorEntrada,
   verificarToken,
   provisioning,

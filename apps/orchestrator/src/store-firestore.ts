@@ -10,6 +10,8 @@ import {
 } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
+import type { ConectorBitrixDoc } from "./bitrix/conector.ts";
+import type { RegistroConector } from "./conectores/plantillas.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 
 /**
@@ -190,6 +192,48 @@ export class RepositorioFirestore implements Repositorio {
       .set(registro);
   }
 
+  async getConectorBitrix(tenantId: TenantId): Promise<ConectorBitrixDoc | null> {
+    const doc = await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/bitrix`).get();
+    return doc.exists ? (doc.data() as ConectorBitrixDoc) : null;
+  }
+
+  async saveConectorBitrix(tenantId: TenantId, config: ConectorBitrixDoc): Promise<void> {
+    await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/bitrix`).set(config);
+  }
+
+  async deleteConectorBitrix(tenantId: TenantId): Promise<void> {
+    await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/bitrix`).delete();
+    await this.#db
+      .doc(`${rutas.tenant(tenantId)}/conectores/bitrix-registro`)
+      .delete()
+      .catch(() => {});
+  }
+
+  async getRegistroBitrix(tenantId: TenantId): Promise<RegistroConector | null> {
+    const doc = await this.#db
+      .doc(`${rutas.tenant(tenantId)}/conectores/bitrix-registro`)
+      .get();
+    return doc.exists ? (doc.data() as RegistroConector) : null;
+  }
+
+  async setRegistroBitrix(tenantId: TenantId, registro: RegistroConector): Promise<void> {
+    await this.#db
+      .doc(`${rutas.tenant(tenantId)}/conectores/bitrix-registro`)
+      .set(registro);
+  }
+
+  async vincularBitrix(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    entidadTipo: string,
+    entidadId: string,
+  ): Promise<void> {
+    await this.#db
+      .doc(rutas.conversacion(tenantId, instanceId, telefono))
+      .set({ tenantId, instanceId, telefono, bitrixEntidad: { tipo: entidadTipo, id: entidadId } }, { merge: true });
+  }
+
   async getConversacion(
     tenantId: TenantId,
     instanceId: InstanceId,
@@ -226,6 +270,7 @@ export class RepositorioFirestore implements Repositorio {
         primerContactoEn: previa?.primerContactoEn ?? timestamp,
         ultimoEntranteEn: timestamp,
         mondayItemId: previa?.mondayItemId ?? null,
+        bitrixEntidad: previa?.bitrixEntidad ?? null,
       };
       tx.set(ref, conversacion);
       return { conversacion, esPrimerContacto };

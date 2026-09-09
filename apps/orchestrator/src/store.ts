@@ -7,6 +7,8 @@ import type {
   TenantId,
 } from "@cauce/core";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
+import type { ConectorBitrixDoc } from "./bitrix/conector.ts";
+import type { RegistroConector } from "./conectores/plantillas.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 
 /**
@@ -47,6 +49,20 @@ export interface Repositorio {
   deleteConectorMonday(tenantId: TenantId): Promise<void>;
   getRegistroMonday(tenantId: TenantId): Promise<RegistroMonday | null>;
   setRegistroMonday(tenantId: TenantId, registro: RegistroMonday): Promise<void>;
+  // Conector Bitrix24 (mismo patrón que monday).
+  getConectorBitrix(tenantId: TenantId): Promise<ConectorBitrixDoc | null>;
+  saveConectorBitrix(tenantId: TenantId, config: ConectorBitrixDoc): Promise<void>;
+  deleteConectorBitrix(tenantId: TenantId): Promise<void>;
+  getRegistroBitrix(tenantId: TenantId): Promise<RegistroConector | null>;
+  setRegistroBitrix(tenantId: TenantId, registro: RegistroConector): Promise<void>;
+  /** Liga (merge) la entidad de Bitrix a la conversación. */
+  vincularBitrix(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    entidadTipo: string,
+    entidadId: string,
+  ): Promise<void>;
 
   // Conversaciones (identidad estable por instancia+teléfono).
   getConversacion(
@@ -232,6 +248,51 @@ export class RepositorioEnMemoria implements Repositorio {
     this.#registroMonday.set(tenantId, registro);
   }
 
+  #conectorBitrix = new Map<TenantId, ConectorBitrixDoc>();
+  #registroBitrix = new Map<TenantId, RegistroConector>();
+
+  async getConectorBitrix(tenantId: TenantId): Promise<ConectorBitrixDoc | null> {
+    return this.#conectorBitrix.get(tenantId) ?? null;
+  }
+
+  async saveConectorBitrix(tenantId: TenantId, config: ConectorBitrixDoc): Promise<void> {
+    this.#conectorBitrix.set(tenantId, config);
+  }
+
+  async deleteConectorBitrix(tenantId: TenantId): Promise<void> {
+    this.#conectorBitrix.delete(tenantId);
+    this.#registroBitrix.delete(tenantId);
+  }
+
+  async getRegistroBitrix(tenantId: TenantId): Promise<RegistroConector | null> {
+    return this.#registroBitrix.get(tenantId) ?? null;
+  }
+
+  async setRegistroBitrix(tenantId: TenantId, registro: RegistroConector): Promise<void> {
+    this.#registroBitrix.set(tenantId, registro);
+  }
+
+  async vincularBitrix(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    entidadTipo: string,
+    entidadId: string,
+  ): Promise<void> {
+    const clave = this.#claveConv(tenantId, instanceId, telefono);
+    const previa = this.#conversaciones.get(clave);
+    this.#conversaciones.set(clave, {
+      tenantId,
+      instanceId,
+      telefono,
+      nombre: previa?.nombre ?? null,
+      primerContactoEn: previa?.primerContactoEn ?? null,
+      ultimoEntranteEn: previa?.ultimoEntranteEn ?? null,
+      mondayItemId: previa?.mondayItemId ?? null,
+      bitrixEntidad: { tipo: entidadTipo, id: entidadId },
+    });
+  }
+
   #claveConv(t: TenantId, i: InstanceId, tel: string): string {
     return `${t}/${i}/${tel}`;
   }
@@ -267,6 +328,7 @@ export class RepositorioEnMemoria implements Repositorio {
       primerContactoEn: previa?.primerContactoEn ?? timestamp,
       ultimoEntranteEn: timestamp,
       mondayItemId: previa?.mondayItemId ?? null,
+      bitrixEntidad: previa?.bitrixEntidad ?? null,
     };
     this.#conversaciones.set(clave, conversacion);
     return { conversacion, esPrimerContacto };
@@ -294,6 +356,7 @@ export class RepositorioEnMemoria implements Repositorio {
       primerContactoEn: previa?.primerContactoEn ?? null,
       ultimoEntranteEn: previa?.ultimoEntranteEn ?? null,
       mondayItemId: itemId,
+      bitrixEntidad: previa?.bitrixEntidad ?? null,
     });
   }
 

@@ -6,6 +6,8 @@ import { SesionNoCerrada, type GestorSesiones } from "./sesiones.ts";
 import { autenticar } from "./auth.ts";
 import type { ColaEnvios } from "./cola.ts";
 import type { ConectorMonday } from "./monday/conector.ts";
+import type { ConectorBitrix } from "./bitrix/conector.ts";
+import type { EntidadBitrix } from "./bitrix/cliente.ts";
 import type { MotorEntrada } from "./entrada/motor.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 import type { VerificadorToken } from "./firebase.ts";
@@ -56,6 +58,8 @@ export interface AppOpciones {
   cola?: ColaEnvios;
   /** Conector monday; sin él la ruta /webhooks/monday responde 501. */
   monday?: ConectorMonday;
+  /** Conector Bitrix24; sin él la ruta /webhooks/bitrix responde 501. */
+  bitrix?: ConectorBitrix;
   /** Motor de entrada; procesa cada mensaje entrante (conversación + disparadores). */
   motorEntrada?: MotorEntrada;
   /** Verificador de ID tokens de Firebase (login de la consola). */
@@ -75,6 +79,10 @@ export function crearApp(
 ): express.Express {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
+  // Bitrix24 manda sus webhooks salientes como form-urlencoded con claves
+  // anidadas (data[FIELDS][ID], auth[application_token]); extended:true las
+  // reconstruye como objetos.
+  app.use(express.urlencoded({ extended: true, limit: "1mb" }));
   app.use(cors(opciones.corsOrigenes ?? []));
 
   // /health expone la versión desplegada para que la consola detecte
@@ -132,6 +140,43 @@ export function crearApp(
         console.warn(`monday procesarEvento falló: ${err?.message}`),
       );
   },
+  );
+
+  /**
+   * Webhook saliente de Bitrix24. Va ANTES del webhook genérico de
+   * instancias, igual que el de monday. Bitrix POSTea el evento (no hay
+   * challenge de alta como en monday); su seguridad es el application_token
+   * que manda en auth[]. El tenantId viene en el path; la plantilla,
+   * opcional, en el segmento extra.
+   */
+  app.post(
+    ["/webhooks/bitrix/:tenantId", "/webhooks/bitrix/:tenantId/:plantillaId"],
+    async (req, res) => {
+      const tenantId = String(req.params.tenantId);
+      const plantillaId = req.params.plantillaId ? String(req.params.plantillaId) : undefined;
+      if (!opciones.bitrix) {
+        res.status(501).json({ error: "conector bitrix no disponible" });
+        return;
+      }
+      const config = await repo.getConectorBitrix(tenantId);
+      if (!config) {
+        res.status(404).json({ error: "tenant sin conector bitrix" });
+        return;
+      }
+      if (!opciones.bitrix.verificarFirma(config, req.body)) {
+        res.status(401).json({ error: "application_token inválido" });
+        return;
+      }
+      void opciones.bitrix.registrarLlamada(tenantId);
+      // Responder rápido; Bitrix reintenta si tarda. El disparo (leer la
+      // entidad, encolar el envío) corre después del 200.
+      res.status(200).json({ ok: true });
+      opciones.bitrix
+        .procesarEvento(tenantId, req.body, plantillaId)
+        .catch((err) =>
+          console.warn(`bitrix procesarEvento falló: ${err?.message}`),
+        );
+    },
   );
 
   /**
@@ -268,6 +313,137 @@ export function crearApp(
 
   tenantRouter.get("/instances", async (req, res) => {
     res.json(await repo.listInstances(req.tenantId!));
+  });
+
+  // ---- Conector Bitrix24 (mismo patrón que monday) ----
+  const ENTIDADES_BITRIX = new Set(["deal", "contact", "lead", "company"]);
+  const bitrixListo = (res: Response): boolean => {
+    if (!opciones.bitrix) {
+      res.status(501).json({ error: "conector bitrix no disponible" });
+      return false;
+    }
+    return true;
+  };
+
+  tenantRouter.get("/conectores/bitrix", async (req, res) => {
+    if (!bitrixListo(res)) return;
+    res.json(await opciones.bitrix!.verConfig(req.tenantId!));
+  });
+
+  // Prueba de conexión: valida el webhook entrante pegado por el usuario.
+  tenantRouter.post("/conectores/bitrix/probar", async (req, res) => {
+    if (!bitrixListo(res)) return;
+    const { webhookUrl } = req.body ?? {};
+    if (typeof webhookUrl !== "string" || !/^https?:\/\//.test(webhookUrl)) {
+      res.status(400).json({ error: "se requiere la URL del webhook entrante" });
+      return;
+    }
+    try {
+      await opciones.bitrix!.probar(webhookUrl);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(502).json({ ok: false, error: err?.message ?? "Bitrix rechazó el webhook" });
+    }
+  });
+
+  // Campos de una entidad (para mapear el teléfono e insertar variables).
+  tenantRouter.post("/conectores/bitrix/campos", async (req, res) => {
+    if (!bitrixListo(res)) return;
+    const { webhookUrl, entidad } = req.body ?? {};
+    if (typeof webhookUrl !== "string" || !ENTIDADES_BITRIX.has(entidad)) {
+      res.status(400).json({ error: "se requieren webhookUrl y una entidad válida" });
+      return;
+    }
+    try {
+      res.json(await opciones.bitrix!.campos(webhookUrl, entidad as EntidadBitrix));
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "Bitrix rechazó la consulta" });
+    }
+  });
+
+  // Campos de la entidad ya configurada (editor de plantillas).
+  tenantRouter.get("/conectores/bitrix/campos-guardados", async (req, res) => {
+    if (!bitrixListo(res)) return;
+    try {
+      res.json(await opciones.bitrix!.camposGuardados(req.tenantId!));
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "Bitrix rechazó la consulta" });
+    }
+  });
+
+  tenantRouter.get("/conectores/bitrix/registro", async (req, res) => {
+    if (!bitrixListo(res)) return;
+    res.json(await opciones.bitrix!.verRegistro(req.tenantId!));
+  });
+
+  // Alta/edición: cifra credenciales en reposo (webhook + application_token).
+  tenantRouter.put("/conectores/bitrix", async (req, res) => {
+    if (!bitrixListo(res)) return;
+    const { instanceId, entidad, campoTelefono, webhookUrl, applicationToken } = req.body ?? {};
+    if (
+      typeof instanceId !== "string" ||
+      !ENTIDADES_BITRIX.has(entidad) ||
+      typeof campoTelefono !== "string"
+    ) {
+      res.status(400).json({ error: "se requieren instanceId, entidad y campoTelefono" });
+      return;
+    }
+    const yaExiste = (await opciones.bitrix!.verConfig(req.tenantId!)) !== null;
+    if (!yaExiste) {
+      const tenant = (await repo.getTenant(req.tenantId!))!;
+      const limite = limitesTenant(tenant).conectores;
+      // El conteo suma monday + bitrix; hoy el límite del plan es 1.
+      const actuales =
+        ((await opciones.monday?.verConfig(req.tenantId!)) ? 1 : 0);
+      if (actuales + 1 > limite) {
+        res.status(403).json({
+          error: `Tu plan permite ${limite} ${limite === 1 ? "conector" : "conectores"}. Contrata más para agregar otro.`,
+        });
+        return;
+      }
+    }
+    try {
+      await opciones.bitrix!.guardarAlta(req.tenantId!, {
+        instanceId,
+        entidad: entidad as EntidadBitrix,
+        campoTelefono,
+        webhookUrl: typeof webhookUrl === "string" ? webhookUrl : "",
+        applicationToken: typeof applicationToken === "string" ? applicationToken : "",
+      });
+      res.status(204).end();
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "no se pudo guardar el conector" });
+    }
+  });
+
+  tenantRouter.delete("/conectores/bitrix", async (req, res) => {
+    if (!bitrixListo(res)) return;
+    await opciones.bitrix!.desconectar(req.tenantId!);
+    res.status(204).end();
+  });
+
+  // Reemplaza la lista de plantillas salientes de Bitrix.
+  tenantRouter.put("/conectores/bitrix/plantillas", async (req, res) => {
+    if (!bitrixListo(res)) return;
+    const { plantillas } = req.body ?? {};
+    if (
+      !Array.isArray(plantillas) ||
+      plantillas.length === 0 ||
+      !plantillas.every((p) => p && typeof p.id === "string" && p.id && typeof p.nombre === "string" && typeof p.cuerpo === "string")
+    ) {
+      res.status(400).json({ error: "se requiere al menos una plantilla con id, nombre y cuerpo" });
+      return;
+    }
+    if (new Set(plantillas.map((p) => p.id)).size !== plantillas.length) {
+      res.status(400).json({ error: "hay plantillas con id repetido" });
+      return;
+    }
+    const ok = await opciones.bitrix!.guardarPlantillas(req.tenantId!, plantillas);
+    if (!ok) {
+      res.status(409).json({ error: "configura primero la conexión Bitrix" });
+      return;
+    }
+    res.status(204).end();
   });
 
   // Vista de la config de monday: SIN secretos, solo la pista del token.

@@ -186,6 +186,38 @@ export const api = {
       }),
   },
 
+  // ---- Conexiones (Bitrix24) ----
+  bitrix: {
+    ver: (tenantId: string) =>
+      llamar<BitrixVista | null>(`/api/tenants/${tenantId}/conectores/bitrix`),
+    probar: (tenantId: string, webhookUrl: string) =>
+      llamar<{ ok: boolean }>(`/api/tenants/${tenantId}/conectores/bitrix/probar`, {
+        method: "POST",
+        body: JSON.stringify({ webhookUrl }),
+      }),
+    campos: (tenantId: string, webhookUrl: string, entidad: EntidadBitrix) =>
+      llamar<CampoBitrix[]>(`/api/tenants/${tenantId}/conectores/bitrix/campos`, {
+        method: "POST",
+        body: JSON.stringify({ webhookUrl, entidad }),
+      }),
+    camposGuardados: (tenantId: string) =>
+      llamar<CampoBitrix[]>(`/api/tenants/${tenantId}/conectores/bitrix/campos-guardados`),
+    guardar: (tenantId: string, alta: BitrixAlta) =>
+      llamar<void>(`/api/tenants/${tenantId}/conectores/bitrix`, {
+        method: "PUT",
+        body: JSON.stringify(alta),
+      }),
+    quitar: (tenantId: string) =>
+      llamar<void>(`/api/tenants/${tenantId}/conectores/bitrix`, { method: "DELETE" }),
+    registro: (tenantId: string) =>
+      llamar<RegistroMonday>(`/api/tenants/${tenantId}/conectores/bitrix/registro`),
+    guardarPlantillas: (tenantId: string, plantillas: PlantillaSaliente[]) =>
+      llamar<void>(`/api/tenants/${tenantId}/conectores/bitrix/plantillas`, {
+        method: "PUT",
+        body: JSON.stringify({ plantillas }),
+      }),
+  },
+
   // ---- Acciones entrantes (disparadores) ----
   disparadores: (tenantId: string) =>
     llamar<Disparador[]>(`/api/tenants/${tenantId}/disparadores`),
@@ -236,6 +268,35 @@ export interface MondayAlta {
   signingSecret: string;
   columnaTelefono: string;
 }
+
+// ---- Bitrix24 ----
+export type EntidadBitrix = "deal" | "contact" | "lead" | "company";
+export interface CampoBitrix {
+  id: string;
+  title: string;
+  type: string;
+}
+export interface BitrixVista {
+  instanceId: string;
+  entidad: EntidadBitrix;
+  campoTelefono: string;
+  plantillas: PlantillaSaliente[];
+  webhookPista: string;
+  tieneApplicationToken: boolean;
+}
+export interface BitrixAlta {
+  instanceId: string;
+  entidad: EntidadBitrix;
+  campoTelefono: string;
+  webhookUrl: string;
+  applicationToken: string;
+}
+export const ENTIDADES_BITRIX: { id: EntidadBitrix; nombre: string }[] = [
+  { id: "deal", nombre: "Negociación (deal)" },
+  { id: "contact", nombre: "Contacto" },
+  { id: "lead", nombre: "Prospecto (lead)" },
+  { id: "company", nombre: "Empresa" },
+];
 
 /** Tipos de columna de monday válidos para mapear como teléfono. */
 export const TIPOS_TELEFONO = ["phone", "text"];
@@ -291,4 +352,9 @@ export interface Disparador {
  */
 export function urlWebhookMonday(tenantId: string, plantillaId?: string): string {
   return `${BASE}/webhooks/monday/${tenantId}${plantillaId ? `/${plantillaId}` : ""}`;
+}
+
+/** URL del webhook de Bitrix por plantilla (la corta = plantilla por defecto). */
+export function urlWebhookBitrix(tenantId: string, plantillaId?: string): string {
+  return `${BASE}/webhooks/bitrix/${tenantId}${plantillaId ? `/${plantillaId}` : ""}`;
 }

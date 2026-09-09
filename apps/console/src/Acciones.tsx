@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   api,
   urlWebhookMonday,
+  urlWebhookBitrix,
   columnaEsVariable,
   type Yo,
   type MondayVista,
-  type MondayColumna,
-  type RegistroMonday,
+  type BitrixVista,
   type Message,
   type Disparador,
   type TipoDisparador,
@@ -17,12 +17,69 @@ import {
 // la URL corta ya configurada en las automatizaciones existentes.
 const PLANTILLA_DEFECTO_ID = "default";
 
+/**
+ * Adaptador de un conector para la UI de plantillas salientes. Abstrae lo
+ * único que cambia entre monday y Bitrix (de dónde salen los campos, la URL
+ * del webhook, la API); todo lo demás —listar, editar, quitar plantillas—
+ * es igual para ambos.
+ */
+export interface ConectorAdapter {
+  tipo: "monday" | "bitrix";
+  instanceId: string;
+  contexto: string;
+  urlWebhook: (plantillaId?: string) => string;
+  cargarCampos: () => Promise<{ id: string; title: string }[]>;
+  verPlantillas: () => Promise<PlantillaSaliente[]>;
+  guardarPlantillas: (lista: PlantillaSaliente[]) => Promise<void>;
+}
+
+function adaptadorMonday(yo: Yo, v: MondayVista): ConectorAdapter {
+  return {
+    tipo: "monday",
+    instanceId: v.instanceId,
+    contexto: `Board conectado; columna de teléfono: ${v.columnaTelefono}.`,
+    urlWebhook: (id) => urlWebhookMonday(yo.tenantId, id === PLANTILLA_DEFECTO_ID ? undefined : id),
+    cargarCampos: () =>
+      api.monday
+        .columnasGuardadas(yo.tenantId)
+        .then((cs) => cs.filter((c) => columnaEsVariable(c.type)).map((c) => ({ id: c.id, title: c.title }))),
+    verPlantillas: () => api.monday.ver(yo.tenantId).then((x) => x?.plantillas ?? []),
+    guardarPlantillas: (lista) => api.monday.guardarPlantillas(yo.tenantId, lista),
+  };
+}
+
+function adaptadorBitrix(yo: Yo, v: BitrixVista): ConectorAdapter {
+  return {
+    tipo: "bitrix",
+    instanceId: v.instanceId,
+    contexto: `Bitrix conectado (${v.entidad}); teléfono en el campo: ${v.campoTelefono}.`,
+    urlWebhook: (id) => urlWebhookBitrix(yo.tenantId, id === PLANTILLA_DEFECTO_ID ? undefined : id),
+    cargarCampos: () =>
+      api.bitrix.camposGuardados(yo.tenantId).then((cs) => cs.map((c) => ({ id: c.id, title: c.title }))),
+    verPlantillas: () => api.bitrix.ver(yo.tenantId).then((x) => x?.plantillas ?? []),
+    guardarPlantillas: (lista) => api.bitrix.guardarPlantillas(yo.tenantId, lista),
+  };
+}
+
 export function Acciones(props: {
   yo: Yo;
   monday: MondayVista | null;
   alCambiar: () => void;
 }) {
   const [tab, setTab] = useState<"salientes" | "entrantes">("salientes");
+  const [bitrix, setBitrix] = useState<BitrixVista | null>(null);
+
+  useEffect(() => {
+    api.bitrix.ver(props.yo.tenantId).then(setBitrix).catch(() => {});
+  }, [props.yo.tenantId, props.monday]);
+
+  // El plan permite un solo conector, así que a lo sumo uno está activo.
+  const conector = bitrix
+    ? adaptadorBitrix(props.yo, bitrix)
+    : props.monday
+      ? adaptadorMonday(props.yo, props.monday)
+      : null;
+
   return (
     <main className="seccion">
       <header className="seccion__cabecera">
@@ -46,7 +103,7 @@ export function Acciones(props: {
       </div>
 
       {tab === "salientes" ? (
-        <Salientes yo={props.yo} monday={props.monday} alCambiar={props.alCambiar} />
+        <Salientes yo={props.yo} conector={conector} alCambiar={props.alCambiar} />
       ) : (
         <Entrantes yo={props.yo} />
       )}
@@ -64,41 +121,33 @@ const EJEMPLO: Record<string, string> = {
 
 function Salientes(props: {
   yo: Yo;
-  monday: MondayVista | null;
+  conector: ConectorAdapter | null;
   alCambiar: () => void;
 }) {
-  const { yo } = props;
-  const [plantillas, setPlantillas] = useState<PlantillaSaliente[]>(
-    props.monday?.plantillas ?? [],
-  );
+  const { yo, conector } = props;
+  const [plantillas, setPlantillas] = useState<PlantillaSaliente[]>([]);
   const [editando, setEditando] = useState<PlantillaSaliente | null>(null);
-  const [columnas, setColumnas] = useState<MondayColumna[]>([]);
+  const [campos, setCampos] = useState<{ id: string; title: string }[]>([]);
   const [guardado, setGuardado] = useState(false);
   const [guardarError, setGuardarError] = useState<string | null>(null);
-  const [registro, setRegistro] = useState<RegistroMonday | null>(null);
   const [envios, setEnvios] = useState<Message[]>([]);
 
-  const instanceId = props.monday?.instanceId;
+  const instanceId = conector?.instanceId;
   const enEdicion = editando !== null;
 
   useEffect(() => {
-    if (!props.monday) return;
-    api.monday.columnasGuardadas(yo.tenantId).then(setColumnas).catch(() => {});
-  }, [yo.tenantId, props.monday]);
+    if (!conector) return;
+    conector.cargarCampos().then(setCampos).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yo.tenantId, conector?.tipo]);
 
-  // Refresca el listado (estado/última vez por plantilla), el registro y los
-  // envíos. Mientras se edita, NO recarga las plantillas: así el polling no
-  // pisa lo que el usuario está escribiendo (el bug de sincronía a evitar).
+  // Refresca el listado (estado/última vez por plantilla) y los envíos.
+  // Mientras se edita, NO recarga las plantillas: así el polling no pisa lo
+  // que el usuario está escribiendo (el bug de sincronía a evitar).
   useEffect(() => {
-    if (!props.monday) return;
+    if (!conector) return;
     const cargar = () => {
-      api.monday.registro(yo.tenantId).then(setRegistro).catch(() => {});
-      if (!enEdicion) {
-        api.monday
-          .ver(yo.tenantId)
-          .then((v) => v && setPlantillas(v.plantillas))
-          .catch(() => {});
-      }
+      if (!enEdicion) conector.verPlantillas().then(setPlantillas).catch(() => {});
       if (instanceId) {
         api
           .mensajes(yo.tenantId, instanceId)
@@ -109,15 +158,16 @@ function Salientes(props: {
     cargar();
     const t = setInterval(cargar, 4000);
     return () => clearInterval(t);
-  }, [yo.tenantId, props.monday, instanceId, enEdicion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yo.tenantId, conector?.tipo, instanceId, enEdicion]);
 
-  if (!props.monday) {
+  if (!conector) {
     return (
       <div className="vacio">
-        <p>Primero conecta monday.</p>
+        <p>Primero conecta tu CRM.</p>
         <p className="consola__sub">
-          Los mensajes salientes se disparan desde tu CRM; configúralo en
-          Conexiones.
+          Los mensajes salientes se disparan desde tu CRM (monday o Bitrix24);
+          configúralo en Conexiones.
         </p>
       </div>
     );
@@ -126,7 +176,7 @@ function Salientes(props: {
   const persistir = async (lista: PlantillaSaliente[]): Promise<boolean> => {
     setGuardarError(null);
     try {
-      await api.monday.guardarPlantillas(yo.tenantId, lista);
+      await conector.guardarPlantillas(lista);
       setPlantillas(lista);
       setGuardado(true);
       props.alCambiar();
@@ -171,13 +221,10 @@ function Salientes(props: {
     return (
       <PlantillaEditor
         plantilla={editando}
-        columnas={columnas}
-        // La plantilla por defecto conserva la URL corta ya configurada en
-        // monday; las demás usan su URL propia por id.
-        url={urlWebhookMonday(
-          yo.tenantId,
-          editando.id === PLANTILLA_DEFECTO_ID ? undefined : editando.id,
-        )}
+        campos={campos}
+        // La plantilla por defecto conserva la URL corta ya configurada en el
+        // CRM; las demás usan su URL propia por id.
+        url={conector.urlWebhook(editando.id)}
         error={guardarError}
         alGuardar={guardarUna}
         alCancelar={() => {
@@ -191,10 +238,8 @@ function Salientes(props: {
   return (
     <div className="panel">
       <p className="consola__sub">
-        Board conectado; columna de teléfono:{" "}
-        <strong>{props.monday.columnaTelefono}</strong>. Cada plantilla tiene su
-        propia dirección de webhook: apunta cada automatización de monday a la
-        plantilla que quieras que mande.
+        {conector.contexto} Cada plantilla tiene su propia dirección de webhook:
+        apunta cada automatización de tu CRM a la plantilla que quieras que mande.
       </p>
 
       <div className="guardar-fila">
@@ -290,7 +335,7 @@ function estadoPlantilla(p: PlantillaSaliente): string {
 /** Editor de UNA plantilla: nombre, cuerpo con variables/emojis, vista previa y su webhook. */
 function PlantillaEditor(props: {
   plantilla: PlantillaSaliente;
-  columnas: MondayColumna[];
+  campos: { id: string; title: string }[];
   url: string;
   error: string | null;
   alGuardar: (p: PlantillaSaliente) => void;
@@ -339,10 +384,10 @@ function PlantillaEditor(props: {
         <div className="editor">
           <div className="editor__barra">
             <span className="editor__grupo">
-              {props.columnas.length === 0 && (
-                <span className="tenue">cargando columnas…</span>
+              {props.campos.length === 0 && (
+                <span className="tenue">cargando campos…</span>
               )}
-              {props.columnas.filter((c) => columnaEsVariable(c.type)).map((c) => (
+              {props.campos.map((c) => (
                 <button
                   key={c.id}
                   className="chip"

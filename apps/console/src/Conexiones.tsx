@@ -3,10 +3,14 @@ import type { Instance } from "@cauce/core";
 import {
   api,
   columnaEsTelefono,
+  ENTIDADES_BITRIX,
   type Yo,
   type MondayBoard,
   type MondayColumna,
   type MondayVista,
+  type BitrixVista,
+  type CampoBitrix,
+  type EntidadBitrix,
 } from "./api.ts";
 
 /**
@@ -15,7 +19,7 @@ import {
  */
 const CRMS = [
   { id: "monday", nombre: "monday", disponible: true },
-  { id: "bitrix", nombre: "Bitrix24", disponible: false },
+  { id: "bitrix", nombre: "Bitrix24", disponible: true },
   { id: "pipedrive", nombre: "Pipedrive", disponible: false },
 ];
 
@@ -60,6 +64,13 @@ export function Conexiones(props: {
 
       {abierto === "monday" && (
         <AsistenteMonday
+          yo={props.yo}
+          instancias={props.instancias}
+          alGuardar={props.alCambiar}
+        />
+      )}
+      {abierto === "bitrix" && (
+        <AsistenteBitrix
           yo={props.yo}
           instancias={props.instancias}
           alGuardar={props.alCambiar}
@@ -398,4 +409,215 @@ function AsistenteMonday(props: {
       </div>
     );
   }
+}
+
+/**
+ * Alta autoservicio de Bitrix24: el cliente pega la URL de su webhook
+ * ENTRANTE (con el token), elige la entidad y mapea el campo del teléfono
+ * — el mismo flujo que monday. El application_token del webhook SALIENTE
+ * es opcional (verifica los disparos). Nada se guarda en claro.
+ */
+function AsistenteBitrix(props: {
+  yo: Yo;
+  instancias: Instance[];
+  alGuardar: () => void;
+}) {
+  const { yo } = props;
+  const [existente, setExistente] = useState<BitrixVista | null>(null);
+  const [instanceId, setInstanceId] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [applicationToken, setApplicationToken] = useState("");
+  const [entidad, setEntidad] = useState<EntidadBitrix>("deal");
+  const [campos, setCampos] = useState<CampoBitrix[]>([]);
+  const [campoTelefono, setCampoTelefono] = useState("");
+  const [estado, setEstado] = useState<{ tipo: "info" | "ok" | "error"; texto: string } | null>(null);
+  const [editando, setEditando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
+  const [confirmarQuitar, setConfirmarQuitar] = useState(false);
+
+  const conectadas = props.instancias.filter((i) => i.estado === "connected");
+
+  useEffect(() => {
+    api.bitrix.ver(yo.tenantId).then((v) => {
+      setExistente(v);
+      if (v) {
+        setInstanceId(v.instanceId);
+        setEntidad(v.entidad);
+        setCampoTelefono(v.campoTelefono);
+        setEditando(false);
+        api.bitrix.camposGuardados(yo.tenantId).then(setCampos).catch(() => {});
+      } else {
+        setEditando(true);
+      }
+    });
+  }, [yo.tenantId]);
+
+  const probar = async () => {
+    setEstado({ tipo: "info", texto: "Validando el webhook y leyendo campos…" });
+    setCampos([]);
+    try {
+      await api.bitrix.probar(yo.tenantId, webhookUrl);
+      const c = await api.bitrix.campos(yo.tenantId, webhookUrl, entidad);
+      setCampos(c);
+      // Sugiere el campo estándar de teléfono si existe.
+      const tel = c.find((x) => x.id === "PHONE") ?? c.find((x) => /phone|tel/i.test(x.id));
+      if (tel && !campoTelefono) setCampoTelefono(tel.id);
+      setEstado({ tipo: "ok", texto: `Webhook válido · ${c.length} campos en ${entidad}.` });
+    } catch (err: any) {
+      setEstado({ tipo: "error", texto: err?.message ?? "Bitrix rechazó el webhook." });
+    }
+  };
+
+  const guardar = async () => {
+    if (!instanceId) return setEstado({ tipo: "error", texto: "Elige el número desde el que se envía." });
+    if (!campoTelefono) return setEstado({ tipo: "error", texto: "Mapea qué campo tiene el teléfono." });
+    setEstado({ tipo: "info", texto: "Guardando…" });
+    try {
+      await api.bitrix.guardar(yo.tenantId, {
+        instanceId,
+        entidad,
+        campoTelefono,
+        webhookUrl, // vacío al editar = conserva el guardado
+        applicationToken,
+      });
+      setGuardado(true);
+      setEstado({ tipo: "ok", texto: "Conexión guardada." });
+      const v = await api.bitrix.ver(yo.tenantId);
+      setExistente(v);
+      setEditando(false);
+      props.alGuardar();
+    } catch (err: any) {
+      setEstado({ tipo: "error", texto: err?.message ?? "No se pudo guardar." });
+    }
+  };
+
+  const quitar = async () => {
+    await api.bitrix.quitar(yo.tenantId).catch(() => {});
+    setExistente(null);
+    setConfirmarQuitar(false);
+    setEditando(true);
+    setCampos([]);
+    props.alGuardar();
+  };
+
+  if (existente && !editando) {
+    return (
+      <section className="asistente">
+        <div className="config-ok">
+          <div>
+            <h2>Bitrix24 conectado</h2>
+            <p className="consola__sub">
+              Entidad <strong>{existente.entidad}</strong> · teléfono en{" "}
+              <strong>{existente.campoTelefono}</strong> · webhook{" "}
+              <strong>{existente.webhookPista}</strong>
+              {existente.tieneApplicationToken ? " · disparos verificados" : ""}
+            </p>
+          </div>
+          <div className="config-ok__acciones">
+            <button className="boton" onClick={() => setEditando(true)}>Editar</button>
+            <button className="boton boton--peligro" onClick={() => setConfirmarQuitar(true)}>
+              Quitar
+            </button>
+          </div>
+        </div>
+        {confirmarQuitar && (
+          <p className="mensaje-error">
+            ¿Quitar la conexión con Bitrix? Los disparos salientes dejan de funcionar.{" "}
+            <button className="boton mini-link" onClick={quitar}>Sí, quitar</button>{" "}
+            <button className="boton mini-link" onClick={() => setConfirmarQuitar(false)}>Cancelar</button>
+          </p>
+        )}
+      </section>
+    );
+  }
+
+  return (
+    <section className="asistente">
+      <h2>Conectar Bitrix24</h2>
+
+      <details className="ayuda">
+        <summary>¿Dónde saco la URL del webhook y el token?</summary>
+        <ol>
+          <li>
+            En Bitrix: <em>Aplicaciones → Desarrolladores → Otro → Webhook
+            entrante</em>. Marca los permisos de <strong>CRM</strong> y copia la
+            URL (termina en <code>/rest/…/…/</code>). Es como una contraseña:
+            quien la tenga puede entrar a tu CRM.
+          </li>
+          <li>
+            Para el disparo: crea un <em>Webhook saliente</em> (o una regla de
+            automatización que llame un webhook) apuntando a la URL que te
+            damos abajo por plantilla, y copia su <strong>application token</strong>{" "}
+            aquí para que Cauce verifique que el disparo es tuyo (opcional).
+          </li>
+        </ol>
+      </details>
+
+      <label className="campo-etq">
+        <span>Número desde el que se envía</span>
+        <select className="campo" value={instanceId} onChange={(e) => setInstanceId(e.target.value)}>
+          <option value="">Elige una sesión conectada…</option>
+          {conectadas.map((i) => (
+            <option key={i.id} value={i.id}>{i.numero ?? i.id}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="campo-etq">
+        <span>URL del webhook entrante {existente ? "(vacío = conservar)" : ""}</span>
+        <input
+          className="campo"
+          value={webhookUrl}
+          onChange={(e) => setWebhookUrl(e.target.value)}
+          placeholder="https://tu-portal.bitrix24.mx/rest/1/xxxxxxxx/"
+        />
+      </label>
+
+      <label className="campo-etq">
+        <span>Entidad que dispara</span>
+        <select className="campo" value={entidad} onChange={(e) => { setEntidad(e.target.value as EntidadBitrix); setCampos([]); }}>
+          {ENTIDADES_BITRIX.map((x) => (
+            <option key={x.id} value={x.id}>{x.nombre}</option>
+          ))}
+        </select>
+      </label>
+
+      <div className="fila-inline">
+        <button className="boton" onClick={probar} disabled={!webhookUrl}>
+          Probar y leer campos
+        </button>
+      </div>
+
+      {campos.length > 0 && (
+        <label className="campo-etq">
+          <span>¿Qué campo tiene el teléfono?</span>
+          <select className="campo" value={campoTelefono} onChange={(e) => setCampoTelefono(e.target.value)}>
+            <option value="">Elige un campo…</option>
+            {campos.map((c) => (
+              <option key={c.id} value={c.id}>{c.title} ({c.id})</option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      <label className="campo-etq">
+        <span>Application token del webhook saliente (opcional)</span>
+        <input
+          className="campo"
+          value={applicationToken}
+          onChange={(e) => setApplicationToken(e.target.value)}
+          placeholder="verifica que los disparos vengan de tu Bitrix"
+        />
+      </label>
+
+      {estado && (
+        <p className={estado.tipo === "error" ? "mensaje-error" : "consola__sub"}>{estado.texto}</p>
+      )}
+
+      <div className="guardar-fila">
+        <button className="boton boton--primario" onClick={guardar}>Guardar conexión</button>
+        {guardado && <span className="ok-guardado">Guardado ✓</span>}
+      </div>
+    </section>
+  );
 }

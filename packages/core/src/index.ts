@@ -280,6 +280,12 @@ export interface Conversacion {
   ultimoEntranteEn: string | null;
   /** Item de monday que originó/recibe esta conversación; null si ninguno. */
   mondayItemId: string | null;
+  /**
+   * Entidad de Bitrix24 (deal/contact/…) que originó/recibe esta
+   * conversación; null si ninguna. La respuesta del cliente vuelve a su
+   * timeline. Análogo a `mondayItemId` para el otro CRM.
+   */
+  bitrixEntidad?: { tipo: string; id: string } | null;
 }
 
 /**

@@ -3,33 +3,27 @@ import type { FalloEnvio, Message, TenantId } from "@cauce/core";
 import type { ColaEnvios } from "../cola.ts";
 import type { Repositorio } from "../store.ts";
 import { Cripto, pista } from "../cripto.ts";
+import {
+  PLANTILLA_DEFECTO_ID,
+  elegirPlantilla,
+  fusionarPlantillas,
+  normalizarPlantillas,
+  renderCuerpo,
+  soloDigitos,
+  type PlantillaSaliente,
+  type RegistroConector,
+  type ResultadoPlantilla,
+} from "../conectores/plantillas.ts";
 import { ClienteMonday, type BoardMonday, type ColumnaBoard, type ItemMonday } from "./cliente.ts";
 
-/** Id de la plantilla que responde en la URL corta (compatibilidad). */
-export const PLANTILLA_DEFECTO_ID = "default";
-
-/**
- * Resultado del último disparo de UNA plantilla, para el listado en la UI.
- */
-export type ResultadoPlantilla =
-  | { ok: true; itemId: string; telefono: string; en: string }
-  | { ok: false; error: string; en: string };
-
-/**
- * Una plantilla de mensaje saliente. Cada una tiene su propia URL de
- * webhook (`/webhooks/monday/{tenant}/{id}`), así el cliente apunta
- * automatizaciones distintas de monday a mensajes distintos. Variables:
- * {{columnId}} → texto de esa columna; {{nombre}} → nombre del item.
- */
-export interface PlantillaSaliente {
-  id: string;
-  nombre: string;
-  cuerpo: string;
-  /** ISO del último disparo de esta plantilla; null si nunca. */
-  ultimoDisparoEn?: string | null;
-  /** Cómo terminó el último disparo de esta plantilla. */
-  ultimoResultado?: ResultadoPlantilla | null;
-}
+// Reexporta las piezas compartidas para no romper a los consumidores del
+// conector monday (store, tests) que las importaban desde aquí.
+export {
+  PLANTILLA_DEFECTO_ID,
+  normalizarPlantillas,
+  type PlantillaSaliente,
+  type ResultadoPlantilla,
+};
 
 /**
  * Documento guardado del conector monday (por tenant). Las credenciales
@@ -56,25 +50,6 @@ export interface ConectorMondayDoc {
 }
 
 /**
- * Migra un doc guardado al modelo de varias plantillas. Un doc viejo tiene
- * un solo campo `plantilla: string`; se convierte en la plantilla por
- * defecto, que sigue respondiendo en la URL corta ya configurada en
- * monday, para no romper la automatización existente.
- */
-export function normalizarPlantillas(raw: any): PlantillaSaliente[] {
-  if (Array.isArray(raw?.plantillas) && raw.plantillas.length > 0) {
-    return raw.plantillas as PlantillaSaliente[];
-  }
-  return [
-    {
-      id: PLANTILLA_DEFECTO_ID,
-      nombre: "Plantilla principal",
-      cuerpo: typeof raw?.plantilla === "string" ? raw.plantilla : "",
-    },
-  ];
-}
-
-/**
  * Datos en claro que la consola envía para dar de alta o editar el
  * conector. Al EDITAR, apiToken/signingSecret pueden venir vacíos: se
  * conservan los ya guardados (el token está enmascarado en la UI y no se
@@ -94,15 +69,10 @@ export interface AltaConectorMonday {
 
 /** Reemplaza {{nombre}} y {{columnId}} por los valores del item. */
 export function renderPlantilla(plantilla: string, item: ItemMonday): string {
-  return plantilla.replace(/\{\{\s*([\w.-]+)\s*\}\}/g, (_m, clave: string) => {
-    if (clave === "nombre") return item.name;
-    return item.columnas[clave]?.text ?? "";
+  return renderCuerpo(plantilla, {
+    nombre: item.name,
+    campo: (clave) => item.columnas[clave]?.text ?? "",
   });
-}
-
-/** Normaliza un teléfono a solo dígitos (E.164 sin '+'). */
-function soloDigitos(telefono: string): string {
-  return telefono.replace(/[^\d]/g, "");
 }
 
 export interface ResultadoDisparo {
@@ -115,18 +85,10 @@ export interface ResultadoDisparo {
 
 /**
  * Rastro observable del conector para la UI: cuándo llamó monday por
- * última vez y cómo terminó el último disparo. Evita la mitad de los
- * tickets ("¿monday ya me llamó?", "¿por qué no se mandó?").
+ * última vez y cómo terminó el último disparo. Es el tipo compartido por
+ * todos los conectores (ver RegistroConector).
  */
-export interface RegistroMonday {
-  /** ISO de la última vez que monday golpeó el webhook. */
-  ultimaLlamadaEn: string | null;
-  /** Resultado del último evento procesado. */
-  ultimoResultado:
-    | { ok: true; itemId: string; telefono: string; en: string }
-    | { ok: false; error: string; en: string }
-    | null;
-}
+export type RegistroMonday = RegistroConector;
 
 export class ConectorMonday {
   readonly #repo: Repositorio;
@@ -259,19 +221,9 @@ export class ConectorMonday {
   ): Promise<boolean> {
     const doc = await this.#repo.getConectorMonday(tenantId);
     if (!doc) return false;
-    const previas = new Map(
-      normalizarPlantillas(doc).map((p) => [p.id, p]),
-    );
-    const fusionadas = plantillas.map((p) => ({
-      id: p.id,
-      nombre: p.nombre,
-      cuerpo: p.cuerpo,
-      ultimoDisparoEn: previas.get(p.id)?.ultimoDisparoEn ?? null,
-      ultimoResultado: previas.get(p.id)?.ultimoResultado ?? null,
-    }));
     await this.#repo.saveConectorMonday(tenantId, {
       ...doc,
-      plantillas: fusionadas,
+      plantillas: fusionarPlantillas(normalizarPlantillas(doc), plantillas),
     });
     return true;
   }
@@ -413,15 +365,7 @@ export class ConectorMonday {
     doc: ConectorMondayDoc,
     plantillaId?: string,
   ): PlantillaSaliente | null {
-    const plantillas = normalizarPlantillas(doc);
-    if (plantillaId) {
-      return plantillas.find((p) => p.id === plantillaId) ?? null;
-    }
-    return (
-      plantillas.find((p) => p.id === PLANTILLA_DEFECTO_ID) ??
-      plantillas[0] ??
-      null
-    );
+    return elegirPlantilla(normalizarPlantillas(doc), plantillaId);
   }
 
   /** Anota en la plantilla usada cuándo y cómo terminó su último disparo. */
