@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import type { Tenant } from "@cauce/core";
 import { crearApp } from "./app.ts";
 import { hashApiKey } from "./auth.ts";
@@ -145,6 +146,28 @@ const aplicarPlanesPendientes = async () => {
 void aplicarPlanesPendientes();
 setInterval(aplicarPlanesPendientes, 5 * 60_000);
 
+/**
+ * Versión desplegada para /health y el log de arranque. Si CAUCE_VERSION
+ * viene vacía, se lee el HEAD de git del directorio del código: así
+ * /health dice la verdad sin pasos manuales en cada despliegue. Sin
+ * repositorio, "dev". Con cambios sin commitear, el hash lleva "+".
+ */
+function versionDesplegada(): string {
+  const env = process.env.CAUCE_VERSION?.trim();
+  if (env) return env;
+  try {
+    const raiz = new URL("../../..", import.meta.url).pathname;
+    const hash = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: raiz, stdio: ["ignore", "pipe", "ignore"] })
+      .toString().trim();
+    const sucio = execFileSync("git", ["status", "--porcelain"], { cwd: raiz, stdio: ["ignore", "pipe", "ignore"] })
+      .toString().trim().length > 0;
+    return hash ? `${hash}${sucio ? "+" : ""}` : "dev";
+  } catch {
+    return "dev";
+  }
+}
+const version = versionDesplegada();
+
 crearApp(repo, gestor, {
   corsOrigenes,
   cola,
@@ -153,10 +176,10 @@ crearApp(repo, gestor, {
   motorEntrada,
   verificarToken,
   provisioning,
-  version: process.env.CAUCE_VERSION ?? "dev",
+  version,
   ...(adminKey ? { adminKey } : {}),
 }).listen(puerto, () => {
-  console.log(`orquestador escuchando en :${puerto} (versión ${process.env.CAUCE_VERSION ?? "dev"})`);
+  console.log(`orquestador escuchando en :${puerto} (versión ${version})`);
   // Ya con el puerto abierto: ¿los contenedores rehidratados alcanzan al
   // orquestador? Antes de este punto la sonda daría un fallo falso.
   gestor.comprobarAlcanceSesiones().catch((err: any) =>

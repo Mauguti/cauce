@@ -188,6 +188,27 @@ sudo journalctl -u factory --no-pager | grep -E "envio\.(fallido|reintento)|entr
 sudo journalctl -u factory --no-pager | grep -c "webhook.recibido"
 ```
 
+### Ohio congelada: qué NO hacer mientras haya clientes ahí
+
+Ohio (Cauce) **no recibe** el modelo de planes ni nada posterior: se queda
+con su código y su consola (`cauce-consola.web.app`) hasta que el último
+cliente se mueva a México, y entonces se apaga.
+
+**No compartir la URL de la plataforma nueva con clientes que sigan en
+Ohio.** Firebase Auth es compartido: si un usuario de Procesa entra a la
+plataforma, ve un tenant vacío en México y, si toca "Conectar QR", se le
+crea un segundo tenant vacío. No rompe Ohio, pero confunde y ensucia la
+base. La URL se entrega el día que el cliente se mueve, no antes.
+
+**Mover un cliente de Ohio a México** no es copiar documentos. Cada
+movimiento implica: reescanear el QR en México (contenedor nuevo),
+volver a capturar sus credenciales de CRM (están cifradas con la llave de
+Ohio, que no es la de México) y copiar mensajes, conversaciones y
+disparadores con un script. Cada uno se planea y aprueba por escrito
+antes, con el tiempo de desconexión estimado para avisarle al cliente.
+El primero será Procesa; su plan vive en `docs/movimiento-procesa.md`
+cuando se escriba.
+
 ### Planes y migración de ids legado
 
 Los planes son `prueba | basico | estandar | pro` con capacidades
