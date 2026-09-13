@@ -75,8 +75,8 @@ describe("ConectorOpenlines", () => {
     const metodos = c.llamadas.map((l) => l.metodo);
     expect(metodos).toEqual(["app.info", "imconnector.register", "event.bind", "imconnector.activate", "imconnector.connector.data.set"]);
     expect(doc.dominio).toBe("digsol.bitrix24.mx"); // normalizado desde la URL pegada
-    expect(c.llamadas[0]!.body.PLACEMENT_HANDLER).toBe("https://api.factory.digsol.com.mx/bitrix/openlines/t1");
-    expect(c.llamadas[1]!.body.handler).toBe("https://api.factory.digsol.com.mx/bitrix/openlines/t1");
+    expect(c.llamadas[1]!.body.PLACEMENT_HANDLER).toBe("https://api.factory.digsol.com.mx/bitrix/openlines/t1");
+    expect(c.llamadas[2]!.body.handler).toBe("https://api.factory.digsol.com.mx/bitrix/openlines/t1");
   });
 
   it("una instalación desde OTRO portal se rechaza", async () => {
