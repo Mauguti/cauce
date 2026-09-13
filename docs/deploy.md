@@ -313,6 +313,24 @@ Variables nuevas del bloque 8:
 
 ### `CAUCE_CRYPTO_KEY` — llave de cifrado de credenciales
 
+> **Qué protege hoy esta llave (12-sep-2026):** tokens de monday, webhooks
+> de Bitrix, tokens OAuth por portal y `client_id`/`client_secret` de las
+> apps locales del canal abierto. Perderla ya no es "cada cliente vuelve a
+> pegar su token": es "todos los clientes rehacen todas sus conexiones".
+>
+> **Tareas con nombre, pendientes:**
+>
+> 1. **`CAUCE_CRYPTO_KEY` en AWS Secrets Manager como único secreto.** El
+>    orquestador la lee al arrancar con rol de instancia; todo lo demás
+>    sigue cifrado con ella en Firestore. Un secreto maestro en la bóveda,
+>    ningún otro. Disparo: antes de que el env file viaje a un segundo host.
+> 2. **Rotación de `CAUCE_CRYPTO_KEY` con solapamiento.** Leer con la
+>    llave vieja y la nueva durante la transición, recifrar en segundo
+>    plano, retirar la vieja. **Disparo: antes del quinto cliente con
+>    canal abierto.** No es opcional: a partir de ahí, perder la llave es
+>    rehacer las conexiones de todos.
+
+
 Cifra en reposo los tokens que los clientes conectan (API token y
 signing secret de monday; AES-256-GCM). **Es tan sensible como los
 tokens que protege.**
