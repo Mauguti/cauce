@@ -27,6 +27,17 @@ export interface AltaOpenlines {
   instanceId: InstanceId;
   clientId: string;
   clientSecret: string;
+  /** Dominio del portal de Bitrix24 del cliente, p. ej. digsol.bitrix24.mx. */
+  dominio: string;
+}
+
+/** Normaliza lo que el usuario pegue: URL completa, con barra, mayúsculas… → solo el host. */
+export function normalizarDominioPortal(entrada: string): string {
+  const s = entrada.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  if (!/^[a-z0-9][a-z0-9.-]{2,}\.[a-z]{2,}$/.test(s)) {
+    throw new Error("el dominio del portal no es válido; ejemplo: tuempresa.bitrix24.mx");
+  }
+  return s;
 }
 
 const ICONO_SVG =
@@ -89,6 +100,7 @@ export class ConectorOpenlines {
     if (!alta.clientId.trim() || !alta.clientSecret.trim()) {
       throw new Error("se requieren client_id y client_secret de la aplicación local de Bitrix24");
     }
+    const dominio = normalizarDominioPortal(alta.dominio);
     const previo = await this.#repo.getOpenlinesBitrix(tenantId);
     const ahora = new Date().toISOString();
     const doc: OpenlinesBitrixDoc = {
@@ -98,13 +110,13 @@ export class ConectorOpenlines {
       activo: previo?.activo ?? false,
       tokensCifrados: previo?.tokensCifrados ?? "",
       appCifrada: this.#cripto.cifrar(JSON.stringify({ clientId: alta.clientId.trim(), clientSecret: alta.clientSecret.trim() })),
-      dominio: previo?.dominio ?? "",
+      dominio,
       botId: previo?.botId ?? null,
       instaladoEn: previo?.instaladoEn ?? null,
       actualizadoEn: ahora,
     };
     await this.#repo.saveOpenlinesBitrix(tenantId, doc);
-    registrar("openlines.alta", { tenant: tenantId, instancia: alta.instanceId, resultado: previo ? "editada" : "creada" });
+    registrar("openlines.alta", { tenant: tenantId, instancia: alta.instanceId, dominio, resultado: previo ? "editada" : "creada" });
     return doc;
   }
 
@@ -167,22 +179,44 @@ export class ConectorOpenlines {
     const doc = await this.#repo.getOpenlinesBitrix(tenantId);
     if (!doc) throw new Error("tenant sin canal abierto dado de alta");
     const tokens = tokensDesdeAuth(auth);
+    const rechazar = (motivo: string): never => {
+      registrar("openlines.instalacion_rechazada", { tenant: tenantId, dominio: tokens.dominio, motivo }, "warn");
+      throw new Error(`instalación rechazada: ${motivo}`);
+    };
+    // 1. El portal debe ser el que el tenant declaró al dar de alta, y el
+    //    endpoint REST debe vivir en ese mismo host: nada de tokens que
+    //    apunten a un servidor ajeno.
+    const dominioRecibido = tokens.dominio.trim().toLowerCase();
+    if (dominioRecibido !== doc.dominio) rechazar("el portal no es el declarado en el alta");
+    let hostEndpoint = "";
+    try { hostEndpoint = new URL(tokens.clientEndpoint).host.toLowerCase(); } catch { rechazar("client_endpoint inválido"); }
+    if (hostEndpoint !== doc.dominio) rechazar("client_endpoint no corresponde al portal declarado");
+    if (!tokens.clientEndpoint.startsWith("https://")) rechazar("client_endpoint sin HTTPS");
+    // 2. Si ya había instalación, debe ser el mismo portal (member_id).
     if (doc.tokensCifrados) {
       const previos = this.#tokens(doc);
-      if (previos.memberId !== tokens.memberId) {
-        registrar("openlines.instalacion_rechazada", { tenant: tenantId, dominio: tokens.dominio, motivo: "portal distinto al instalado" }, "warn");
-        throw new Error("la aplicación ya está instalada en otro portal");
-      }
+      if (previos.memberId !== tokens.memberId) rechazar("la aplicación ya está instalada en otro portal");
     }
+    // 3. El token debe ser de NUESTRA app local: app.info en el portal
+    //    declarado debe devolver el client_id que el tenant dio de alta.
     const instalado: OpenlinesBitrixDoc = {
       ...doc,
       tokensCifrados: this.#cripto.cifrar(JSON.stringify(tokens)),
-      dominio: tokens.dominio,
       instaladoEn: doc.instaladoEn ?? new Date().toISOString(),
       actualizadoEn: new Date().toISOString(),
     };
-    await this.#repo.saveOpenlinesBitrix(tenantId, instalado);
     const cliente = this.#cliente(tenantId, instalado);
+    const info = await cliente.llamar("app.info");
+    const codigo = String(info?.CODE ?? info?.code ?? "").toLowerCase();
+    const esperado = this.#credenciales(doc).clientId.toLowerCase();
+    if (!codigo || codigo !== esperado) {
+      registrar("openlines.instalacion_rechazada", {
+        tenant: tenantId, dominio: tokens.dominio, motivo: "app.info no corresponde a la app dada de alta",
+        campos: Object.keys(info ?? {}).join(","),
+      }, "warn");
+      throw new Error("instalación rechazada: el token no es de la aplicación local dada de alta");
+    }
+    await this.#repo.saveOpenlinesBitrix(tenantId, instalado);
     const handler = this.urlHandler(tenantId);
     await cliente.registrarConector({
       id: instalado.connectorId,
@@ -208,7 +242,10 @@ export class ConectorOpenlines {
     const doc = await this.#repo.getOpenlinesBitrix(tenantId);
     if (!doc) throw new Error("tenant sin canal abierto dado de alta");
     const tokens = this.#tokens(doc);
-    if (opciones.memberId && opciones.memberId !== tokens.memberId) {
+    // Sin member_id o con uno distinto, no se toca nada: un POST desde
+    // fuera podría desactivar o redirigir la línea de un cliente.
+    if (!opciones.memberId || opciones.memberId !== tokens.memberId) {
+      registrar("openlines.placement_rechazado", { tenant: tenantId, linea: opciones.line, motivo: opciones.memberId ? "member_id distinto" : "sin member_id" }, "warn");
       throw new Error("el placement no viene del portal instalado");
     }
     const cliente = this.#cliente(tenantId, doc);

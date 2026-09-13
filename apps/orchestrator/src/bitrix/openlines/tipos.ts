@@ -35,7 +35,12 @@ export interface OpenlinesBitrixDoc {
   tokensCifrados: string;
   /** JSON {clientId, clientSecret} de la app local, cifrado con Cripto. */
   appCifrada: string;
-  /** Pista legible: dominio del portal. */
+  /**
+   * Dominio del portal que el tenant declaró al dar de alta (p. ej.
+   * digsol.bitrix24.mx). La instalación SOLO se acepta desde ese portal:
+   * es lo que impide que un tercero, conociendo el tenantId, "instale"
+   * su propio portal y se lleve los WhatsApp del cliente.
+   */
   dominio: string;
   /** Id de usuario del imbot de la línea (para reconocer sus mensajes en los eventos); null si no se registró. */
   botId: number | null;

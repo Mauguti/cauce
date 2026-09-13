@@ -442,8 +442,16 @@ export function crearApp(
         ol.respuestaOperador(tenantId, b.data).catch((err) => registrarError("openlines.operador", err, { tenant: tenantId }));
         return;
       }
-      registrar("openlines.evento_desconocido", { tenant: tenantId, evento, claves: Object.keys(b).join(",") }, "warn");
-      res.status(200).json({ ok: true });
+      // Eventos del imbot y otros que no procesamos: solo se aceptan si vienen
+      // autenticados del portal instalado. Cualquier otra cosa, 400: este
+      // endpoint es público y no debe dar 200 a lo que no reconoce.
+      if (evento && (await ol.eventoAutentico(tenantId, b.auth))) {
+        registrar("openlines.evento_ignorado", { tenant: tenantId, evento });
+        res.status(200).json({ ok: true });
+        return;
+      }
+      registrar("openlines.evento_rechazado", { tenant: tenantId, evento, motivo: evento ? "no autenticado" : "sin evento reconocible", claves: Object.keys(b).join(",") }, "warn");
+      res.status(evento ? 401 : 400).json({ error: evento ? "evento no autenticado" : "petición no reconocida" });
     } catch (err) {
       registrarError("openlines.handler", err, { tenant: tenantId, evento });
       res.status(400).json({ error: (err as Error)?.message ?? "error en el canal abierto" });
@@ -790,15 +798,15 @@ export function crearApp(
 
   tenantRouter.put("/conectores/bitrix-openlines", requiere("entrantes"), async (req, res) => {
     if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
-    const { instanceId, clientId, clientSecret } = req.body ?? {};
-    if (typeof instanceId !== "string" || typeof clientId !== "string" || typeof clientSecret !== "string") {
-      res.status(400).json({ error: "se requieren instanceId, clientId y clientSecret" });
+    const { instanceId, clientId, clientSecret, dominio } = req.body ?? {};
+    if (typeof instanceId !== "string" || typeof clientId !== "string" || typeof clientSecret !== "string" || typeof dominio !== "string") {
+      res.status(400).json({ error: "se requieren instanceId, clientId, clientSecret y dominio del portal" });
       return;
     }
     const instancia = await repo.getInstance(req.tenantId!, instanceId);
     if (!instancia) { res.status(404).json({ error: "instancia no encontrada" }); return; }
     try {
-      await opciones.openlines.guardarAlta(req.tenantId!, { instanceId, clientId, clientSecret });
+      await opciones.openlines.guardarAlta(req.tenantId!, { instanceId, clientId, clientSecret, dominio });
       res.json(await opciones.openlines.ver(req.tenantId!));
     } catch (err: any) {
       res.status(400).json({ error: err?.message ?? "no se pudo guardar el canal abierto" });

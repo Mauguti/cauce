@@ -11,7 +11,7 @@ const AUTH = {
   member_id: "m1", application_token: "apptok",
 };
 
-function armar(opciones: { rafagaN?: number } = {}) {
+function armar(opciones: { rafagaN?: number; appInfoCode?: string } = {}) {
   const repo = new RepositorioEnMemoria({
     tenants: [{
       id: "t1", nombre: "Digsol", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
@@ -24,6 +24,10 @@ function armar(opciones: { rafagaN?: number } = {}) {
     const metodo = url.split("/rest/")[1] ?? url;
     const body = init?.body ? JSON.parse(init.body) : null;
     llamadas.push({ metodo, body });
+    if (metodo === "app.info") {
+      // La app instalada es la nuestra: CODE = client_id dado de alta.
+      return new Response(JSON.stringify({ result: { ID: 5, CODE: opciones.appInfoCode ?? "cid", VERSION: 1, STATUS: "L", INSTALLED: true } }), { status: 200 });
+    }
     if (metodo === "imconnector.send.messages") {
       return new Response(JSON.stringify({ result: { SUCCESS: true, DATA: { RESULT: [{ session: { ID: "55", CHAT_ID: "901" } }] } } }), { status: 200 });
     }
@@ -44,7 +48,7 @@ function armar(opciones: { rafagaN?: number } = {}) {
 }
 
 async function instalarYActivar(c: ReturnType<typeof armar>) {
-  await c.conector.guardarAlta("t1", { instanceId: "i1", clientId: "cid", clientSecret: "sec" });
+  await c.conector.guardarAlta("t1", { instanceId: "i1", clientId: "cid", clientSecret: "sec", dominio: "https://Digsol.bitrix24.mx/" });
   await c.conector.instalar("t1", AUTH);
   await c.conector.activar("t1", { line: 3, activo: true, memberId: "m1" });
 }
@@ -69,7 +73,8 @@ describe("ConectorOpenlines", () => {
     expect(doc.appCifrada).not.toContain("sec");
     expect(doc.tokensCifrados).not.toContain("acc");
     const metodos = c.llamadas.map((l) => l.metodo);
-    expect(metodos).toEqual(["imconnector.register", "event.bind", "imconnector.activate", "imconnector.connector.data.set"]);
+    expect(metodos).toEqual(["app.info", "imconnector.register", "event.bind", "imconnector.activate", "imconnector.connector.data.set"]);
+    expect(doc.dominio).toBe("digsol.bitrix24.mx"); // normalizado desde la URL pegada
     expect(c.llamadas[0]!.body.PLACEMENT_HANDLER).toBe("https://api.factory.digsol.com.mx/bitrix/openlines/t1");
     expect(c.llamadas[1]!.body.handler).toBe("https://api.factory.digsol.com.mx/bitrix/openlines/t1");
   });
@@ -78,6 +83,37 @@ describe("ConectorOpenlines", () => {
     const c = armar();
     await instalarYActivar(c);
     await expect(c.conector.instalar("t1", { ...AUTH, member_id: "otro" })).rejects.toThrow(/otro portal/);
+  });
+
+  it("SEGURIDAD: un POST de instalación con tokens de un portal ajeno no secuestra el canal", async () => {
+    const c = armar();
+    await c.conector.guardarAlta("t1", { instanceId: "i1", clientId: "cid", clientSecret: "sec", dominio: "digsol.bitrix24.mx" });
+    // Dominio distinto al declarado
+    await expect(c.conector.instalar("t1", { ...AUTH, domain: "atacante.bitrix24.mx", client_endpoint: "https://atacante.bitrix24.mx/rest/" }))
+      .rejects.toThrow(/no es el declarado/);
+    // Dominio correcto pero endpoint apuntando a otro servidor
+    await expect(c.conector.instalar("t1", { ...AUTH, client_endpoint: "https://servidor-malo.example/rest/" }))
+      .rejects.toThrow(/client_endpoint no corresponde/);
+    // Nada quedó instalado
+    expect((await c.repo.getOpenlinesBitrix("t1"))!.tokensCifrados).toBe("");
+    expect(c.llamadas.filter((l) => l.metodo === "imconnector.register")).toHaveLength(0);
+  });
+
+  it("SEGURIDAD: si app.info no devuelve nuestro client_id, la instalación se rechaza", async () => {
+    const c = armar({ appInfoCode: "local.otraapp" });
+    await c.conector.guardarAlta("t1", { instanceId: "i1", clientId: "cid", clientSecret: "sec", dominio: "digsol.bitrix24.mx" });
+    await expect(c.conector.instalar("t1", AUTH)).rejects.toThrow(/no es de la aplicación local/);
+    expect((await c.repo.getOpenlinesBitrix("t1"))!.tokensCifrados).toBe("");
+  });
+
+  it("SEGURIDAD: el placement sin member_id o con otro no toca la línea", async () => {
+    const c = armar();
+    await instalarYActivar(c);
+    await expect(c.conector.activar("t1", { line: 9, activo: false, memberId: null })).rejects.toThrow(/no viene del portal/);
+    await expect(c.conector.activar("t1", { line: 9, activo: false, memberId: "otro" })).rejects.toThrow(/no viene del portal/);
+    const doc = (await c.repo.getOpenlinesBitrix("t1"))!;
+    expect(doc.lineId).toBe(3);
+    expect(doc.activo).toBe(true);
   });
 
   it("entrante: manda a la línea con chat.id instancia:teléfono y guarda lo que Bitrix devolvió", async () => {
