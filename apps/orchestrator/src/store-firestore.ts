@@ -11,6 +11,7 @@ import {
 import type { Repositorio } from "./store.ts";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
 import type { ConectorBitrixDoc } from "./bitrix/conector.ts";
+import type { OpenlinesBitrixDoc } from "./bitrix/openlines/tipos.ts";
 import type { RegistroConector } from "./conectores/plantillas.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 
@@ -216,6 +217,41 @@ export class RepositorioFirestore implements Repositorio {
     await this.#db
       .doc(`${rutas.tenant(tenantId)}/conectores/monday-registro`)
       .set(registro);
+  }
+
+  async getOpenlinesBitrix(tenantId: TenantId): Promise<OpenlinesBitrixDoc | null> {
+    const doc = await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/bitrix-openlines`).get();
+    return doc.exists ? (doc.data() as OpenlinesBitrixDoc) : null;
+  }
+
+  async saveOpenlinesBitrix(tenantId: TenantId, doc: OpenlinesBitrixDoc): Promise<void> {
+    await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/bitrix-openlines`).set(doc);
+  }
+
+  async deleteOpenlinesBitrix(tenantId: TenantId): Promise<void> {
+    await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/bitrix-openlines`).delete();
+  }
+
+  async vincularOpenLine(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    datos: NonNullable<Conversacion["bitrixOpenLine"]>,
+  ): Promise<void> {
+    await this.#db
+      .doc(rutas.conversacion(tenantId, instanceId, telefono))
+      .set({ tenantId, instanceId, telefono, bitrixOpenLine: datos }, { merge: true });
+  }
+
+  async marcarHumana(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    hasta: string | null,
+  ): Promise<void> {
+    await this.#db
+      .doc(rutas.conversacion(tenantId, instanceId, telefono))
+      .set({ tenantId, instanceId, telefono, humanaHasta: hasta }, { merge: true });
   }
 
   async getConectorBitrix(tenantId: TenantId): Promise<ConectorBitrixDoc | null> {

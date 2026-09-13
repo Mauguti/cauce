@@ -107,6 +107,8 @@ export interface Tenant {
   planPendiente?: { plan: TenantPlan; aplicaEn: string } | null;
   /** ISO 8601 de la fecha de corte del ciclo pagado en curso; null si no aplica. */
   cicloCorteEn?: string | null;
+  /** Ajustes del canal abierto de Bitrix24 (ventana humana, espaciado, ráfaga). Ausente = defaults. */
+  canalAbierto?: CanalAbiertoConfig | null;
   /** @deprecated Migrado a `limitesOverride.lineas`. Se lee solo por compatibilidad. */
   limiteLineas?: number;
   /** @deprecated Migrado a `limitesOverride.conectores`. Se lee solo por compatibilidad. */
@@ -425,6 +427,40 @@ export interface Conversacion {
    * timeline. Análogo a `mondayItemId` para el otro CRM.
    */
   bitrixEntidad?: { tipo: string; id: string } | null;
+  /**
+   * Canal abierto de Bitrix24 (Contact Center). `chatId`/`sessionId` son
+   * lo que Bitrix devolvió en el ÚLTIMO envío; nunca se asumen, porque
+   * al cerrar la sesión y volver a escribir pueden cambiar. Null si esta
+   * conversación nunca se mandó a una línea abierta.
+   */
+  bitrixOpenLine?: {
+    lineId: number;
+    chatId: string | null;
+    sessionId: string | null;
+    actualizadoEn: string;
+  } | null;
+  /**
+   * Ventana humana: hasta cuándo (ISO 8601) un operador tiene el hilo y
+   * los bots se pausan solo en esta conversación. Null = sin operador.
+   */
+  humanaHasta?: string | null;
+}
+
+/** Defaults del canal abierto; cada tenant puede sobreescribirlos en `Tenant.canalAbierto`. */
+export const CANAL_ABIERTO_DEFAULTS = {
+  /** Minutos que dura la ventana humana desde el último mensaje del operador. */
+  ventanaHumanaMin: 30,
+  /** Espaciado mínimo entre mensajes a la MISMA conversación (carril inmediato). */
+  espaciadoMs: 2_000,
+  /** Tope de ráfaga por línea: más de `rafagaN` mensajes en `rafagaSeg` segundos van a la cola normal. */
+  rafagaN: 10,
+  rafagaSeg: 60,
+} as const;
+
+export type CanalAbiertoConfig = Partial<typeof CANAL_ABIERTO_DEFAULTS>;
+
+export function canalAbiertoDe(t: Pick<Tenant, "canalAbierto">): typeof CANAL_ABIERTO_DEFAULTS {
+  return { ...CANAL_ABIERTO_DEFAULTS, ...(t.canalAbierto ?? {}) };
 }
 
 /**

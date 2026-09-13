@@ -7,6 +7,7 @@ import type {
   TenantId,
 } from "@cauce/core";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
+import type { OpenlinesBitrixDoc } from "./bitrix/openlines/tipos.ts";
 import type { ConectorBitrixDoc } from "./bitrix/conector.ts";
 import type { RegistroConector } from "./conectores/plantillas.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
@@ -91,6 +92,25 @@ export interface Repositorio {
     instanceId: InstanceId,
     telefono: string,
     itemId: string,
+  ): Promise<void>;
+
+  // Canal abierto de Bitrix24 (Contact Center): un documento por tenant.
+  getOpenlinesBitrix(tenantId: TenantId): Promise<OpenlinesBitrixDoc | null>;
+  saveOpenlinesBitrix(tenantId: TenantId, doc: OpenlinesBitrixDoc): Promise<void>;
+  deleteOpenlinesBitrix(tenantId: TenantId): Promise<void>;
+  /** Fija (merge) lo que Bitrix devolvió para esta conversación en la línea abierta. */
+  vincularOpenLine(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    datos: NonNullable<Conversacion["bitrixOpenLine"]>,
+  ): Promise<void>;
+  /** Fija (merge) hasta cuándo un operador tiene el hilo; null la libera. */
+  marcarHumana(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    hasta: string | null,
   ): Promise<void>;
 
   // Disparadores de entrada por tenant (lista ordenada por prioridad).
@@ -291,6 +311,61 @@ export class RepositorioEnMemoria implements Repositorio {
       mondayItemId: previa?.mondayItemId ?? null,
       bitrixEntidad: { tipo: entidadTipo, id: entidadId },
     });
+  }
+
+  #openlines = new Map<TenantId, OpenlinesBitrixDoc>();
+
+  async getOpenlinesBitrix(tenantId: TenantId): Promise<OpenlinesBitrixDoc | null> {
+    return this.#openlines.get(tenantId) ?? null;
+  }
+
+  async saveOpenlinesBitrix(tenantId: TenantId, doc: OpenlinesBitrixDoc): Promise<void> {
+    this.#openlines.set(tenantId, doc);
+  }
+
+  async deleteOpenlinesBitrix(tenantId: TenantId): Promise<void> {
+    this.#openlines.delete(tenantId);
+  }
+
+  #fusionarConversacion(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    cambios: Partial<Conversacion>,
+  ): void {
+    const clave = this.#claveConv(tenantId, instanceId, telefono);
+    const previa = this.#conversaciones.get(clave);
+    this.#conversaciones.set(clave, {
+      tenantId,
+      instanceId,
+      telefono,
+      nombre: previa?.nombre ?? null,
+      primerContactoEn: previa?.primerContactoEn ?? null,
+      ultimoEntranteEn: previa?.ultimoEntranteEn ?? null,
+      mondayItemId: previa?.mondayItemId ?? null,
+      bitrixEntidad: previa?.bitrixEntidad ?? null,
+      bitrixOpenLine: previa?.bitrixOpenLine ?? null,
+      humanaHasta: previa?.humanaHasta ?? null,
+      ...cambios,
+    });
+  }
+
+  async vincularOpenLine(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    datos: NonNullable<Conversacion["bitrixOpenLine"]>,
+  ): Promise<void> {
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { bitrixOpenLine: datos });
+  }
+
+  async marcarHumana(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    hasta: string | null,
+  ): Promise<void> {
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { humanaHasta: hasta });
   }
 
   #claveConv(t: TenantId, i: InstanceId, tel: string): string {
