@@ -805,6 +805,17 @@ export function crearApp(
     }
   });
 
+  // Prueba de visibilidad del bot (dogfooding): registra el imbot de la línea.
+  tenantRouter.post("/conectores/bitrix-openlines/bot", requiere("bots"), async (req, res) => {
+    if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
+    try {
+      const botId = await opciones.openlines.registrarBot(req.tenantId!);
+      res.json({ botId });
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "no se pudo registrar el bot" });
+    }
+  });
+
   tenantRouter.delete("/conectores/bitrix-openlines", requiere("entrantes"), async (req, res) => {
     if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
     await opciones.openlines.quitar(req.tenantId!);

@@ -227,6 +227,28 @@ export class ConectorOpenlines {
     return actualizado;
   }
 
+  /**
+   * Registra el imbot de línea abierta y guarda su id. Es la pieza de la
+   * prueba de visibilidad: con bot registrado, las respuestas de los bots
+   * se reflejan en el chat del operador y sus eventos se reconocen para
+   * no rebotar al contacto. Si la prueba falla, se quita y se cae a C.
+   */
+  async registrarBot(tenantId: TenantId): Promise<number> {
+    const doc = await this.#repo.getOpenlinesBitrix(tenantId);
+    if (!doc) throw new Error("tenant sin canal abierto dado de alta");
+    const cliente = this.#cliente(tenantId, doc);
+    const resultado = await cliente.registrarBot({
+      codigo: `digsol_factory_bot_${tenantId}`,
+      nombre: "Bot · Digsol Factory",
+      handler: this.urlHandler(tenantId),
+    });
+    const botId = Number(resultado);
+    if (!Number.isFinite(botId)) throw new Error(`imbot.register no devolvió un id numérico: ${JSON.stringify(resultado)}`);
+    await this.#repo.saveOpenlinesBitrix(tenantId, { ...doc, botId, actualizadoEn: new Date().toISOString() });
+    registrar("openlines.bot_registrado", { tenant: tenantId, botId });
+    return botId;
+  }
+
   // ── Entrante: WhatsApp → Contact Center ──────────────────────────────────
 
   /**
