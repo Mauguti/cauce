@@ -31,13 +31,15 @@ export interface OpenlinesBitrixDoc {
   /** Línea abierta a la que se activó el conector; null hasta el placement. */
   lineId: number | null;
   activo: boolean;
-  /** JSON de TokensOAuth cifrado con Cripto. */
+  /** JSON de TokensOAuth cifrado con Cripto; "" hasta que el portal instale la app. */
   tokensCifrados: string;
+  /** JSON {clientId, clientSecret} de la app local, cifrado con Cripto. */
+  appCifrada: string;
   /** Pista legible: dominio del portal. */
   dominio: string;
   /** Id de usuario del imbot de la línea (para reconocer sus mensajes en los eventos); null si no se registró. */
   botId: number | null;
-  instaladoEn: string;
+  instaladoEn: string | null;
   actualizadoEn: string;
 }
 

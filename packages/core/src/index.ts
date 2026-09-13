@@ -446,21 +446,33 @@ export interface Conversacion {
   humanaHasta?: string | null;
 }
 
-/** Defaults del canal abierto; cada tenant puede sobreescribirlos en `Tenant.canalAbierto`. */
-export const CANAL_ABIERTO_DEFAULTS = {
+/** Ajustes del canal abierto por tenant; lo ausente toma el default. */
+export interface CanalAbiertoConfig {
   /** Minutos que dura la ventana humana desde el último mensaje del operador. */
-  ventanaHumanaMin: 30,
+  ventanaHumanaMin?: number;
   /** Espaciado mínimo entre mensajes a la MISMA conversación (carril inmediato). */
-  espaciadoMs: 2_000,
+  espaciadoMs?: number;
   /** Tope de ráfaga por línea: más de `rafagaN` mensajes en `rafagaSeg` segundos van a la cola normal. */
+  rafagaN?: number;
+  rafagaSeg?: number;
+}
+
+/** Defaults del canal abierto (aprobados 12-sep-2026); se mueven con evidencia del dogfooding, no con adivinanza. */
+export const CANAL_ABIERTO_DEFAULTS: Required<CanalAbiertoConfig> = {
+  ventanaHumanaMin: 30,
+  espaciadoMs: 2_000,
   rafagaN: 10,
   rafagaSeg: 60,
-} as const;
+};
 
-export type CanalAbiertoConfig = Partial<typeof CANAL_ABIERTO_DEFAULTS>;
-
-export function canalAbiertoDe(t: Pick<Tenant, "canalAbierto">): typeof CANAL_ABIERTO_DEFAULTS {
-  return { ...CANAL_ABIERTO_DEFAULTS, ...(t.canalAbierto ?? {}) };
+export function canalAbiertoDe(t: Pick<Tenant, "canalAbierto">): Required<CanalAbiertoConfig> {
+  const c = t.canalAbierto ?? {};
+  return {
+    ventanaHumanaMin: c.ventanaHumanaMin ?? CANAL_ABIERTO_DEFAULTS.ventanaHumanaMin,
+    espaciadoMs: c.espaciadoMs ?? CANAL_ABIERTO_DEFAULTS.espaciadoMs,
+    rafagaN: c.rafagaN ?? CANAL_ABIERTO_DEFAULTS.rafagaN,
+    rafagaSeg: c.rafagaSeg ?? CANAL_ABIERTO_DEFAULTS.rafagaSeg,
+  };
 }
 
 /**

@@ -16,6 +16,7 @@ import { MotorEntrada } from "./entrada/motor.ts";
 import { Cripto } from "./cripto.ts";
 import { crearVerificadorToken } from "./firebase.ts";
 import { Provisioning } from "./provisioning.ts";
+import { ConectorOpenlines } from "./bitrix/openlines/conector.ts";
 
 const puerto = Number(process.env.PORT ?? 3001);
 
@@ -91,10 +92,27 @@ if (await docker.disponible()) {
 const cripto = new Cripto();
 const monday = new ConectorMonday({ repo, cola, cripto });
 const bitrix = new ConectorBitrix({ repo, cola, cripto });
+// Canal abierto de Bitrix24 (Contact Center). Necesita la URL pública del
+// orquestador para el handler que el portal llama; sin ella, no se habilita.
+const urlPublica = process.env.CAUCE_URL_PUBLICA?.trim();
+const openlines = urlPublica
+  ? new ConectorOpenlines({
+      repo,
+      cola,
+      cripto,
+      urlPublica,
+      enviarInmediato: (t, i, tel, cuerpo) => gestor.enviarDirecto(t, i, tel, cuerpo),
+    })
+  : undefined;
+if (!openlines) {
+  console.warn("CAUCE_URL_PUBLICA sin definir: el canal abierto de Bitrix24 queda deshabilitado");
+}
+
 const motorEntrada = new MotorEntrada({
   repo,
   monday,
   bitrix,
+  ...(openlines ? { openlines } : {}),
   // Carril inmediato: las respuestas automáticas no pasan por la cola.
   enviarInmediato: (t, i, tel, cuerpo) =>
     gestor.enviarDirecto(t, i, tel, cuerpo),
@@ -170,6 +188,7 @@ const version = versionDesplegada();
 
 crearApp(repo, gestor, {
   corsOrigenes,
+  ...(openlines ? { openlines } : {}),
   cola,
   monday,
   bitrix,

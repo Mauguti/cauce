@@ -18,6 +18,7 @@ import {
   PLANES, type Capacidad, type TenantPlan,
 } from "@cauce/core";
 import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
+import type { ConectorOpenlines } from "./bitrix/openlines/conector.ts";
 import { enmascararTelefono, registrar, registrarCadaMs, registrarError } from "./log.ts";
 
 declare global {
@@ -69,6 +70,8 @@ export interface AppOpciones {
   motorEntrada?: MotorEntrada;
   /** Verificador de ID tokens de Firebase (login de la consola). */
   verificarToken?: VerificadorToken;
+  /** Canal abierto de Bitrix24 (Contact Center); opcional. */
+  openlines?: ConectorOpenlines;
   /** Provisioning autoservicio de tenants. */
   provisioning?: Provisioning;
   /** Clave del endpoint admin de cambio de plan. */
@@ -278,12 +281,19 @@ export function crearApp(
         tenant: tenantId, instancia: instanceId, mensaje: mensaje.id,
         telefono: enmascararTelefono(mensaje.telefono),
       });
+      // Nombre del contacto (pushName) para dar contexto en el registro.
+      const nombre =
+        typeof req.body?.data?.pushName === "string"
+          ? req.body.data.pushName
+          : null;
+      // Canal abierto: el entrante también va al Contact Center de Bitrix si
+      // esta línea está conectada a uno. Best-effort; nunca frena el 200.
+      if (opciones.openlines) {
+        opciones.openlines
+          .entrante(tenantId!, instanceId!, mensaje, nombre)
+          .catch((err) => registrarError("openlines.entrante", err, { tenant: tenantId, instancia: instanceId, mensaje: mensaje.id }));
+      }
       if (opciones.motorEntrada) {
-        // Nombre del contacto (pushName) para dar contexto en el registro.
-        const nombre =
-          typeof req.body?.data?.pushName === "string"
-            ? req.body.data.pushName
-            : null;
         opciones.motorEntrada
           .procesar(tenantId!, instanceId!, mensaje, nombre)
           .catch((err) =>
@@ -383,6 +393,62 @@ export function crearApp(
     const orden: TenantPlan[] = ["basico", "estandar", "pro"];
     return orden.find((p) => PLANES[p].capacidades.includes(c)) ?? "pro";
   }
+
+  /**
+   * Handler ÚNICO por tenant para la app local de Bitrix24 (canal abierto):
+   * instalación (ONAPPINSTALL), placement de configuración del conector
+   * (SETTING_CONNECTOR) y eventos (ONIMCONNECTORMESSAGEADD). Bitrix manda
+   * form-urlencoded con claves anidadas; express.urlencoded ya las arma.
+   */
+  app.post("/bitrix/openlines/:tenantId", async (req, res) => {
+    const tenantId = String(req.params.tenantId);
+    const ol = opciones.openlines;
+    if (!ol) {
+      res.status(501).json({ error: "canal abierto no disponible" });
+      return;
+    }
+    const b = req.body ?? {};
+    const evento = typeof b.event === "string" ? b.event.toUpperCase() : null;
+    try {
+      if (evento === "ONAPPINSTALL") {
+        await ol.instalar(tenantId, b.auth);
+        res.status(200).send("<!doctype html><meta charset=utf-8><p>Digsol Factory instalado. Ahora activa el conector en tu línea abierta (Contact Center → Canales).</p>");
+        return;
+      }
+      if (typeof b.PLACEMENT === "string") {
+        // Página de configuración del conector dentro de Bitrix.
+        let opts: any = {};
+        try { opts = typeof b.PLACEMENT_OPTIONS === "string" ? JSON.parse(b.PLACEMENT_OPTIONS) : (b.PLACEMENT_OPTIONS ?? {}); } catch { opts = {}; }
+        const line = Number(opts.LINE);
+        const activo = String(opts.ACTIVE_STATUS ?? "Y").toUpperCase() !== "N";
+        if (!Number.isFinite(line)) {
+          res.status(400).send("<!doctype html><meta charset=utf-8><p>Falta la línea (LINE) en las opciones del placement.</p>");
+          return;
+        }
+        const doc = await ol.activar(tenantId, { line, activo, memberId: typeof b.member_id === "string" ? b.member_id : null });
+        res.status(200).send(
+          `<!doctype html><meta charset=utf-8><body style="font-family:Inter,system-ui,sans-serif;padding:24px;color:#111827"><h2 style="margin:0 0 8px">WhatsApp · Digsol Factory</h2><p>${doc.activo ? "Conectado" : "Desactivado"} en la línea abierta ${line}. Los mensajes de WhatsApp de esta línea llegan aquí y tus respuestas salen por WhatsApp.</p><p style="color:#6B7280;font-size:13px">Instancia ${doc.instanceId} · conector ${doc.connectorId}</p></body>`,
+        );
+        return;
+      }
+      if (evento === "ONIMCONNECTORMESSAGEADD") {
+        if (!(await ol.eventoAutentico(tenantId, b.auth))) {
+          registrar("openlines.evento_rechazado", { tenant: tenantId, motivo: "application_token no coincide" }, "warn");
+          res.status(401).json({ error: "evento no autenticado" });
+          return;
+        }
+        // Responder rápido; procesar en segundo plano.
+        res.status(200).json({ ok: true });
+        ol.respuestaOperador(tenantId, b.data).catch((err) => registrarError("openlines.operador", err, { tenant: tenantId }));
+        return;
+      }
+      registrar("openlines.evento_desconocido", { tenant: tenantId, evento, claves: Object.keys(b).join(",") }, "warn");
+      res.status(200).json({ ok: true });
+    } catch (err) {
+      registrarError("openlines.handler", err, { tenant: tenantId, evento });
+      res.status(400).json({ error: (err as Error)?.message ?? "error en el canal abierto" });
+    }
+  });
 
   const tenantRouter = express.Router({ mergeParams: true });
   tenantRouter.use(autenticar(repo, opciones.verificarToken));
@@ -716,6 +782,35 @@ export function crearApp(
   });
 
   // Disparadores de entrada del tenant: se listan y se reemplazan enteros.
+  // ── Canal abierto de Bitrix24 (Contact Center) ─────────────────────────
+  tenantRouter.get("/conectores/bitrix-openlines", requiere("entrantes"), async (req, res) => {
+    if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
+    res.json(await opciones.openlines.ver(req.tenantId!));
+  });
+
+  tenantRouter.put("/conectores/bitrix-openlines", requiere("entrantes"), async (req, res) => {
+    if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
+    const { instanceId, clientId, clientSecret } = req.body ?? {};
+    if (typeof instanceId !== "string" || typeof clientId !== "string" || typeof clientSecret !== "string") {
+      res.status(400).json({ error: "se requieren instanceId, clientId y clientSecret" });
+      return;
+    }
+    const instancia = await repo.getInstance(req.tenantId!, instanceId);
+    if (!instancia) { res.status(404).json({ error: "instancia no encontrada" }); return; }
+    try {
+      await opciones.openlines.guardarAlta(req.tenantId!, { instanceId, clientId, clientSecret });
+      res.json(await opciones.openlines.ver(req.tenantId!));
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "no se pudo guardar el canal abierto" });
+    }
+  });
+
+  tenantRouter.delete("/conectores/bitrix-openlines", requiere("entrantes"), async (req, res) => {
+    if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
+    await opciones.openlines.quitar(req.tenantId!);
+    res.status(204).end();
+  });
+
   tenantRouter.get("/disparadores", requiere("bots"), async (req, res) => {
     res.json(await repo.getDisparadores(req.tenantId!));
   });

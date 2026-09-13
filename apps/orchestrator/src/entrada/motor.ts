@@ -1,6 +1,7 @@
 import type { InstanceId, Message, TenantId } from "@cauce/core";
 import { tieneCapacidad, type Capacidad } from "@cauce/core";
-import { registrarCadaMs } from "../log.ts";
+import { registrar, registrarCadaMs } from "../log.ts";
+import type { ConectorOpenlines } from "../bitrix/openlines/conector.ts";
 import type { Repositorio } from "../store.ts";
 import type { ConectorMonday } from "../monday/conector.ts";
 import type { ConectorBitrix } from "../bitrix/conector.ts";
@@ -26,17 +27,20 @@ export class MotorEntrada {
   readonly #enviar: EnviarInmediato;
   readonly #monday: ConectorMonday | null;
   readonly #bitrix: ConectorBitrix | null;
+  readonly #openlines: ConectorOpenlines | null;
 
   constructor(opciones: {
     repo: Repositorio;
     enviarInmediato: EnviarInmediato;
     monday?: ConectorMonday;
     bitrix?: ConectorBitrix;
+    openlines?: ConectorOpenlines;
   }) {
     this.#repo = opciones.repo;
     this.#enviar = opciones.enviarInmediato;
     this.#monday = opciones.monday ?? null;
     this.#bitrix = opciones.bitrix ?? null;
+    this.#openlines = opciones.openlines ?? null;
   }
 
   async procesar(
@@ -63,9 +67,16 @@ export class MotorEntrada {
     const tenant = await this.#repo.getTenant(tenantId);
     const puede = (c: Capacidad) => (tenant ? tieneCapacidad(tenant, c) : false);
 
+    // Ventana humana (canal abierto): si un operador tiene el hilo, los
+    // bots se pausan SOLO en esta conversación. La configuración no se toca.
+    const humana = Boolean(conversacion.humanaHasta && new Date(conversacion.humanaHasta) > new Date());
+    if (humana) {
+      registrar("bots.pausados_por_operador", { tenant: tenantId, instancia: instanceId, hasta: conversacion.humanaHasta });
+    }
+
     // 2. Disparadores: primera coincidencia por prioridad gana; respuesta
     //    por el carril inmediato (sin rate limiting).
-    if (puede("bots")) {
+    if (puede("bots") && !humana) {
       const disparadores = await this.#repo.getDisparadores(tenantId);
       const disparador = primeroQueCoincide(disparadores, {
         texto: mensaje.cuerpo,
@@ -74,6 +85,10 @@ export class MotorEntrada {
       });
       if (disparador) {
         await this.#enviar(tenantId, instanceId, mensaje.telefono, disparador.respuesta);
+        // Espejo en el Contact Center para que el operador vea qué respondió el bot.
+        if (this.#openlines) {
+          await this.#openlines.reflejarBot(tenantId, instanceId, mensaje.telefono, disparador.respuesta).catch(() => {});
+        }
       }
     } else if (tenant) {
       registrarCadaMs(`bots-pausados:${tenantId}`, 10 * 60_000, "bots.pausados", {

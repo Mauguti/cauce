@@ -253,6 +253,19 @@ orquestador viejo no conoce `estandar` y truena al leer un tenant migrado.
 Los 403 por capacidad salen en la bitácora como `plan.rechazado`; los
 cambios como `plan.cambio` y `plan.aplicado`.
 
+### `CAUCE_URL_PUBLICA` — canal abierto de Bitrix24 (Contact Center)
+
+URL pública del orquestador tal como la alcanza Bitrix (p. ej.
+`https://api.factory.digsol.com.mx`). Sin ella, el canal abierto queda
+deshabilitado y el arranque lo avisa. El handler por tenant es
+`<URL>/bitrix/openlines/<tenantId>`: instalación, placement y eventos.
+
+Los `client_id`/`client_secret` de la app local y los tokens OAuth viven
+cifrados en Firestore con `CAUCE_CRYPTO_KEY` (un solo mecanismo, sin rol
+de instancia); el alta de un cliente no exige reiniciar ni desplegar.
+Eventos: `openlines.alta|instalada|activacion|entrante|operador|rafaga|
+adjunto_no_soportado|bot_reflejado|token_renovado|evento_rechazado`.
+
 ### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)
 
 Dos orquestadores sobre el mismo proyecto Firebase compartirían la base
