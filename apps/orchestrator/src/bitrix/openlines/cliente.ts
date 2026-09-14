@@ -1,6 +1,28 @@
 import type { TokensOAuth } from "./tipos.ts";
 import { refrescarTokens, tokenVigente, type CredencialesApp } from "./oauth.ts";
 
+/** Error devuelto por el REST de Bitrix, con su código y descripción para poder distinguirlos. */
+export class ErrorBitrix extends Error {
+  readonly metodo: string;
+  readonly codigo: string | null;
+  readonly descripcion: string | null;
+  constructor(metodo: string, codigo: string | null, descripcion: string | null, status: number) {
+    super(`Bitrix no aceptó la llamada (${metodo}): ${descripcion ?? codigo ?? `HTTP ${status}`}`);
+    this.name = "ErrorBitrix";
+    this.metodo = metodo;
+    this.codigo = codigo;
+    this.descripcion = descripcion;
+  }
+
+  /** event.bind sobre un handler ya enlazado: "Handler already binded". Es el estado deseado, no un fallo. */
+  get yaEnlazado(): boolean {
+    return /already\s*bind/i.test(this.descripcion ?? "") || /ALREADY/i.test(this.codigo ?? "");
+  }
+}
+
+const EVENTO_MENSAJES = "OnImConnectorMessageAdd";
+const sinBarraFinal = (u: string) => u.trim().replace(/\/+$/, "");
+
 /**
  * Cliente REST de Bitrix24 con OAuth (aplicación local). Distinto del
  * ClienteBitrix por webhook entrante: aquí cada llamada va con
@@ -56,7 +78,7 @@ export class ClienteOpenlines {
       return this.llamar(metodo, params, true);
     }
     if (res.status >= 400 || error) {
-      throw new Error(`Bitrix no aceptó la llamada (${metodo}): ${json?.error_description ?? error ?? `HTTP ${res.status}`}`);
+      throw new ErrorBitrix(metodo, typeof error === "string" ? error : null, typeof json?.error_description === "string" ? json.error_description : null, res.status);
     }
     return json?.result;
   }
@@ -74,9 +96,52 @@ export class ClienteOpenlines {
     });
   }
 
-  /** Paso 2: suscribe el evento de mensajes del operador a nuestro handler. */
-  suscribirMensajes(handler: string) {
-    return this.llamar("event.bind", { event: "OnImConnectorMessageAdd", handler });
+  /** Handlers de eventos que esta app ya tiene registrados en el portal. */
+  async listarEventos(): Promise<{ event: string; handler: string }[]> {
+    const r = await this.llamar("event.get");
+    const lista = Array.isArray(r) ? r : Object.values(r ?? {});
+    return lista
+      .filter((e: any) => typeof e?.event === "string" && typeof e?.handler === "string")
+      .map((e: any) => ({ event: String(e.event), handler: String(e.handler) }));
+  }
+
+  /**
+   * Paso 2: suscribe el evento de mensajes del operador a nuestro handler.
+   * IDEMPOTENTE: una reinstalación (o una segunda instalación en el
+   * mismo portal) no debe fallar con "Handler already binded". Primero se
+   * consulta event.get; si el handler ya está, no se vuelve a enlazar. Si
+   * event.get no está disponible y event.bind contesta que ya estaba,
+   * también se da por bueno. Un handler viejo de este mismo evento (otra
+   * URL pública) se desenlaza para que los mensajes no se dupliquen ni se
+   * pierdan hacia un servidor que ya no es.
+   */
+  async suscribirMensajes(handler: string): Promise<{ resultado: "enlazado" | "ya_enlazado"; desenlazados: string[] }> {
+    const objetivo = sinBarraFinal(handler);
+    let existentes: { event: string; handler: string }[] = [];
+    try {
+      existentes = await this.listarEventos();
+    } catch {
+      // Sin event.get se intenta el bind directo y se interpreta su respuesta.
+    }
+    const delEvento = existentes.filter((e) => e.event.toUpperCase() === EVENTO_MENSAJES.toUpperCase());
+    const desenlazados: string[] = [];
+    for (const e of delEvento) {
+      if (sinBarraFinal(e.handler) === objetivo) continue;
+      try {
+        await this.llamar("event.unbind", { event: EVENTO_MENSAJES, handler: e.handler });
+        desenlazados.push(e.handler);
+      } catch {
+        // No se bloquea la instalación por no poder limpiar un handler viejo; queda en la bitácora del que llama.
+      }
+    }
+    if (delEvento.some((e) => sinBarraFinal(e.handler) === objetivo)) return { resultado: "ya_enlazado", desenlazados };
+    try {
+      await this.llamar("event.bind", { event: EVENTO_MENSAJES, handler });
+      return { resultado: "enlazado", desenlazados };
+    } catch (err) {
+      if (err instanceof ErrorBitrix && err.yaEnlazado) return { resultado: "ya_enlazado", desenlazados };
+      throw err;
+    }
   }
 
   /** Paso 3a: activa el conector en una línea. */

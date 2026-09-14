@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Message } from "@cauce/core";
 import { RepositorioEnMemoria } from "../../store.ts";
 import { Cripto } from "../../cripto.ts";
+import { usarSalida } from "../../log.ts";
 import { ConectorOpenlines } from "./conector.ts";
 import { chatExterno } from "./tipos.ts";
 
@@ -11,7 +12,7 @@ const AUTH = {
   member_id: "m1", application_token: "apptok",
 };
 
-function armar(opciones: { rafagaN?: number; appInfoCode?: string } = {}) {
+function armar(opciones: { rafagaN?: number; appInfoCode?: string; sinEventGet?: boolean; handlersPrevios?: string[] } = {}) {
   const repo = new RepositorioEnMemoria({
     tenants: [{
       id: "t1", nombre: "Digsol", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
@@ -20,10 +21,26 @@ function armar(opciones: { rafagaN?: number; appInfoCode?: string } = {}) {
     instances: [{ id: "i1", tenantId: "t1", transportType: "mock", contenedorId: null, numero: "+5214428575347", estado: "connected", ultimoHeartbeat: null }],
   });
   const llamadas: { metodo: string; body: any }[] = [];
+  // Portal simulado: recuerda los handlers enlazados, como Bitrix. Un
+  // segundo event.bind del mismo handler falla con "Handler already binded".
+  const enlazados = new Set<string>(opciones.handlersPrevios ?? []);
   const fetchImpl = (async (url: string, init: any) => {
     const metodo = url.split("/rest/")[1] ?? url;
     const body = init?.body ? JSON.parse(init.body) : null;
     llamadas.push({ metodo, body });
+    if (metodo === "event.get") {
+      if (opciones.sinEventGet) return new Response(JSON.stringify({ error: "INSUFFICIENT_SCOPE", error_description: "no" }), { status: 403 });
+      return new Response(JSON.stringify({ result: [...enlazados].map((h) => ({ event: "ONIMCONNECTORMESSAGEADD", handler: h, auth_type: "0", offline: 0 })) }), { status: 200 });
+    }
+    if (metodo === "event.bind") {
+      if (enlazados.has(body.handler)) return new Response(JSON.stringify({ error: "ERROR_CORE", error_description: "Handler already binded" }), { status: 400 });
+      enlazados.add(body.handler);
+      return new Response(JSON.stringify({ result: true }), { status: 200 });
+    }
+    if (metodo === "event.unbind") {
+      enlazados.delete(body.handler);
+      return new Response(JSON.stringify({ result: { count: 1 } }), { status: 200 });
+    }
     if (metodo === "app.info") {
       // La app instalada es la nuestra: CODE = client_id dado de alta.
       return new Response(JSON.stringify({ result: { ID: 5, CODE: opciones.appInfoCode ?? "cid", VERSION: 1, STATUS: "L", INSTALLED: true } }), { status: 200 });
@@ -44,8 +61,16 @@ function armar(opciones: { rafagaN?: number; appInfoCode?: string } = {}) {
       return { id: `m-${enviados.length}`, tenantId, instanceId, direccion: "out", telefono, cuerpo, estado: "enviado", externalId: `ext-${enviados.length}`, timestamp: new Date().toISOString() };
     },
   });
-  return { repo, conector, llamadas, enviados, encolados };
+  return { repo, conector, llamadas, enviados, encolados, enlazados };
 }
+
+/** Captura la bitácora durante una prueba. */
+function capturarBitacora() {
+  const lineas: string[] = [];
+  usarSalida((_nivel, linea) => { lineas.push(linea); });
+  return lineas;
+}
+afterEach(() => usarSalida(null));
 
 async function instalarYActivar(c: ReturnType<typeof armar>) {
   await c.conector.guardarAlta("t1", { instanceId: "i1", clientId: "cid", clientSecret: "sec", dominio: "https://Digsol.bitrix24.mx/" });
@@ -73,10 +98,42 @@ describe("ConectorOpenlines", () => {
     expect(doc.appCifrada).not.toContain("sec");
     expect(doc.tokensCifrados).not.toContain("acc");
     const metodos = c.llamadas.map((l) => l.metodo);
-    expect(metodos).toEqual(["app.info", "imconnector.register", "event.bind", "imconnector.activate", "imconnector.connector.data.set"]);
+    expect(metodos).toEqual(["app.info", "imconnector.register", "event.get", "event.bind", "imconnector.activate", "imconnector.connector.data.set"]);
     expect(doc.dominio).toBe("digsol.bitrix24.mx"); // normalizado desde la URL pegada
     expect(c.llamadas[1]!.body.PLACEMENT_HANDLER).toBe("https://api.factory.digsol.com.mx/bitrix/openlines/t1");
-    expect(c.llamadas[2]!.body.handler).toBe("https://api.factory.digsol.com.mx/bitrix/openlines/t1");
+    expect(c.llamadas[3]!.body.handler).toBe("https://api.factory.digsol.com.mx/bitrix/openlines/t1");
+  });
+
+  it("IDEMPOTENCIA: reinstalar en el mismo portal no vuelve a enlazar el evento y no falla", async () => {
+    const c = armar();
+    const bitacora = capturarBitacora();
+    await instalarYActivar(c);
+    c.llamadas.length = 0;
+    await c.conector.instalar("t1", { ...AUTH, access_token: "acc2", refresh_token: "ref2" });
+    const metodos = c.llamadas.map((l) => l.metodo);
+    expect(metodos).toEqual(["app.info", "imconnector.register", "event.get"]);
+    expect(c.enlazados.size).toBe(1);
+    expect(bitacora.some((l) => l.includes("openlines.instalada") && l.includes("reinstalacion=true") && l.includes("evento=ya_enlazado"))).toBe(true);
+    // Los tokens nuevos quedaron guardados y la instalación original se conserva
+    const doc = (await c.repo.getOpenlinesBitrix("t1"))!;
+    expect(doc.tokensCifrados).not.toBe("");
+    expect(doc.lineId).toBe(3);
+  });
+
+  it("IDEMPOTENCIA: sin event.get, un 'Handler already binded' de event.bind se toma como estado deseado", async () => {
+    const c = armar({ sinEventGet: true, handlersPrevios: ["https://api.factory.digsol.com.mx/bitrix/openlines/t1"] });
+    await c.conector.guardarAlta("t1", { instanceId: "i1", clientId: "cid", clientSecret: "sec", dominio: "digsol.bitrix24.mx" });
+    await expect(c.conector.instalar("t1", AUTH)).resolves.toBeUndefined();
+    expect(c.llamadas.map((l) => l.metodo)).toEqual(["app.info", "imconnector.register", "event.get", "event.bind"]);
+    expect((await c.repo.getOpenlinesBitrix("t1"))!.tokensCifrados).not.toBe("");
+  });
+
+  it("un handler viejo del mismo evento (otra URL pública) se desenlaza al instalar", async () => {
+    const c = armar({ handlersPrevios: ["https://viejo.example/bitrix/openlines/t1"] });
+    await c.conector.guardarAlta("t1", { instanceId: "i1", clientId: "cid", clientSecret: "sec", dominio: "digsol.bitrix24.mx" });
+    await c.conector.instalar("t1", AUTH);
+    expect(c.llamadas.map((l) => l.metodo)).toEqual(["app.info", "imconnector.register", "event.get", "event.unbind", "event.bind"]);
+    expect([...c.enlazados]).toEqual(["https://api.factory.digsol.com.mx/bitrix/openlines/t1"]);
   });
 
   it("una instalación desde OTRO portal se rechaza", async () => {
@@ -128,11 +185,34 @@ describe("ConectorOpenlines", () => {
     expect(conv?.bitrixOpenLine).toMatchObject({ lineId: 3, chatId: "901", sessionId: "55" });
   });
 
-  it("entrante en otra instancia o con canal inactivo no hace nada", async () => {
+  it("entrante en otra instancia o con canal inactivo no hace nada, pero deja línea con el motivo", async () => {
     const c = armar();
+    const bitacora = capturarBitacora();
     await instalarYActivar(c);
     const msg: Message = { id: "in2", tenantId: "t1", instanceId: "OTRA", direccion: "in", telefono: "+5214428575347", cuerpo: "hola", estado: "recibido", externalId: null, timestamp: "2026-09-12T10:00:00Z" };
     expect(await c.conector.entrante("t1", "OTRA", msg)).toBe(false);
+    expect(bitacora.at(-1)).toMatch(/info openlines\.entrante .*resultado=omitido motivo="instancia distinta a la del canal"/);
+    expect(c.llamadas.some((l) => l.metodo === "imconnector.send.messages")).toBe(false);
+  });
+
+  it("DIAGNÓSTICO: app instalada pero conector sin activar en ninguna línea abierta → línea warn, no silencio", async () => {
+    const c = armar();
+    const bitacora = capturarBitacora();
+    await c.conector.guardarAlta("t1", { instanceId: "i1", clientId: "cid", clientSecret: "sec", dominio: "digsol.bitrix24.mx" });
+    const msg: Message = { id: "in3", tenantId: "t1", instanceId: "i1", direccion: "in", telefono: "+5214428575347", cuerpo: "hola", estado: "recibido", externalId: null, timestamp: "2026-09-12T10:00:00Z" };
+    expect(await c.conector.entrante("t1", "i1", msg)).toBe(false);
+    expect(bitacora.at(-1)).toMatch(/warn openlines\.entrante .*motivo="app no instalada en el portal"/);
+    await c.conector.instalar("t1", AUTH);
+    expect(await c.conector.entrante("t1", "i1", msg)).toBe(false);
+    expect(bitacora.at(-1)).toMatch(/warn openlines\.entrante .*telefono=\+521••••5347 .*motivo="conector sin activar en una línea abierta"/);
+  });
+
+  it("sin alta de canal abierto, entrante no registra nada (el tenant no lo usa)", async () => {
+    const c = armar();
+    const bitacora = capturarBitacora();
+    const msg: Message = { id: "in4", tenantId: "t1", instanceId: "i1", direccion: "in", telefono: "+5214428575347", cuerpo: "hola", estado: "recibido", externalId: null, timestamp: "2026-09-12T10:00:00Z" };
+    expect(await c.conector.entrante("t1", "i1", msg)).toBe(false);
+    expect(bitacora).toEqual([]);
   });
 
   it("operador: sale por el carril inmediato, confirma entrega a Bitrix y abre la ventana humana", async () => {

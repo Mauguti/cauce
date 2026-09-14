@@ -218,14 +218,20 @@ export class ConectorOpenlines {
     }
     await this.#repo.saveOpenlinesBitrix(tenantId, instalado);
     const handler = this.urlHandler(tenantId);
+    // imconnector.register con el mismo ID actualiza el conector (documentado):
+    // es idempotente por sí mismo. event.bind no lo es; suscribirMensajes lo resuelve.
     await cliente.registrarConector({
       id: instalado.connectorId,
       nombre: "WhatsApp · Digsol Factory",
       icono: { DATA_IMAGE: ICONO_SVG },
       placementHandler: handler,
     });
-    await cliente.suscribirMensajes(handler);
-    registrar("openlines.instalada", { tenant: tenantId, dominio: tokens.dominio, conector: instalado.connectorId });
+    const suscripcion = await cliente.suscribirMensajes(handler);
+    registrar("openlines.instalada", {
+      tenant: tenantId, dominio: tokens.dominio, conector: instalado.connectorId,
+      reinstalacion: Boolean(doc.tokensCifrados), evento: suscripcion.resultado,
+      ...(suscripcion.desenlazados.length ? { handlersViejosDesenlazados: suscripcion.desenlazados.length } : {}),
+    });
   }
 
   /** ¿El evento viene del portal instalado? Compara application_token. */
@@ -295,7 +301,19 @@ export class ConectorOpenlines {
    */
   async entrante(tenantId: TenantId, instanceId: InstanceId, mensaje: Message, nombre?: string | null): Promise<boolean> {
     const doc = await this.#repo.getOpenlinesBitrix(tenantId);
-    if (!doc || !doc.activo || doc.lineId === null || doc.instanceId !== instanceId) return false;
+    // Sin alta, el tenant no usa canal abierto: silencio. Con alta, cada
+    // omisión deja línea: "nada" tiene que distinguirse de "no se intentó".
+    if (!doc) return false;
+    const omitir = (motivo: string, nivel: "info" | "warn" = "warn"): false => {
+      registrar("openlines.entrante", {
+        tenant: tenantId, instancia: instanceId, mensaje: mensaje.id, telefono: enmascararTelefono(mensaje.telefono),
+        resultado: "omitido", motivo,
+      }, nivel);
+      return false;
+    };
+    if (doc.instanceId !== instanceId) return omitir("instancia distinta a la del canal", "info");
+    if (!doc.tokensCifrados) return omitir("app no instalada en el portal");
+    if (!doc.activo || doc.lineId === null) return omitir("conector sin activar en una línea abierta");
     const telefono = mensaje.telefono.replace(/[^\d]/g, "");
     const chatId = chatExterno(instanceId, telefono);
     try {
