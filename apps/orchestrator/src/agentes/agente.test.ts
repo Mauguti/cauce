@@ -4,7 +4,8 @@ import { RepositorioEnMemoria } from "../store.ts";
 import { usarSalida } from "../log.ts";
 import { MotorEntrada } from "../entrada/motor.ts";
 import { Cripto } from "../cripto.ts";
-import { Agente, armarSistema, CATALOGO_MAX_CARACTERES, HERRAMIENTA_PASAR_A_HUMANO, TRASPASO_HORAS } from "./agente.ts";
+import { Agente, armarSistema, CATALOGO_MAX_CARACTERES, encajeComercial, HERRAMIENTA_PASAR_A_HUMANO, TRASPASO_HORAS } from "./agente.ts";
+import type { ConectorBitrix } from "../bitrix/conector.ts";
 import { costoUsd, type PeticionModelo, type ProveedorModelo } from "./proveedor.ts";
 
 const TENANT: Tenant = {
@@ -45,14 +46,25 @@ function proveedorFalso(
   return { p, peticiones, resultadosHerramienta };
 }
 
-function armar(tenant: Tenant = TENANT, prov = proveedorFalso(), fetchImpl?: typeof fetch) {
+function armar(tenant: Tenant = TENANT, prov = proveedorFalso(), fetchImpl?: typeof fetch, bitrix?: ConectorBitrix) {
   const repo = new RepositorioEnMemoria({
     tenants: [tenant],
     instances: [{ id: "i1", tenantId: "t1", transportType: "mock", contenedorId: null, numero: "+5214420000001", estado: "connected", ultimoHeartbeat: null }],
   });
-  const agente = new Agente({ repo, proveedores: { anthropic: prov.p }, cripto: new Cripto(), ...(fetchImpl ? { fetchImpl } : {}) });
+  const agente = new Agente({ repo, proveedores: { anthropic: prov.p }, cripto: new Cripto(), ...(fetchImpl ? { fetchImpl } : {}), ...(bitrix ? { bitrix } : {}) });
   return { repo, agente, ...prov };
 }
+
+/** Conector de Bitrix falso: un prospecto existente y memoria de lo publicado. */
+function bitrixFalso(existe: boolean) {
+  const publicados: { entidad: string; id: string; cuerpo: string }[] = [];
+  const b = {
+    buscarProspecto: async () => (existe ? { crm: "bitrix" as const, entidad: "lead", id: "77", nombre: "Aurelio · Procesa", estado: "NEW", responsable: "5", creadoEn: "2026-09-14" } : null),
+    publicarEnItem: async (_t: string, entidad: string, id: string, cuerpo: string) => { publicados.push({ entidad, id, cuerpo }); },
+  } as unknown as ConectorBitrix;
+  return { b, publicados };
+}
+const DOC_BITRIX = { instanceId: "i1", entidad: "lead" as const, campoTelefono: "PHONE", plantillas: [], webhookUrlCifrado: "x", applicationTokenCifrado: "" };
 
 function capturarBitacora() {
   const lineas: string[] = [];
@@ -177,6 +189,54 @@ describe("herramientas del agente", () => {
     expect(llamadas[0]!.init.headers.authorization).toBe("Bearer s3cr3t");
     expect(JSON.parse(llamadas[0]!.init.body)).toMatchObject({ tenantId: "t1", instanceId: "i1", telefono: "+5214428575347", contacto: "Mau", herramienta: "consultar_agenda", argumentos: { dia: "martes" } });
     expect(c.resultadosHerramienta[0]).toContain("martes 10:00");
+  });
+
+  it("sin CRM conectado, buscar_prospecto y calificar_prospecto NO se ofrecen", async () => {
+    const c = armar();
+    await c.agente.responder("t1", "i1", entrante("hola"));
+    expect(c.peticiones[0]!.herramientas!.map((h) => h.nombre)).toEqual(["pasar_a_humano"]);
+  });
+
+  it("con Bitrix: buscar_prospecto trae el registro, lo vincula a la conversación y no crea nada", async () => {
+    const bf = bitrixFalso(true);
+    const c = armar(TENANT, proveedorFalso("Veo que ya nos conocemos, Aurelio.", { usar: { nombre: "buscar_prospecto", argumentos: {} } }), undefined, bf.b);
+    await c.repo.saveConectorBitrix("t1", DOC_BITRIX as any);
+    await c.agente.responder("t1", "i1", entrante("hola, soy de Procesa"), "Aurelio");
+    expect(c.peticiones[0]!.herramientas!.map((h) => h.nombre)).toEqual(["pasar_a_humano", "buscar_prospecto", "calificar_prospecto"]);
+    expect(c.resultadosHerramienta[0]).toContain('lead #77 "Aurelio · Procesa" · etapa/estado: NEW');
+    expect((await c.repo.getConversacion("t1", "i1", "5214428575347"))!.bitrixEntidad).toEqual({ tipo: "lead", id: "77" });
+    expect(bf.publicados).toEqual([]);
+  });
+
+  it("con Bitrix: calificar_prospecto deja el comentario en el timeline del prospecto con la línea de encaje", async () => {
+    const bf = bitrixFalso(true);
+    const c = armar(TENANT, proveedorFalso("Anotado.", { usar: { nombre: "calificar_prospecto", argumentos: { crm_actual: "Bitrix24", numeros_whatsapp: "7", personas_que_contestan: "4", herramienta_actual: "WhatCRM, $3,000 al mes" } } }), undefined, bf.b);
+    await c.repo.saveConectorBitrix("t1", DOC_BITRIX as any);
+    const bitacora = capturarBitacora();
+    await c.agente.responder("t1", "i1", entrante("usamos bitrix con 7 números"), "Aurelio");
+    expect(bf.publicados).toHaveLength(1);
+    expect(bf.publicados[0]).toMatchObject({ entidad: "lead", id: "77" });
+    expect(bf.publicados[0]!.cuerpo).toContain("📋 Calificación de Santiago");
+    expect(bf.publicados[0]!.cuerpo).toContain("- Números de WhatsApp: 7");
+    expect(bf.publicados[0]!.cuerpo).toContain("- Encaje: Bitrix24 → Estándar completo");
+    expect(c.resultadosHerramienta[0]).toContain("Encaje: Bitrix24 → Estándar completo");
+    expect(bitacora.some((l) => l.includes("agente.calificacion") && l.includes("resultado=comentario_publicado"))).toBe(true);
+  });
+
+  it("con Bitrix pero sin registro aún: la calificación no se pierde, vuelve al modelo para el resumen del traspaso", async () => {
+    const bf = bitrixFalso(false);
+    const c = armar(TENANT, proveedorFalso("ok", { usar: { nombre: "calificar_prospecto", argumentos: { crm_actual: "monday" } } }), undefined, bf.b);
+    await c.repo.saveConectorBitrix("t1", DOC_BITRIX as any);
+    await c.agente.responder("t1", "i1", entrante("usamos monday"));
+    expect(bf.publicados).toEqual([]);
+    expect(c.resultadosHerramienta[0]).toContain("Encaje: monday → solo salientes");
+  });
+
+  it("encaje comercial: Bitrix vende Estándar completo, monday solo salientes", () => {
+    expect(encajeComercial("Bitrix24")).toContain("Estándar completo");
+    expect(encajeComercial("monday.com")).toContain("solo salientes");
+    expect(encajeComercial("ninguno")).toContain("sin CRM");
+    expect(encajeComercial("HubSpot")).toContain("no lo integramos hoy");
   });
 
   it("una herramienta desconocida no rompe: devuelve error al modelo y queda en bitácora", async () => {

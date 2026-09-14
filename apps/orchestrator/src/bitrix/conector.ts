@@ -21,6 +21,19 @@ import { ClienteBitrix, valorCampo, type CampoBitrix, type EntidadBitrix } from 
  * contraseña) y el application_token verifica los disparos salientes. La
  * API nunca las devuelve en claro, solo `webhookPista`.
  */
+/** Lo que el agente y el vendedor quieren saber de un prospecto existente. */
+export interface ProspectoCrm {
+  crm: "bitrix" | "monday";
+  /** Bitrix: lead|contact|deal|company. monday: "item". */
+  entidad: string;
+  id: string;
+  nombre: string;
+  /** Etapa/estado/grupo, tal como lo llama el CRM. */
+  estado: string | null;
+  responsable: string | null;
+  creadoEn: string | null;
+}
+
 export interface ConectorBitrixDoc {
   /** Instancia (número) desde la que se envían los mensajes del tenant. */
   instanceId: string;
@@ -266,6 +279,26 @@ export class ConectorBitrix {
     if (!doc) return;
     const cliente = this.#clienteFactory(this.#cripto.descifrar(doc.webhookUrlCifrado));
     await cliente.comentarTimeline(entidad, entidadId, cuerpo);
+  }
+
+  /** Prospecto o contacto del CRM con ese teléfono, con lo que un vendedor quiere saber de un vistazo. */
+  async buscarProspecto(tenantId: TenantId, telefono: string): Promise<ProspectoCrm | null> {
+    const doc = await this.#repo.getConectorBitrix(tenantId);
+    if (!doc) return null;
+    const cliente = this.#clienteFactory(this.#cripto.descifrar(doc.webhookUrlCifrado));
+    const r = await cliente.buscarPorTelefono(telefono);
+    if (!r) return null;
+    const c = r.registro.campos as Record<string, unknown>;
+    const texto = (k: string) => (typeof c[k] === "string" || typeof c[k] === "number" ? String(c[k]) : null);
+    return {
+      crm: "bitrix",
+      entidad: r.entidad,
+      id: r.registro.id,
+      nombre: r.registro.nombre,
+      estado: texto("STATUS_ID") ?? texto("STAGE_ID"),
+      responsable: texto("ASSIGNED_BY_ID"),
+      creadoEn: texto("DATE_CREATE"),
+    };
   }
 
   async registrarLlamada(tenantId: TenantId): Promise<void> {

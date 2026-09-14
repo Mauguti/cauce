@@ -30,16 +30,37 @@ herramientas que el agente invoca por webhook, nunca el lugar donde piensa.
   herramientas), y en bitácora `agente.consumo`. Se registra también en
   error. Se cobra después, sobre estos datos.
 
+### CRM: enriquecer, no crear (decidido 14-sep-2026)
+
+Santiago **no crea prospectos**: el conector del canal abierto ya crea y
+fusiona el prospecto cuando entra el mensaje. Con un CRM conectado en el
+tenant (Bitrix tiene prioridad si hay ambos) el agente tiene dos
+herramientas más:
+
+- `buscar_prospecto`: por teléfono, con las variantes +521/521/+52/52
+  (`crm.duplicate.findbycomm` en Bitrix, primero lead y luego contact;
+  `items_page_by_column_values` sobre el board y la columna de teléfono
+  en monday). Trae nombre, etapa y responsable, y vincula la conversación
+  al registro para que el traspaso caiga ahí.
+- `calificar_prospecto`: deja la calificación como **comentario en el
+  timeline** del registro (update en monday), sin campos personalizados:
+  CRM actual · números de WhatsApp · personas que contestan · herramienta y
+  costo hoy · **Encaje** (Bitrix → Estándar completo; monday → solo
+  salientes; sin CRM → proponer Bitrix). Si aún no hay registro, la
+  calificación vuelve al modelo para el resumen del traspaso.
+
+Bitácora: `agente.prospecto`, `agente.calificacion`.
+
 ## Qué NO hace todavía
 
-- **Leer o escribir en el CRM.** No consulta si el teléfono existe como
-  prospecto ni crea uno. El cliente de Bitrix por webhook solo tiene leer
-  registro, listar campos y comentar timeline; el de monday, crear update.
-  Darle `buscar_prospecto` y `crear_prospecto` son dos métodos en cada
-  cliente (`crm.lead.list`/`crm.lead.add`, `items_page_by_column_values`/
-  `create_item`) y dos herramientas integradas: medio día por CRM.
-- **Marcar el traspaso como atendido.** Hoy caduca a las 12 h; la
-  plataforma no lo muestra ni deja cerrarlo.
+- **Cerrar el traspaso.** Nadie lo marca como atendido: caduca a las 12 h y
+  la plataforma no lo muestra. Para el dogfooding aguanta porque Mau es el
+  único vendedor y el aviso en Bitrix es su cola. **Disparador: ANTES de que
+  un cliente con más de un vendedor tenga agentes.** Lo que se construye
+  entonces: estado atendido, quién lo tomó, cuándo, y una vista en la
+  plataforma con los traspasos abiertos; el aviso en Bitrix se conserva.
+- **Campos estructurados de calificación** en el CRM: solo si hacen falta
+  para reportes, con evidencia.
 - **Multimedia**: solo texto, como todo el sistema.
 
 ## Modelo por defecto

@@ -106,12 +106,40 @@ export class ClienteBitrix {
     return { id: String(r.ID ?? id), nombre: nombreDe(entidad, r), campos: r };
   }
 
+  /**
+   * Busca por teléfono en el CRM: primero prospectos (lead), luego
+   * contactos. Usa crm.duplicate.findbycomm, que es el mismo control de
+   * duplicados de Bitrix, con las variantes del número que WhatsApp y el
+   * CRM suelen guardar distinto (+521…, 521…, +52…, 52…).
+   */
+  async buscarPorTelefono(telefono: string): Promise<{ entidad: EntidadBitrix; registro: RegistroBitrix } | null> {
+    const valores = variantesTelefono(telefono);
+    for (const entidad of ["lead", "contact"] as const) {
+      const r = await this.#llamar("crm.duplicate.findbycomm", { entity_type: entidad.toUpperCase(), type: "PHONE", values: valores });
+      const ids: unknown[] = Array.isArray(r?.[entidad.toUpperCase()]) ? r[entidad.toUpperCase()] : [];
+      const id = ids.find((x) => x !== null && x !== undefined);
+      if (id === undefined) continue;
+      const registro = await this.getRegistro(entidad, String(id));
+      if (registro) return { entidad, registro };
+    }
+    return null;
+  }
+
   /** Publica un comentario en el timeline de la entidad (retorno al CRM). */
   async comentarTimeline(entidad: EntidadBitrix, id: string, comentario: string): Promise<void> {
     await this.#llamar("crm.timeline.comment.add", {
       fields: { ENTITY_ID: id, ENTITY_TYPE: entidad, COMMENT: comentario },
     });
   }
+}
+
+/** Variantes con las que un número mexicano de WhatsApp puede estar guardado en un CRM. */
+export function variantesTelefono(telefono: string): string[] {
+  const d = telefono.replace(/[^\d]/g, "");
+  const v = new Set<string>([d, `+${d}`]);
+  if (d.startsWith("521") && d.length === 13) { const sin1 = `52${d.slice(3)}`; v.add(sin1); v.add(`+${sin1}`); v.add(d.slice(3)); }
+  else if (d.startsWith("52") && d.length === 12) { const con1 = `521${d.slice(2)}`; v.add(con1); v.add(`+${con1}`); v.add(d.slice(2)); }
+  return [...v];
 }
 
 /** Nombre legible del registro según la entidad. */

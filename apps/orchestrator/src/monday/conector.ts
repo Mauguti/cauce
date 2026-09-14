@@ -15,6 +15,8 @@ import {
   type ResultadoPlantilla,
 } from "../conectores/plantillas.ts";
 import { ClienteMonday, type BoardMonday, type ColumnaBoard, type ItemMonday } from "./cliente.ts";
+import { variantesTelefono } from "../bitrix/cliente.ts";
+import type { ProspectoCrm } from "../bitrix/conector.ts";
 
 // Reexporta las piezas compartidas para no romper a los consumidores del
 // conector monday (store, tests) que las importaban desde aquí.
@@ -453,5 +455,16 @@ export class ConectorMonday {
     if (!doc) return;
     const cliente = this.#clienteFactory(this.#cripto.descifrar(doc.apiTokenCifrado));
     await cliente.crearUpdate(itemId, cuerpo);
+  }
+
+  /** Item del board configurado cuya columna de teléfono tenga ese número (en cualquiera de sus variantes). */
+  async buscarProspecto(tenantId: TenantId, telefono: string): Promise<ProspectoCrm | null> {
+    const doc = await this.#repo.getConectorMonday(tenantId);
+    if (!doc) return null;
+    const cliente = this.#clienteFactory(this.#cripto.descifrar(doc.apiTokenCifrado));
+    const items = await cliente.buscarPorColumna(doc.boardId, doc.columnaTelefono, variantesTelefono(telefono));
+    const i = items[0];
+    if (!i) return null;
+    return { crm: "monday", entidad: "item", id: i.id, nombre: i.nombre, estado: i.grupo, responsable: null, creadoEn: i.creadoEn };
   }
 }

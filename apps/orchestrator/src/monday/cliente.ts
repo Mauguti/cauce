@@ -105,6 +105,20 @@ export class ClienteMonday {
   }
 
   /** Publica un update (la nota/conversación del item). */
+  /** Items del board cuya columna tenga alguno de los valores (items_page_by_column_values). */
+  async buscarPorColumna(boardId: string, columnId: string, valores: string[]): Promise<{ id: string; nombre: string; grupo: string | null; creadoEn: string | null }[]> {
+    const data = await this.#graphql(
+      `query ($boardId: ID!, $columnId: String!, $valores: [String]!) {
+         items_page_by_column_values (board_id: $boardId, limit: 5, columns: [{ column_id: $columnId, column_values: $valores }]) {
+           items { id name created_at group { title } }
+         }
+       }`,
+      { boardId, columnId, valores },
+    );
+    const items: any[] = data?.items_page_by_column_values?.items ?? [];
+    return items.map((i) => ({ id: String(i.id), nombre: String(i.name ?? ""), grupo: i.group?.title ?? null, creadoEn: i.created_at ?? null }));
+  }
+
   async crearUpdate(itemId: string, cuerpo: string): Promise<string> {
     const data = await this.#graphql(
       `mutation ($itemId: ID!, $body: String!) {

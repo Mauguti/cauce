@@ -430,23 +430,15 @@ export class RepositorioEnMemoria implements Repositorio {
     const clave = this.#claveConv(tenantId, instanceId, telefono);
     const previa = this.#conversaciones.get(clave);
     const esPrimerContacto = !previa || previa.primerContactoEn === null;
-    // Se conserva TODO lo previo (ventana humana, vínculo con el chat de
-    // Bitrix, lo que se agregue después) y solo se actualiza lo del
-    // entrante. Antes se reconstruía el doc a mano y cada mensaje borraba
-    // humanaHasta y bitrixOpenLine: los bots contestaban con el operador
-    // en el hilo y el espejo del bot perdía el chat.
-    const conversacion: Conversacion = {
-      ...(previa ?? {}),
-      tenantId,
-      instanceId,
-      telefono,
+    // ÚNICO camino de escritura: fusionar. Dos bugs de la misma familia
+    // salieron de reconstruir el documento a mano (se perdían humanaHasta,
+    // bitrixOpenLine, traspaso); ya no hay segundo camino.
+    this.#fusionarConversacion(tenantId, instanceId, telefono, {
       nombre: nombre?.trim() || previa?.nombre || null,
       primerContactoEn: previa?.primerContactoEn ?? timestamp,
       ultimoEntranteEn: timestamp,
-      mondayItemId: previa?.mondayItemId ?? null,
-      bitrixEntidad: previa?.bitrixEntidad ?? null,
-    };
-    this.#conversaciones.set(clave, conversacion);
+    });
+    const conversacion = this.#conversaciones.get(clave)!;
     return { conversacion, esPrimerContacto };
   }
 
