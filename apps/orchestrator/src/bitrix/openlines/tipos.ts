@@ -22,15 +22,25 @@ export interface TokensOAuth {
   applicationToken: string;
 }
 
-/** Documento `tenants/{t}/conectores/bitrix-openlines`. Los tokens van cifrados. */
+/** Una asignación: el número (instancia) atiende exactamente esta línea abierta. */
+export interface AsignacionLinea {
+  lineId: number;
+  asignadaEn: string;
+}
+
+/**
+ * Documento `tenants/{t}/conectores/bitrix-openlines`. Los tokens van cifrados.
+ *
+ * Modelo de líneas (aprobado 14-sep-2026): cada número atiende exactamente
+ * UNA línea abierta; una línea abierta puede tener VARIOS números, a
+ * propósito y con confirmación. Un número en varias líneas no existe: el
+ * entrante no sabría a cuál ir.
+ */
 export interface OpenlinesBitrixDoc {
-  /** Línea (instancia) de WhatsApp que atiende este canal. */
-  instanceId: string;
-  /** Id del conector registrado en Bitrix (imconnector.register ID). */
+  /** Id del conector registrado en Bitrix (imconnector.register ID). Uno por tenant. */
   connectorId: string;
-  /** Línea abierta a la que se activó el conector; null hasta el placement. */
-  lineId: number | null;
-  activo: boolean;
+  /** instanceId → línea abierta que atiende. */
+  asignaciones: Record<string, AsignacionLinea>;
   /** JSON de TokensOAuth cifrado con Cripto; "" hasta que el portal instale la app. */
   tokensCifrados: string;
   /** JSON {clientId, clientSecret} de la app local, cifrado con Cripto. */
@@ -46,6 +56,63 @@ export interface OpenlinesBitrixDoc {
   botId: number | null;
   instaladoEn: string | null;
   actualizadoEn: string;
+}
+
+/** Forma anterior del documento (un solo número por tenant). Se migra al leer. */
+export interface OpenlinesDocLegado {
+  instanceId?: string;
+  lineId?: number | null;
+  activo?: boolean;
+}
+
+/**
+ * Normaliza lo que haya en Firestore a la forma vigente. El doc legado
+ * (instanceId + lineId + activo) se convierte en una asignación; al
+ * volver a guardar, los campos viejos desaparecen.
+ */
+export function normalizarOpenlinesDoc(bruto: (Partial<OpenlinesBitrixDoc> & OpenlinesDocLegado) | null | undefined): OpenlinesBitrixDoc | null {
+  if (!bruto) return null;
+  const ahora = new Date().toISOString();
+  const asignaciones: Record<string, AsignacionLinea> = {};
+  for (const [i, a] of Object.entries(bruto.asignaciones ?? {})) {
+    if (a && Number.isFinite(Number(a.lineId))) asignaciones[i] = { lineId: Number(a.lineId), asignadaEn: a.asignadaEn ?? ahora };
+  }
+  if (bruto.instanceId && bruto.activo && typeof bruto.lineId === "number" && !asignaciones[bruto.instanceId]) {
+    asignaciones[bruto.instanceId] = { lineId: bruto.lineId, asignadaEn: bruto.actualizadoEn ?? ahora };
+  }
+  return {
+    connectorId: bruto.connectorId ?? "",
+    asignaciones,
+    tokensCifrados: bruto.tokensCifrados ?? "",
+    appCifrada: bruto.appCifrada ?? "",
+    dominio: bruto.dominio ?? "",
+    botId: bruto.botId ?? null,
+    instaladoEn: bruto.instaladoEn ?? null,
+    actualizadoEn: bruto.actualizadoEn ?? ahora,
+  };
+}
+
+/** Línea abierta que atiende el número, o null si no está asignado. */
+export function lineaDe(doc: OpenlinesBitrixDoc, instanceId: string): number | null {
+  return doc.asignaciones[instanceId]?.lineId ?? null;
+}
+
+/** Números asignados a una línea abierta, ordenados. */
+export function instanciasEnLinea(doc: OpenlinesBitrixDoc, lineId: number): string[] {
+  return Object.entries(doc.asignaciones)
+    .filter(([, a]) => a.lineId === lineId)
+    .map(([i]) => i)
+    .sort();
+}
+
+/** `+5214421234567` → `+521 442 123 4567`; `+524421234567` → `+52 442 123 4567`. */
+export function formatearNumero(numero: string | null | undefined): string | null {
+  if (!numero) return null;
+  const d = numero.replace(/[^\d]/g, "");
+  if (d.length < 8) return `+${d}`;
+  const nacional = d.slice(-10);
+  const prefijo = d.slice(0, -10);
+  return `+${prefijo} ${nacional.slice(0, 3)} ${nacional.slice(3, 6)} ${nacional.slice(6)}`.replace(/\s+/g, " ").trim();
 }
 
 /** Un mensaje que Bitrix nos entrega por OnImConnectorMessageAdd. */

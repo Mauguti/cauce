@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   canalAbiertoDe,
   type Conversacion,
+  type Instance,
   type InstanceId,
   type Message,
   type TenantId,
@@ -10,10 +11,20 @@ import type { Repositorio } from "../../store.ts";
 import type { ColaEnvios } from "../../cola.ts";
 import { Cripto } from "../../cripto.ts";
 import { enmascararTelefono, registrar, registrarError } from "../../log.ts";
-import { ClienteOpenlines, interpretarEventoMensajes } from "./cliente.ts";
+import { ClienteOpenlines, ErrorBitrix, interpretarEventoMensajes } from "./cliente.ts";
 import { tokensDesdeAuth, type CredencialesApp } from "./oauth.ts";
 import { LimitadorInmediato } from "./limitador.ts";
-import { chatExterno, partirChatExterno, type OpenlinesBitrixDoc, type TokensOAuth } from "./tipos.ts";
+import { htmlPlacement, htmlRechazo, type AvisoPlacement, type LineaPlacement } from "./placement.ts";
+import {
+  chatExterno,
+  formatearNumero,
+  instanciasEnLinea,
+  lineaDe,
+  normalizarOpenlinesDoc,
+  partirChatExterno,
+  type OpenlinesBitrixDoc,
+  type TokensOAuth,
+} from "./tipos.ts";
 
 /** Envío por el carril inmediato (sin cola); lo provee el gestor de sesiones. */
 export type EnviarInmediato = (
@@ -24,11 +35,43 @@ export type EnviarInmediato = (
 ) => Promise<Message>;
 
 export interface AltaOpenlines {
-  instanceId: InstanceId;
   clientId: string;
   clientSecret: string;
   /** Dominio del portal de Bitrix24 del cliente, p. ej. digsol.bitrix24.mx. */
   dominio: string;
+}
+
+export interface ConfirmacionesAsignacion {
+  /** El número ya atiende otra línea abierta y el cliente acepta moverlo. */
+  reasignacion?: boolean;
+  /** La línea abierta ya tiene otros números y el cliente acepta compartirla. */
+  compartida?: boolean;
+}
+
+/**
+ * Asignar exige una confirmación explícita que no llegó. El handler la
+ * traduce a 409 con el detalle para que la pantalla la pida.
+ */
+export class ErrorConfirmacion extends Error {
+  constructor(
+    readonly tipo: "reasignacion" | "compartida",
+    readonly detalle: { lineaActual?: number; numeros?: string[] },
+    mensaje: string,
+  ) {
+    super(mensaje);
+    this.name = "ErrorConfirmacion";
+  }
+}
+
+/** Una línea de WhatsApp del tenant con su estado real y su línea abierta. */
+export interface LineaResumen {
+  instanceId: InstanceId;
+  numero: string | null;
+  estado: Instance["estado"];
+  viva: boolean;
+  lineId: number | null;
+  lineaNombre: string | null;
+  asignadaEn: string | null;
 }
 
 /** Normaliza lo que el usuario pegue: URL completa, con barra, mayúsculas… → solo el host. */
@@ -40,15 +83,27 @@ export function normalizarDominioPortal(entrada: string): string {
   return s;
 }
 
+/** Tope de líneas abiertas por plan de Bitrix24 (helpdesk, FAQ Contact Center). Para explicar el error crudo. */
+export const TOPE_LINEAS_ABIERTAS_BITRIX = "Free 1 · Basic 2 · Standard 10 · Professional y Enterprise sin tope";
+
 const ICONO_SVG =
   "data:image/svg+xml;base64," +
   Buffer.from(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40"><rect width="40" height="40" rx="8" fill="#25D366"/><path d="M12 28l2-5a9 9 0 1 1 3 3z" fill="#fff"/></svg>`,
   ).toString("base64");
 
+const NOMBRE_CONECTOR = "WhatsApp · Digsol Factory";
+/** Vigencia del token que autentica el POST de vuelta desde la página del placement. */
+const TOKEN_PLACEMENT_MS = 30 * 60_000;
+
 /**
- * Canal abierto de Bitrix24: conecta una línea de WhatsApp al Contact
- * Center de un portal. Aparte del conector Bitrix por webhook; conviven.
+ * Canal abierto de Bitrix24: conecta las líneas de WhatsApp de un tenant al
+ * Contact Center de un portal. Aparte del conector Bitrix por webhook.
+ *
+ * Un conector por tenant, activado en N líneas abiertas: cada número atiende
+ * exactamente una línea abierta; una línea abierta puede tener varios
+ * números (compartida, con confirmación). El ruteo, la cola y el equipo son
+ * propiedades de la línea abierta en Bitrix, no nuestras.
  *
  * Secretos: client_id/client_secret de la app local y los tokens OAuth
  * viven CIFRADOS en Firestore con la misma Cripto que las credenciales de
@@ -64,16 +119,21 @@ export class ConectorOpenlines {
   readonly #fetch: typeof fetch | undefined;
   readonly #limitador = new LimitadorInmediato();
   readonly #dormir: (ms: number) => Promise<void>;
+  readonly #sesionViva: (instanceId: InstanceId) => boolean;
+  readonly #ahora: () => number;
 
   constructor(opciones: {
     repo: Repositorio;
     enviarInmediato: EnviarInmediato;
     /** Base pública del orquestador (p. ej. https://api.factory.digsol.com.mx). */
     urlPublica: string;
+    /** ¿La sesión de esta instancia vive en el gestor? Sin gestor, siempre false. */
+    sesionViva?: (instanceId: InstanceId) => boolean;
     cola?: ColaEnvios;
     cripto?: Cripto;
     fetchImpl?: typeof fetch;
     dormir?: (ms: number) => Promise<void>;
+    ahora?: () => number;
   }) {
     this.#repo = opciones.repo;
     this.#cola = opciones.cola ?? null;
@@ -82,6 +142,8 @@ export class ConectorOpenlines {
     this.#urlPublica = opciones.urlPublica.replace(/\/+$/, "");
     this.#fetch = opciones.fetchImpl;
     this.#dormir = opciones.dormir ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.#sesionViva = opciones.sesionViva ?? (() => false);
+    this.#ahora = opciones.ahora ?? (() => Date.now());
   }
 
   /** URL única del tenant para instalación, placement y eventos. */
@@ -93,6 +155,10 @@ export class ConectorOpenlines {
     return `digsol_factory_${tenantId}`;
   }
 
+  async #doc(tenantId: TenantId): Promise<OpenlinesBitrixDoc | null> {
+    return normalizarOpenlinesDoc(await this.#repo.getOpenlinesBitrix(tenantId));
+  }
+
   // ── Alta desde la plataforma ─────────────────────────────────────────────
 
   /** Guarda la app local (client_id/secret cifrados) y deja el conector pendiente de instalación. */
@@ -101,13 +167,11 @@ export class ConectorOpenlines {
       throw new Error("se requieren client_id y client_secret de la aplicación local de Bitrix24");
     }
     const dominio = normalizarDominioPortal(alta.dominio);
-    const previo = await this.#repo.getOpenlinesBitrix(tenantId);
+    const previo = await this.#doc(tenantId);
     const ahora = new Date().toISOString();
     const doc: OpenlinesBitrixDoc = {
-      instanceId: alta.instanceId,
       connectorId: this.connectorId(tenantId),
-      lineId: previo?.lineId ?? null,
-      activo: previo?.activo ?? false,
+      asignaciones: previo?.asignaciones ?? {},
       tokensCifrados: previo?.tokensCifrados ?? "",
       appCifrada: this.#cripto.cifrar(JSON.stringify({ clientId: alta.clientId.trim(), clientSecret: alta.clientSecret.trim() })),
       dominio,
@@ -116,24 +180,22 @@ export class ConectorOpenlines {
       actualizadoEn: ahora,
     };
     await this.#repo.saveOpenlinesBitrix(tenantId, doc);
-    registrar("openlines.alta", { tenant: tenantId, instancia: alta.instanceId, dominio, resultado: previo ? "editada" : "creada" });
+    registrar("openlines.alta", { tenant: tenantId, dominio, resultado: previo ? "editada" : "creada" });
     return doc;
   }
 
   async ver(tenantId: TenantId) {
-    const doc = await this.#repo.getOpenlinesBitrix(tenantId);
+    const doc = await this.#doc(tenantId);
     if (!doc) return null;
     return {
-      instanceId: doc.instanceId,
       connectorId: doc.connectorId,
-      lineId: doc.lineId,
-      activo: doc.activo,
       instalada: doc.tokensCifrados !== "",
       dominio: doc.dominio,
       botId: doc.botId,
       instaladoEn: doc.instaladoEn,
       actualizadoEn: doc.actualizadoEn,
       urlHandler: this.urlHandler(tenantId),
+      asignaciones: Object.entries(doc.asignaciones).map(([instanceId, a]) => ({ instanceId, lineId: a.lineId, asignadaEn: a.asignadaEn })),
     };
   }
 
@@ -142,7 +204,7 @@ export class ConectorOpenlines {
     registrar("openlines.baja", { tenant: tenantId });
   }
 
-  // ── Handler de Bitrix (instalación, placement, eventos) ──────────────────
+  // ── Credenciales y cliente ───────────────────────────────────────────────
 
   #credenciales(doc: OpenlinesBitrixDoc): CredencialesApp {
     return JSON.parse(this.#cripto.descifrar(doc.appCifrada)) as CredencialesApp;
@@ -159,7 +221,7 @@ export class ConectorOpenlines {
       credenciales: this.#credenciales(doc),
       ...(this.#fetch ? { fetchImpl: this.#fetch } : {}),
       alRenovar: async (t) => {
-        const actual = (await this.#repo.getOpenlinesBitrix(tenantId)) ?? doc;
+        const actual = (await this.#doc(tenantId)) ?? doc;
         await this.#repo.saveOpenlinesBitrix(tenantId, {
           ...actual,
           tokensCifrados: this.#cripto.cifrar(JSON.stringify(t)),
@@ -170,13 +232,23 @@ export class ConectorOpenlines {
     });
   }
 
+  /** Doc instalado o error claro. */
+  async #instalado(tenantId: TenantId): Promise<{ doc: OpenlinesBitrixDoc; cliente: ClienteOpenlines }> {
+    const doc = await this.#doc(tenantId);
+    if (!doc) throw new Error("tenant sin canal abierto dado de alta");
+    if (!doc.tokensCifrados) throw new Error("la aplicación aún no se ha instalado en el portal de Bitrix");
+    return { doc, cliente: this.#cliente(tenantId, doc) };
+  }
+
+  // ── Instalación (ONAPPINSTALL) ───────────────────────────────────────────
+
   /**
-   * ONAPPINSTALL: Bitrix instaló la app en el portal y nos manda los
-   * tokens. Solo se acepta si el tenant dio de alta la app antes; si ya
-   * había una instalación, el portal (member_id) debe coincidir.
+   * Bitrix instaló la app en el portal y nos manda los tokens. Solo se
+   * acepta si el tenant dio de alta la app antes; si ya había una
+   * instalación, el portal (member_id) debe coincidir. Idempotente.
    */
   async instalar(tenantId: TenantId, auth: unknown): Promise<void> {
-    const doc = await this.#repo.getOpenlinesBitrix(tenantId);
+    const doc = await this.#doc(tenantId);
     if (!doc) throw new Error("tenant sin canal abierto dado de alta");
     const tokens = tokensDesdeAuth(auth);
     const rechazar = (motivo: string): never => {
@@ -222,7 +294,7 @@ export class ConectorOpenlines {
     // es idempotente por sí mismo. event.bind no lo es; suscribirMensajes lo resuelve.
     await cliente.registrarConector({
       id: instalado.connectorId,
-      nombre: "WhatsApp · Digsol Factory",
+      nombre: NOMBRE_CONECTOR,
       icono: { DATA_IMAGE: ICONO_SVG },
       placementHandler: handler,
     });
@@ -236,39 +308,269 @@ export class ConectorOpenlines {
 
   /** ¿El evento viene del portal instalado? Compara application_token. */
   async eventoAutentico(tenantId: TenantId, auth: any): Promise<boolean> {
-    const doc = await this.#repo.getOpenlinesBitrix(tenantId);
+    const doc = await this.#doc(tenantId);
     if (!doc?.tokensCifrados) return false;
     const tokens = this.#tokens(doc);
     const recibido = auth?.application_token;
     return typeof recibido === "string" && recibido.length > 0 && recibido === tokens.applicationToken;
   }
 
-  /** Placement SETTING_CONNECTOR: Bitrix abre nuestra página con LINE y ACTIVE_STATUS. */
-  async activar(tenantId: TenantId, opciones: { line: number; activo: boolean; memberId?: string | null }): Promise<OpenlinesBitrixDoc> {
-    const doc = await this.#repo.getOpenlinesBitrix(tenantId);
-    if (!doc) throw new Error("tenant sin canal abierto dado de alta");
-    const tokens = this.#tokens(doc);
-    // Sin member_id o con uno distinto, no se toca nada: un POST desde
-    // fuera podría desactivar o redirigir la línea de un cliente.
-    if (!opciones.memberId || opciones.memberId !== tokens.memberId) {
-      registrar("openlines.placement_rechazado", { tenant: tenantId, linea: opciones.line, motivo: opciones.memberId ? "member_id distinto" : "sin member_id" }, "warn");
-      throw new Error("el placement no viene del portal instalado");
+  // ── Líneas: estado real, líneas abiertas del portal, asignaciones ────────
+
+  /** Etiqueta con los números de las instancias, para Bitrix y para avisos. */
+  async #numerosDe(tenantId: TenantId, instanceIds: string[]): Promise<string[]> {
+    const etiquetas: string[] = [];
+    for (const i of instanceIds) {
+      const inst = await this.#repo.getInstance(tenantId, i);
+      etiquetas.push(formatearNumero(inst?.numero) ?? i);
     }
-    const cliente = this.#cliente(tenantId, doc);
-    await cliente.activarConector({ connector: doc.connectorId, line: opciones.line, active: opciones.activo });
-    if (opciones.activo) {
-      await cliente.fijarDatosConector({
-        connector: doc.connectorId,
-        line: opciones.line,
-        id: doc.instanceId,
-        nombre: "WhatsApp · Digsol Factory",
-      });
+    return etiquetas;
+  }
+
+  /**
+   * Todas las líneas de WhatsApp del tenant con estado real (sesión viva +
+   * estado del registro) y la línea abierta que atienden. Una sola lectura
+   * de Firestore y consultas en memoria: siete líneas no cuestan más que
+   * una. Los nombres de las líneas abiertas se piden a Bitrix solo si la
+   * app está instalada, best-effort: si Bitrix no responde, la tabla sale
+   * sin nombres y con `lineasAbiertasError`.
+   */
+  async lineas(tenantId: TenantId): Promise<{ lineas: LineaResumen[]; lineasAbiertasError: string | null }> {
+    const [instancias, doc] = await Promise.all([this.#repo.listInstances(tenantId), this.#doc(tenantId)]);
+    let nombres = new Map<number, string>();
+    let lineasAbiertasError: string | null = null;
+    if (doc?.tokensCifrados) {
+      try {
+        nombres = new Map((await this.#cliente(tenantId, doc).listarLineasAbiertas()).map((l) => [l.id, l.nombre]));
+      } catch (err) {
+        lineasAbiertasError = err instanceof Error ? err.message : String(err);
+        registrarError("openlines.lineas_abiertas", err, { tenant: tenantId });
+      }
     }
-    const actualizado: OpenlinesBitrixDoc = { ...doc, lineId: opciones.line, activo: opciones.activo, actualizadoEn: new Date().toISOString() };
+    const lineas = instancias.map((i): LineaResumen => {
+      const a = doc?.asignaciones[i.id] ?? null;
+      return {
+        instanceId: i.id,
+        numero: i.numero,
+        estado: i.estado,
+        viva: this.#sesionViva(i.id),
+        lineId: a?.lineId ?? null,
+        lineaNombre: a ? nombres.get(a.lineId) ?? null : null,
+        asignadaEn: a?.asignadaEn ?? null,
+      };
+    });
+    return { lineas, lineasAbiertasError };
+  }
+
+  /** Líneas abiertas existentes en el portal, con los números que ya las atienden. */
+  async lineasAbiertas(tenantId: TenantId): Promise<{ id: number; nombre: string; activa: boolean; numeros: { instanceId: string; numero: string | null }[] }[]> {
+    const { doc, cliente } = await this.#instalado(tenantId);
+    const lista = await cliente.listarLineasAbiertas();
+    const instancias = await this.#repo.listInstances(tenantId);
+    const numeroDe = new Map(instancias.map((i) => [i.id, i.numero]));
+    return lista.map((l) => ({
+      ...l,
+      numeros: instanciasEnLinea(doc, l.id).map((instanceId) => ({ instanceId, numero: numeroDe.get(instanceId) ?? null })),
+    }));
+  }
+
+  /**
+   * Crea una línea abierta en el portal. NUNCA por default: la pantalla
+   * ofrece primero las existentes y "crear" es una acción explícita. Nace
+   * activa, con el usuario de la app como único operador; el equipo y el
+   * horario se afinan en Bitrix (enlace al Contact Center).
+   */
+  async crearLineaAbierta(tenantId: TenantId, nombre: string): Promise<{ id: number; nombre: string; urlContactCenter: string | null }> {
+    const limpio = nombre.trim();
+    if (!limpio) throw new Error("la línea abierta necesita un nombre");
+    const { cliente } = await this.#instalado(tenantId);
+    const operadorId = await cliente.usuarioActual();
+    try {
+      const id = await cliente.crearLineaAbierta({ nombre: limpio, operadorId });
+      registrar("openlines.linea_creada", { tenant: tenantId, linea: id, nombre: limpio, operador: operadorId });
+      return { id, nombre: limpio, urlContactCenter: await cliente.urlContactCenter() };
+    } catch (err) {
+      registrarError("openlines.linea_creada", err, { tenant: tenantId, nombre: limpio });
+      const crudo = err instanceof ErrorBitrix ? (err.descripcion ?? err.codigo ?? err.message) : err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Bitrix no permitió crear la línea abierta: ${crudo}. ` +
+        `Cada plan de Bitrix24 tiene un tope de líneas abiertas (${TOPE_LINEAS_ABIERTAS_BITRIX}). ` +
+        `Si estás en el tope, sube de plan en Bitrix o comparte una línea abierta existente entre varios números.`,
+      );
+    }
+  }
+
+  /**
+   * El número `instanceId` pasa a atender la línea abierta `lineId`.
+   * - Si ya atendía otra, exige `confirmaciones.reasignacion` y deja de
+   *   atender la anterior (que se desactiva si queda vacía).
+   * - Si la línea ya tiene otros números, exige `confirmaciones.compartida`.
+   * Sin la confirmación que toque lanza ErrorConfirmacion; nada cambia.
+   */
+  async asignar(tenantId: TenantId, instanceId: InstanceId, lineId: number, confirmaciones: ConfirmacionesAsignacion = {}): Promise<OpenlinesBitrixDoc> {
+    if (!Number.isInteger(lineId) || lineId <= 0) throw new Error("línea abierta inválida");
+    const { doc, cliente } = await this.#instalado(tenantId);
+    const instancia = await this.#repo.getInstance(tenantId, instanceId);
+    if (!instancia) throw new Error("línea de WhatsApp no encontrada en este tenant");
+
+    const lineaActual = lineaDe(doc, instanceId);
+    if (lineaActual !== null && lineaActual !== lineId && !confirmaciones.reasignacion) {
+      throw new ErrorConfirmacion("reasignacion", { lineaActual }, `este número ya atiende la línea abierta ${lineaActual}; confirma para moverlo`);
+    }
+    const otros = instanciasEnLinea(doc, lineId).filter((i) => i !== instanceId);
+    if (otros.length && !confirmaciones.compartida) {
+      const numeros = await this.#numerosDe(tenantId, otros);
+      throw new ErrorConfirmacion("compartida", { numeros }, `esta línea abierta ya la atienden ${numeros.join(" y ")}; confirma para compartirla`);
+    }
+
+    // Bitrix: activar el conector en la línea y describir el canal con TODOS sus números.
+    const todosEnLinea = [...otros, instanceId].sort();
+    await cliente.activarConector({ connector: doc.connectorId, line: lineId, active: true });
+    await cliente.fijarDatosConector({
+      connector: doc.connectorId,
+      line: lineId,
+      id: todosEnLinea.join(","),
+      nombre: `${NOMBRE_CONECTOR} · ${(await this.#numerosDe(tenantId, todosEnLinea)).join(", ")}`,
+    });
+
+    const ahora = new Date().toISOString();
+    const actualizado: OpenlinesBitrixDoc = {
+      ...doc,
+      asignaciones: { ...doc.asignaciones, [instanceId]: { lineId, asignadaEn: lineaActual === lineId ? doc.asignaciones[instanceId]?.asignadaEn ?? ahora : ahora } },
+      actualizadoEn: ahora,
+    };
+
+    // La línea anterior: sin números se desactiva; con otros, se re-describe.
+    if (lineaActual !== null && lineaActual !== lineId) {
+      const restantes = instanciasEnLinea(actualizado, lineaActual);
+      try {
+        if (restantes.length === 0) {
+          await cliente.activarConector({ connector: doc.connectorId, line: lineaActual, active: false });
+        } else {
+          await cliente.fijarDatosConector({
+            connector: doc.connectorId, line: lineaActual, id: restantes.join(","),
+            nombre: `${NOMBRE_CONECTOR} · ${(await this.#numerosDe(tenantId, restantes)).join(", ")}`,
+          });
+        }
+      } catch (err) {
+        // La asignación nueva ya está hecha en Bitrix; la limpieza de la vieja no la deshace.
+        registrarError("openlines.asignacion", err, { tenant: tenantId, instancia: instanceId, lineaAnterior: lineaActual, paso: "limpiar línea anterior" });
+      }
+    }
+
     await this.#repo.saveOpenlinesBitrix(tenantId, actualizado);
-    registrar("openlines.activacion", { tenant: tenantId, linea: opciones.line, resultado: opciones.activo ? "activo" : "inactivo" });
+    registrar("openlines.asignacion", {
+      tenant: tenantId, instancia: instanceId, numero: enmascararTelefono(instancia.numero), linea: lineId,
+      resultado: lineaActual === null ? "asignada" : lineaActual === lineId ? "sin cambio" : "reasignada",
+      ...(lineaActual !== null && lineaActual !== lineId ? { lineaAnterior: lineaActual } : {}),
+      ...(otros.length ? { compartidaCon: otros.length } : {}),
+    });
     return actualizado;
   }
+
+  /** El número deja de atender su línea abierta; si la línea queda vacía, se desactiva. */
+  async desasignar(tenantId: TenantId, instanceId: InstanceId): Promise<OpenlinesBitrixDoc> {
+    const { doc, cliente } = await this.#instalado(tenantId);
+    const lineaActual = lineaDe(doc, instanceId);
+    if (lineaActual === null) return doc;
+    const { [instanceId]: _quitada, ...resto } = doc.asignaciones;
+    const actualizado: OpenlinesBitrixDoc = { ...doc, asignaciones: resto, actualizadoEn: new Date().toISOString() };
+    const restantes = instanciasEnLinea(actualizado, lineaActual);
+    if (restantes.length === 0) {
+      await cliente.activarConector({ connector: doc.connectorId, line: lineaActual, active: false });
+    } else {
+      await cliente.fijarDatosConector({
+        connector: doc.connectorId, line: lineaActual, id: restantes.join(","),
+        nombre: `${NOMBRE_CONECTOR} · ${(await this.#numerosDe(tenantId, restantes)).join(", ")}`,
+      });
+    }
+    await this.#repo.saveOpenlinesBitrix(tenantId, actualizado);
+    registrar("openlines.asignacion", { tenant: tenantId, instancia: instanceId, linea: lineaActual, resultado: "quitada", ...(restantes.length ? { quedanEnLinea: restantes.length } : {}) });
+    return actualizado;
+  }
+
+  // ── Placement (página dentro de Bitrix) ──────────────────────────────────
+
+  #tokenPlacement(tenantId: TenantId, line: number, memberId: string): string {
+    return this.#cripto.cifrar(JSON.stringify({ t: tenantId, l: line, m: memberId, exp: this.#ahora() + TOKEN_PLACEMENT_MS }));
+  }
+
+  #abrirTokenPlacement(tenantId: TenantId, token: string): { line: number; memberId: string } | null {
+    try {
+      const d = JSON.parse(this.#cripto.descifrar(token)) as { t?: string; l?: number; m?: string; exp?: number };
+      if (d.t !== tenantId || typeof d.l !== "number" || typeof d.m !== "string" || typeof d.exp !== "number") return null;
+      if (d.exp < this.#ahora()) return null;
+      return { line: d.l, memberId: d.m };
+    } catch {
+      return null;
+    }
+  }
+
+  async #modeloPlacement(tenantId: TenantId, doc: OpenlinesBitrixDoc, line: number, memberId: string, seleccion: string | null, aviso: AvisoPlacement | null): Promise<string> {
+    const { lineas } = await this.lineas(tenantId);
+    const cliente = this.#cliente(tenantId, doc);
+    let lineaNombre: string | null = null;
+    try { lineaNombre = (await cliente.listarLineasAbiertas()).find((l) => l.id === line)?.nombre ?? null; } catch { /* sin nombre */ }
+    const enEsta = lineas.find((l) => l.lineId === line);
+    return htmlPlacement({
+      line,
+      lineaNombre,
+      connectorId: doc.connectorId,
+      token: this.#tokenPlacement(tenantId, line, memberId),
+      lineas: lineas.map((l): LineaPlacement => ({ instanceId: l.instanceId, numero: l.numero, estado: l.estado, viva: l.viva, lineId: l.lineId })),
+      seleccion: seleccion ?? enEsta?.instanceId ?? null,
+      aviso,
+      urlContactCenter: await cliente.urlContactCenter(),
+    });
+  }
+
+  /**
+   * SETTING_CONNECTOR: Bitrix abre nuestra página para la línea LINE.
+   * Solo desde el portal instalado (member_id); si no, se rechaza y se
+   * registra: un POST desde fuera podría redirigir la línea de un cliente.
+   */
+  async paginaPlacement(tenantId: TenantId, opciones: { line: number; memberId: string | null }): Promise<{ status: number; html: string }> {
+    const doc = await this.#doc(tenantId);
+    if (!doc?.tokensCifrados) return { status: 404, html: htmlRechazo("Este tenant no tiene la aplicación instalada. Da de alta el canal abierto en la plataforma de Digsol Factory e instala la app desde tu portal.") };
+    const tokens = this.#tokens(doc);
+    if (!opciones.memberId || opciones.memberId !== tokens.memberId) {
+      registrar("openlines.placement_rechazado", { tenant: tenantId, linea: opciones.line, motivo: opciones.memberId ? "member_id distinto" : "sin member_id" }, "warn");
+      return { status: 403, html: htmlRechazo("Esta página solo se abre desde el portal de Bitrix24 donde está instalada la aplicación.") };
+    }
+    registrar("openlines.placement", { tenant: tenantId, linea: opciones.line });
+    return { status: 200, html: await this.#modeloPlacement(tenantId, doc, opciones.line, opciones.memberId, null, null) };
+  }
+
+  /** POST de vuelta desde la página: el cliente eligió un número (y, si tocaba, confirmó). */
+  async asignarDesdePlacement(tenantId: TenantId, datos: { token: string; instanceId: string; confirmarReasignacion: boolean; confirmarCompartida: boolean }): Promise<{ status: number; html: string }> {
+    const doc = await this.#doc(tenantId);
+    if (!doc?.tokensCifrados) return { status: 404, html: htmlRechazo("Este tenant no tiene la aplicación instalada.") };
+    const abierto = this.#abrirTokenPlacement(tenantId, datos.token);
+    if (!abierto || abierto.memberId !== this.#tokens(doc).memberId) {
+      registrar("openlines.placement_rechazado", { tenant: tenantId, motivo: "token inválido o vencido" }, "warn");
+      return { status: 403, html: htmlRechazo("La sesión de esta página venció. Cierra el panel y vuelve a abrir el conector desde Contact Center.") };
+    }
+    const { line, memberId } = abierto;
+    if (!datos.instanceId) {
+      return { status: 400, html: await this.#modeloPlacement(tenantId, doc, line, memberId, null, { tipo: "error", mensaje: "Elige un número de WhatsApp." }) };
+    }
+    try {
+      const actualizado = await this.asignar(tenantId, datos.instanceId, line, { reasignacion: datos.confirmarReasignacion, compartida: datos.confirmarCompartida });
+      const inst = await this.#repo.getInstance(tenantId, datos.instanceId);
+      return { status: 200, html: await this.#modeloPlacement(tenantId, actualizado, line, memberId, datos.instanceId, { tipo: "ok", instanceId: datos.instanceId, numero: inst?.numero ?? null }) };
+    } catch (err) {
+      if (err instanceof ErrorConfirmacion) {
+        const aviso: AvisoPlacement = err.tipo === "reasignacion"
+          ? { tipo: "reasignacion", lineaActual: err.detalle.lineaActual ?? 0 }
+          : { tipo: "compartida", numeros: err.detalle.numeros ?? [] };
+        return { status: 200, html: await this.#modeloPlacement(tenantId, doc, line, memberId, datos.instanceId, aviso) };
+      }
+      registrarError("openlines.asignacion", err, { tenant: tenantId, instancia: datos.instanceId, linea: line, origen: "placement" });
+      return { status: 200, html: await this.#modeloPlacement(tenantId, doc, line, memberId, datos.instanceId, { tipo: "error", mensaje: err instanceof Error ? err.message : String(err) }) };
+    }
+  }
+
+  // ── imbot ────────────────────────────────────────────────────────────────
 
   /**
    * Registra el imbot de línea abierta y guarda su id. Es la pieza de la
@@ -277,9 +579,7 @@ export class ConectorOpenlines {
    * no rebotar al contacto. Si la prueba falla, se quita y se cae a C.
    */
   async registrarBot(tenantId: TenantId): Promise<number> {
-    const doc = await this.#repo.getOpenlinesBitrix(tenantId);
-    if (!doc) throw new Error("tenant sin canal abierto dado de alta");
-    const cliente = this.#cliente(tenantId, doc);
+    const { doc, cliente } = await this.#instalado(tenantId);
     const resultado = await cliente.registrarBot({
       codigo: `digsol_factory_bot_${tenantId}`,
       nombre: "Bot · Digsol Factory",
@@ -295,12 +595,12 @@ export class ConectorOpenlines {
   // ── Entrante: WhatsApp → Contact Center ──────────────────────────────────
 
   /**
-   * Manda a la línea abierta un mensaje que llegó a la instancia del
-   * canal. Devuelve false si el canal no aplica a esta instancia. Nunca
-   * lanza hacia el webhook: el fallo queda en la bitácora.
+   * Manda a la línea abierta que atiende el número un mensaje que llegó.
+   * Devuelve false si no aplica. Nunca lanza hacia el webhook: el fallo
+   * queda en la bitácora.
    */
   async entrante(tenantId: TenantId, instanceId: InstanceId, mensaje: Message, nombre?: string | null): Promise<boolean> {
-    const doc = await this.#repo.getOpenlinesBitrix(tenantId);
+    const doc = await this.#doc(tenantId);
     // Sin alta, el tenant no usa canal abierto: silencio. Con alta, cada
     // omisión deja línea: "nada" tiene que distinguirse de "no se intentó".
     if (!doc) return false;
@@ -311,29 +611,29 @@ export class ConectorOpenlines {
       }, nivel);
       return false;
     };
-    if (doc.instanceId !== instanceId) return omitir("instancia distinta a la del canal", "info");
     if (!doc.tokensCifrados) return omitir("app no instalada en el portal");
-    if (!doc.activo || doc.lineId === null) return omitir("conector sin activar en una línea abierta");
+    const lineId = lineaDe(doc, instanceId);
+    if (lineId === null) return omitir("número sin línea abierta asignada");
     const telefono = mensaje.telefono.replace(/[^\d]/g, "");
     const chatId = chatExterno(instanceId, telefono);
     try {
       const cliente = this.#cliente(tenantId, doc);
       const r = await cliente.enviarEntrante({
         connector: doc.connectorId,
-        line: doc.lineId,
+        line: lineId,
         chatId,
         usuario: { id: telefono, nombre: nombre ?? null, telefono: `+${telefono}` },
         mensaje: { id: mensaje.id, fecha: new Date(mensaje.timestamp), texto: mensaje.cuerpo },
       });
       await this.#repo.vincularOpenLine(tenantId, instanceId, telefono, {
-        lineId: doc.lineId,
+        lineId,
         chatId: r.chatId,
         sessionId: r.sessionId,
         actualizadoEn: new Date().toISOString(),
       });
       registrar("openlines.entrante", {
         tenant: tenantId, instancia: instanceId, mensaje: mensaje.id, telefono: enmascararTelefono(mensaje.telefono),
-        linea: doc.lineId, chatBitrix: r.chatId, sesionBitrix: r.sessionId, resultado: "ok",
+        linea: lineId, chatBitrix: r.chatId, sesionBitrix: r.sessionId, resultado: "ok",
       });
       return true;
     } catch (err) {
@@ -355,8 +655,8 @@ export class ConectorOpenlines {
    * verifica en el dogfooding que NO rebote al contacto.
    */
   async reflejarBot(tenantId: TenantId, instanceId: InstanceId, telefono: string, texto: string): Promise<void> {
-    const doc = await this.#repo.getOpenlinesBitrix(tenantId);
-    if (!doc || !doc.activo || doc.instanceId !== instanceId || doc.botId === null) return;
+    const doc = await this.#doc(tenantId);
+    if (!doc?.tokensCifrados || doc.botId === null || lineaDe(doc, instanceId) === null) return;
     const conv = await this.#repo.getConversacion(tenantId, instanceId, telefono.replace(/[^\d]/g, ""));
     const imChatId = conv?.bitrixOpenLine?.chatId ? Number(conv.bitrixOpenLine.chatId) : null;
     if (!imChatId) return;
@@ -371,21 +671,22 @@ export class ConectorOpenlines {
   // ── Saliente: operador → WhatsApp ────────────────────────────────────────
 
   /**
-   * OnImConnectorMessageAdd: el operador escribió. Va por el carril
-   * inmediato con espaciado por conversación y tope de ráfaga por línea
-   * (el excedente a la cola normal, registrado). Confirma la entrega a
-   * Bitrix y abre/renueva la ventana humana. Los mensajes del propio
-   * imbot se ignoran para que no reboten al contacto.
+   * OnImConnectorMessageAdd: el operador escribió. El chat externo dice por
+   * qué número sale (instancia:teléfono). Va por el carril inmediato con
+   * espaciado por conversación y tope de ráfaga por número (el excedente a
+   * la cola normal, registrado). Confirma la entrega a Bitrix y abre/renueva
+   * la ventana humana. Los mensajes del propio imbot se ignoran para que no
+   * reboten al contacto.
    */
   async respuestaOperador(tenantId: TenantId, data: unknown): Promise<void> {
-    const doc = await this.#repo.getOpenlinesBitrix(tenantId);
-    if (!doc || !doc.activo || doc.lineId === null) {
-      registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "canal inactivo" }, "warn");
+    const doc = await this.#doc(tenantId);
+    if (!doc?.tokensCifrados || Object.keys(doc.asignaciones).length === 0) {
+      registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "canal sin números asignados" }, "warn");
       return;
     }
     const { connector, line, mensajes } = interpretarEventoMensajes(data);
-    if (connector !== doc.connectorId || line !== doc.lineId) {
-      registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "conector o línea distintos", conector: connector, linea: line }, "warn");
+    if (connector !== doc.connectorId || line === null) {
+      registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "conector distinto o sin línea", conector: connector, linea: line }, "warn");
       return;
     }
     const tenant = await this.#repo.getTenant(tenantId);
@@ -398,12 +699,21 @@ export class ConectorOpenlines {
         continue;
       }
       const partes = partirChatExterno(m.chatExternoId);
-      if (!partes || partes.instanceId !== doc.instanceId) {
+      if (!partes) {
         registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "chat externo no reconocido", chat: m.chatExternoId }, "warn");
         continue;
       }
       const { instanceId, telefono } = partes;
-      const base = { tenant: tenantId, instancia: instanceId, telefono: enmascararTelefono(telefono), imMensaje: m.imMessageId, usuario: m.userId };
+      const lineaAsignada = lineaDe(doc, instanceId);
+      if (lineaAsignada === null) {
+        registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "número sin línea abierta asignada", instancia: instanceId, linea: line }, "warn");
+        continue;
+      }
+      const base = { tenant: tenantId, instancia: instanceId, telefono: enmascararTelefono(telefono), imMensaje: m.imMessageId, usuario: m.userId, linea: line };
+      if (lineaAsignada !== line) {
+        // El chat vive en la línea donde se abrió; el número ya atiende otra. Se entrega igual: el contacto sigue en ese número.
+        registrar("openlines.operador", { ...base, nota: `número reasignado a la línea ${lineaAsignada}; se entrega por el chat original` });
+      }
 
       if (!m.texto.trim()) {
         // v1 solo texto: no se entrega ni se confirma; Bitrix lo mostrará como no entregado.
@@ -436,7 +746,7 @@ export class ConectorOpenlines {
         await this.#repo.marcarHumana(tenantId, instanceId, telefono, hasta);
         if (enviado.estado === "enviado") {
           await cliente.confirmarEntrega({
-            connector: doc.connectorId, line: doc.lineId, imChatId: m.imChatId, imMessageId: m.imMessageId,
+            connector: doc.connectorId, line, imChatId: m.imChatId, imMessageId: m.imMessageId,
             chatId: m.chatExternoId, externalId: enviado.externalId ?? enviado.id,
           });
           registrar("openlines.operador", { ...base, mensaje: enviado.id, resultado: "entregado", humanaHasta: hasta });

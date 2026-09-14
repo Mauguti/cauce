@@ -102,6 +102,7 @@ const openlines = urlPublica
       cripto,
       urlPublica,
       enviarInmediato: (t, i, tel, cuerpo) => gestor.enviarDirecto(t, i, tel, cuerpo),
+      sesionViva: (i) => gestor.obtener(i) !== null,
     })
   : undefined;
 if (!openlines) {

@@ -18,7 +18,7 @@ import {
   PLANES, type Capacidad, type TenantPlan,
 } from "@cauce/core";
 import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
-import type { ConectorOpenlines } from "./bitrix/openlines/conector.ts";
+import { ErrorConfirmacion, type ConectorOpenlines } from "./bitrix/openlines/conector.ts";
 import { enmascararTelefono, registrar, registrarCadaMs, registrarError } from "./log.ts";
 
 declare global {
@@ -415,20 +415,30 @@ export function crearApp(
         res.status(200).send("<!doctype html><meta charset=utf-8><p>Digsol Factory instalado. Ahora activa el conector en tu línea abierta (Contact Center → Canales).</p>");
         return;
       }
+      if (b.accion === "asignar" && typeof b.token === "string") {
+        // POST de vuelta desde nuestra página del placement: el cliente eligió
+        // el número. El token cifrado (tenant, línea, member_id, vigencia) es
+        // lo que autentica; sin él o vencido, se rechaza.
+        const r = await ol.asignarDesdePlacement(tenantId, {
+          token: b.token,
+          instanceId: typeof b.instanceId === "string" ? b.instanceId : "",
+          confirmarReasignacion: b.confirmar_reasignacion === "1",
+          confirmarCompartida: b.confirmar_compartida === "1",
+        });
+        res.status(r.status).type("html").send(r.html);
+        return;
+      }
       if (typeof b.PLACEMENT === "string") {
-        // Página de configuración del conector dentro de Bitrix.
+        // Página de configuración del conector dentro de Bitrix, para la línea LINE.
         let opts: any = {};
         try { opts = typeof b.PLACEMENT_OPTIONS === "string" ? JSON.parse(b.PLACEMENT_OPTIONS) : (b.PLACEMENT_OPTIONS ?? {}); } catch { opts = {}; }
         const line = Number(opts.LINE);
-        const activo = String(opts.ACTIVE_STATUS ?? "Y").toUpperCase() !== "N";
-        if (!Number.isFinite(line)) {
-          res.status(400).send("<!doctype html><meta charset=utf-8><p>Falta la línea (LINE) en las opciones del placement.</p>");
+        if (!Number.isFinite(line) || line <= 0) {
+          res.status(400).send("<!doctype html><meta charset=utf-8><p>Falta la línea abierta (LINE) en las opciones del placement. Abre el conector desde una línea abierta en Contact Center.</p>");
           return;
         }
-        const doc = await ol.activar(tenantId, { line, activo, memberId: typeof b.member_id === "string" ? b.member_id : null });
-        res.status(200).send(
-          `<!doctype html><meta charset=utf-8><body style="font-family:Inter,system-ui,sans-serif;padding:24px;color:#111827"><h2 style="margin:0 0 8px">WhatsApp · Digsol Factory</h2><p>${doc.activo ? "Conectado" : "Desactivado"} en la línea abierta ${line}. Los mensajes de WhatsApp de esta línea llegan aquí y tus respuestas salen por WhatsApp.</p><p style="color:#6B7280;font-size:13px">Instancia ${doc.instanceId} · conector ${doc.connectorId}</p></body>`,
-        );
+        const r = await ol.paginaPlacement(tenantId, { line, memberId: typeof b.member_id === "string" ? b.member_id : null });
+        res.status(r.status).type("html").send(r.html);
         return;
       }
       if (evento === "ONIMCONNECTORMESSAGEADD") {
@@ -475,6 +485,13 @@ export function crearApp(
 
   tenantRouter.get("/instances", async (req, res) => {
     res.json(await repo.listInstances(req.tenantId!));
+  });
+
+  // Instancias con "sesión viva" (existe en el gestor) en una sola llamada:
+  // sustituye el sondeo por línea (QR 409) del panel de Sesiones.
+  tenantRouter.get("/lineas", async (req, res) => {
+    const instancias = await repo.listInstances(req.tenantId!);
+    res.json(instancias.map((instancia) => ({ instancia, viva: gestor ? gestor.obtener(instancia.id) !== null : false })));
   });
 
   // ---- Conector Bitrix24 (mismo patrón que monday) ----
@@ -798,18 +815,74 @@ export function crearApp(
 
   tenantRouter.put("/conectores/bitrix-openlines", requiere("entrantes"), async (req, res) => {
     if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
-    const { instanceId, clientId, clientSecret, dominio } = req.body ?? {};
-    if (typeof instanceId !== "string" || typeof clientId !== "string" || typeof clientSecret !== "string" || typeof dominio !== "string") {
-      res.status(400).json({ error: "se requieren instanceId, clientId, clientSecret y dominio del portal" });
+    const { clientId, clientSecret, dominio } = req.body ?? {};
+    if (typeof clientId !== "string" || typeof clientSecret !== "string" || typeof dominio !== "string") {
+      res.status(400).json({ error: "se requieren clientId, clientSecret y dominio del portal" });
       return;
     }
-    const instancia = await repo.getInstance(req.tenantId!, instanceId);
-    if (!instancia) { res.status(404).json({ error: "instancia no encontrada" }); return; }
     try {
-      await opciones.openlines.guardarAlta(req.tenantId!, { instanceId, clientId, clientSecret, dominio });
+      await opciones.openlines.guardarAlta(req.tenantId!, { clientId, clientSecret, dominio });
       res.json(await opciones.openlines.ver(req.tenantId!));
     } catch (err: any) {
       res.status(400).json({ error: err?.message ?? "no se pudo guardar el canal abierto" });
+    }
+  });
+
+  // Tabla de líneas del tenant con estado real y línea abierta asignada: una llamada.
+  tenantRouter.get("/conectores/bitrix-openlines/lineas", requiere("entrantes"), async (req, res) => {
+    if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
+    res.json(await opciones.openlines.lineas(req.tenantId!));
+  });
+
+  // Líneas abiertas existentes en el portal (config.list.get), con los números que ya las atienden.
+  tenantRouter.get("/conectores/bitrix-openlines/lineas-abiertas", requiere("entrantes"), async (req, res) => {
+    if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
+    try {
+      res.json(await opciones.openlines.lineasAbiertas(req.tenantId!));
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "no se pudieron leer las líneas abiertas" });
+    }
+  });
+
+  // Crear una línea abierta: acción explícita del cliente, nunca por default.
+  tenantRouter.post("/conectores/bitrix-openlines/lineas-abiertas", requiere("entrantes"), async (req, res) => {
+    if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
+    const nombre = typeof req.body?.nombre === "string" ? req.body.nombre : "";
+    if (!nombre.trim()) { res.status(400).json({ error: "la línea abierta necesita un nombre" }); return; }
+    try {
+      res.status(201).json(await opciones.openlines.crearLineaAbierta(req.tenantId!, nombre));
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "no se pudo crear la línea abierta" });
+    }
+  });
+
+  // El número pasa a atender la línea abierta. 409 con requiereConfirmacion cuando hace falta confirmar.
+  tenantRouter.put("/conectores/bitrix-openlines/asignaciones/:instanceId", requiere("entrantes"), async (req, res) => {
+    if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
+    const lineId = Number(req.body?.lineId);
+    if (!Number.isInteger(lineId) || lineId <= 0) { res.status(400).json({ error: "lineId inválido" }); return; }
+    try {
+      await opciones.openlines.asignar(req.tenantId!, String(req.params.instanceId), lineId, {
+        reasignacion: req.body?.confirmarReasignacion === true,
+        compartida: req.body?.confirmarCompartida === true,
+      });
+      res.json(await opciones.openlines.ver(req.tenantId!));
+    } catch (err: any) {
+      if (err instanceof ErrorConfirmacion) {
+        res.status(409).json({ error: err.message, requiereConfirmacion: err.tipo, ...err.detalle });
+        return;
+      }
+      res.status(400).json({ error: err?.message ?? "no se pudo asignar la línea" });
+    }
+  });
+
+  tenantRouter.delete("/conectores/bitrix-openlines/asignaciones/:instanceId", requiere("entrantes"), async (req, res) => {
+    if (!opciones.openlines) { res.status(501).json({ error: "canal abierto no disponible" }); return; }
+    try {
+      await opciones.openlines.desasignar(req.tenantId!, String(req.params.instanceId));
+      res.json(await opciones.openlines.ver(req.tenantId!));
+    } catch (err: any) {
+      res.status(400).json({ error: err?.message ?? "no se pudo quitar la asignación" });
     }
   });
 

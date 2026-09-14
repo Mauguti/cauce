@@ -212,6 +212,61 @@ export class ClienteOpenlines {
     });
   }
 
+  // ── Líneas abiertas del portal ─────────────────────────────────────────────
+
+  /** Líneas abiertas existentes en el portal (config.list.get). */
+  async listarLineasAbiertas(): Promise<{ id: number; nombre: string; activa: boolean }[]> {
+    const r = await this.llamar("imopenlines.config.list.get", {
+      PARAMS: { select: ["ID", "LINE_NAME", "ACTIVE"], order: { ID: "asc" }, limit: 200 },
+    });
+    const lista = Array.isArray(r) ? r : Object.values(r ?? {});
+    return lista
+      .filter((l: any) => l && Number.isFinite(Number(l.ID)))
+      .map((l: any) => ({
+        id: Number(l.ID),
+        nombre: typeof l.LINE_NAME === "string" && l.LINE_NAME.trim() ? l.LINE_NAME : `Línea ${l.ID}`,
+        activa: String(l.ACTIVE ?? "Y").toUpperCase() !== "N",
+      }));
+  }
+
+  /** Id del usuario con el que actúa la app (`profile` no exige scope aparte). */
+  async usuarioActual(): Promise<number | null> {
+    try {
+      const r = await this.llamar("profile");
+      const id = Number(r?.ID);
+      return Number.isFinite(id) ? id : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Crea una línea abierta (config.add). Nunca por default: solo cuando el
+   * cliente lo pide explícitamente. Activa y con el operador dado como
+   * única cola; el equipo se afina en Bitrix.
+   */
+  async crearLineaAbierta(o: { nombre: string; operadorId: number | null }): Promise<number> {
+    const r = await this.llamar("imopenlines.config.add", {
+      PARAMS: { LINE_NAME: o.nombre, ACTIVE: "Y", ...(o.operadorId ? { QUEUE: [o.operadorId] } : {}) },
+    });
+    const id = Number(r);
+    if (!Number.isFinite(id)) throw new Error(`imopenlines.config.add no devolvió un id numérico: ${JSON.stringify(r)}`);
+    return id;
+  }
+
+  /** URL pública del Contact Center del portal (config.path.get), best-effort. */
+  async urlContactCenter(): Promise<string | null> {
+    try {
+      const r = await this.llamar("imopenlines.config.path.get");
+      if (typeof r?.SERVER_ADDRESS === "string" && typeof r?.PUBLIC_PATH === "string") {
+        return `${r.SERVER_ADDRESS.replace(/\/+$/, "")}${r.PUBLIC_PATH}`;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
   // ── imbot: para que las respuestas del bot se vean del lado del operador ──
   // Se verifica en el dogfooding antes de construir la ventana humana.
 
