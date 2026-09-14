@@ -115,6 +115,28 @@ export function formatearNumero(numero: string | null | undefined): string | nul
   return `+${prefijo} ${nacional.slice(0, 3)} ${nacional.slice(3, 6)} ${nacional.slice(6)}`.replace(/\s+/g, " ").trim();
 }
 
+/** Tope del nombre de una línea; cabe en la ficha de Bitrix y en la tabla. */
+export const NOMBRE_LINEA_MAX = 40;
+
+/** Normaliza el nombre que capture el cliente: recortado, sin saltos, al tope; vacío → null. */
+export function normalizarNombreLinea(entrada: unknown): string | null {
+  if (typeof entrada !== "string") return null;
+  const limpio = entrada.replace(/\s+/g, " ").trim().slice(0, NOMBRE_LINEA_MAX).trim();
+  return limpio || null;
+}
+
+/**
+ * Cómo se llama una línea donde la vea una persona: el nombre si lo hay,
+ * si no el número, si no el id. Nunca vacío. Con nombre, el número va
+ * entre paréntesis para que soporte lo tenga a la vista.
+ */
+export function etiquetaLinea(l: { id: string; numero: string | null; nombre?: string | null }): string {
+  const numero = formatearNumero(l.numero);
+  const nombre = normalizarNombreLinea(l.nombre);
+  if (nombre && numero) return `${nombre} (${numero})`;
+  return nombre ?? numero ?? l.id;
+}
+
 /** Un mensaje que Bitrix nos entrega por OnImConnectorMessageAdd. */
 export interface MensajeOperador {
   /** Nuestro chat.id externo: `${instanceId}:${telefono}`. */

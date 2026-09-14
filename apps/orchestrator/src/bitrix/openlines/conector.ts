@@ -17,7 +17,7 @@ import { LimitadorInmediato } from "./limitador.ts";
 import { htmlPlacement, htmlRechazo, type AvisoPlacement, type LineaPlacement } from "./placement.ts";
 import {
   chatExterno,
-  formatearNumero,
+  etiquetaLinea,
   instanciasEnLinea,
   lineaDe,
   normalizarOpenlinesDoc,
@@ -66,6 +66,8 @@ export class ErrorConfirmacion extends Error {
 /** Una línea de WhatsApp del tenant con su estado real y su línea abierta. */
 export interface LineaResumen {
   instanceId: InstanceId;
+  /** Nombre que le puso el cliente; null → se muestra el número. */
+  nombre: string | null;
   numero: string | null;
   estado: Instance["estado"];
   viva: boolean;
@@ -317,12 +319,12 @@ export class ConectorOpenlines {
 
   // ── Líneas: estado real, líneas abiertas del portal, asignaciones ────────
 
-  /** Etiqueta con los números de las instancias, para Bitrix y para avisos. */
+  /** Etiqueta legible de cada instancia (nombre y número, o número, o id), para Bitrix y para avisos. */
   async #numerosDe(tenantId: TenantId, instanceIds: string[]): Promise<string[]> {
     const etiquetas: string[] = [];
     for (const i of instanceIds) {
       const inst = await this.#repo.getInstance(tenantId, i);
-      etiquetas.push(formatearNumero(inst?.numero) ?? i);
+      etiquetas.push(inst ? etiquetaLinea(inst) : i);
     }
     return etiquetas;
   }
@@ -351,6 +353,7 @@ export class ConectorOpenlines {
       const a = doc?.asignaciones[i.id] ?? null;
       return {
         instanceId: i.id,
+        nombre: i.nombre ?? null,
         numero: i.numero,
         estado: i.estado,
         viva: this.#sesionViva(i.id),
@@ -460,7 +463,7 @@ export class ConectorOpenlines {
 
     await this.#repo.saveOpenlinesBitrix(tenantId, actualizado);
     registrar("openlines.asignacion", {
-      tenant: tenantId, instancia: instanceId, numero: enmascararTelefono(instancia.numero), linea: lineId,
+      tenant: tenantId, instancia: instanceId, nombre: instancia.nombre ?? null, numero: enmascararTelefono(instancia.numero), linea: lineId,
       resultado: lineaActual === null ? "asignada" : lineaActual === lineId ? "sin cambio" : "reasignada",
       ...(lineaActual !== null && lineaActual !== lineId ? { lineaAnterior: lineaActual } : {}),
       ...(otros.length ? { compartidaCon: otros.length } : {}),
@@ -517,7 +520,7 @@ export class ConectorOpenlines {
       lineaNombre,
       connectorId: doc.connectorId,
       token: this.#tokenPlacement(tenantId, line, memberId),
-      lineas: lineas.map((l): LineaPlacement => ({ instanceId: l.instanceId, numero: l.numero, estado: l.estado, viva: l.viva, lineId: l.lineId })),
+      lineas: lineas.map((l): LineaPlacement => ({ instanceId: l.instanceId, nombre: l.nombre, numero: l.numero, estado: l.estado, viva: l.viva, lineId: l.lineId })),
       seleccion: seleccion ?? enEsta?.instanceId ?? null,
       aviso,
       urlContactCenter: await cliente.urlContactCenter(),
@@ -557,7 +560,7 @@ export class ConectorOpenlines {
     try {
       const actualizado = await this.asignar(tenantId, datos.instanceId, line, { reasignacion: datos.confirmarReasignacion, compartida: datos.confirmarCompartida });
       const inst = await this.#repo.getInstance(tenantId, datos.instanceId);
-      return { status: 200, html: await this.#modeloPlacement(tenantId, actualizado, line, memberId, datos.instanceId, { tipo: "ok", instanceId: datos.instanceId, numero: inst?.numero ?? null }) };
+      return { status: 200, html: await this.#modeloPlacement(tenantId, actualizado, line, memberId, datos.instanceId, { tipo: "ok", instanceId: datos.instanceId, numero: inst?.numero ?? null, nombre: inst?.nombre ?? null }) };
     } catch (err) {
       if (err instanceof ErrorConfirmacion) {
         const aviso: AvisoPlacement = err.tipo === "reasignacion"
@@ -616,6 +619,7 @@ export class ConectorOpenlines {
     if (lineId === null) return omitir("número sin línea abierta asignada");
     const telefono = mensaje.telefono.replace(/[^\d]/g, "");
     const chatId = chatExterno(instanceId, telefono);
+    const nombreLinea = (await this.#repo.getInstance(tenantId, instanceId))?.nombre ?? null;
     try {
       const cliente = this.#cliente(tenantId, doc);
       const r = await cliente.enviarEntrante({
@@ -632,7 +636,7 @@ export class ConectorOpenlines {
         actualizadoEn: new Date().toISOString(),
       });
       registrar("openlines.entrante", {
-        tenant: tenantId, instancia: instanceId, mensaje: mensaje.id, telefono: enmascararTelefono(mensaje.telefono),
+        tenant: tenantId, instancia: instanceId, nombre: nombreLinea, mensaje: mensaje.id, telefono: enmascararTelefono(mensaje.telefono),
         linea: lineId, chatBitrix: r.chatId, sesionBitrix: r.sessionId, resultado: "ok",
       });
       return true;
@@ -709,7 +713,8 @@ export class ConectorOpenlines {
         registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "número sin línea abierta asignada", instancia: instanceId, linea: line }, "warn");
         continue;
       }
-      const base = { tenant: tenantId, instancia: instanceId, telefono: enmascararTelefono(telefono), imMensaje: m.imMessageId, usuario: m.userId, linea: line };
+      const nombreLinea = (await this.#repo.getInstance(tenantId, instanceId))?.nombre ?? null;
+      const base = { tenant: tenantId, instancia: instanceId, nombre: nombreLinea, telefono: enmascararTelefono(telefono), imMensaje: m.imMessageId, usuario: m.userId, linea: line };
       if (lineaAsignada !== line) {
         // El chat vive en la línea donde se abrió; el número ya atiende otra. Se entrega igual: el contacto sigue en ese número.
         registrar("openlines.operador", { ...base, nota: `número reasignado a la línea ${lineaAsignada}; se entrega por el chat original` });

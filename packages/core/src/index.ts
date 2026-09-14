@@ -332,6 +332,8 @@ export interface Instance {
   contenedorId: string | null;
   /** Número conectado en formato E.164; null hasta que la sesión conecta. */
   numero: string | null;
+  /** Nombre que el cliente le pone a la línea ("Ventas Norte"). Opcional; sin él se muestra el número. */
+  nombre?: string | null;
   estado: InstanceEstado;
   /** ISO 8601 del último heartbeat recibido; null si nunca ha reportado. */
   ultimoHeartbeat: string | null;

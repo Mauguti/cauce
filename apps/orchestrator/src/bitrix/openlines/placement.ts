@@ -1,5 +1,5 @@
 import type { InstanceEstado } from "@cauce/core";
-import { formatearNumero } from "./tipos.ts";
+import { etiquetaLinea, formatearNumero } from "./tipos.ts";
 
 /**
  * Página del placement SETTING_CONNECTOR: vive DENTRO de Bitrix (panel
@@ -15,6 +15,8 @@ import { formatearNumero } from "./tipos.ts";
 
 export interface LineaPlacement {
   instanceId: string;
+  /** Nombre que le puso el cliente; null → se muestra el número. */
+  nombre: string | null;
   numero: string | null;
   estado: InstanceEstado;
   /** La sesión existe en el gestor (contenedor vivo). */
@@ -27,7 +29,7 @@ export type AvisoPlacement =
   | { tipo: "reasignacion"; lineaActual: number }
   | { tipo: "compartida"; numeros: string[] }
   | { tipo: "error"; mensaje: string }
-  | { tipo: "ok"; instanceId: string; numero: string | null };
+  | { tipo: "ok"; instanceId: string; numero: string | null; nombre: string | null };
 
 export interface ModeloPlacement {
   line: number;
@@ -90,7 +92,7 @@ const CSS = `
 function aviso(a: AvisoPlacement | null, line: number): string {
   if (!a) return "";
   if (a.tipo === "ok") {
-    return `<div class="aviso aviso-ok"><span class="dot dot-ok"></span><strong>Conectado en la línea abierta ${esc(line)}${a.numero ? ` · ${esc(formatearNumero(a.numero))}` : ""}</strong><div class="id">Instancia ${esc(a.instanceId)}</div></div>`;
+    return `<div class="aviso aviso-ok"><span class="dot dot-ok"></span><strong>Conectado en la línea abierta ${esc(line)} · ${esc(etiquetaLinea({ id: a.instanceId, numero: a.numero, nombre: a.nombre }))}</strong><div class="id">Instancia ${esc(a.instanceId)}</div></div>`;
   }
   if (a.tipo === "reasignacion") {
     return `<div class="aviso aviso-warn"><strong>Este número ya atiende la línea abierta ${esc(a.lineaActual)}.</strong> Al conectarlo aquí deja de atender la ${esc(a.lineaActual)}. Confirma abajo para continuar.</div>`;
@@ -109,8 +111,11 @@ export function htmlPlacement(m: ModeloPlacement): string {
         const ev = estadoVisual(l);
         const marcado = m.seleccion === l.instanceId ? " checked" : "";
         const ya = l.lineId === null ? "" : l.lineId === m.line ? `<span class="ya">atiende esta línea</span>` : `<span class="ya">ya atiende la línea abierta ${esc(l.lineId)}</span>`;
+        const numero = formatearNumero(l.numero);
+        const principal = l.nombre ?? numero ?? "Sin número todavía";
         return `<li><label><input type="radio" name="instanceId" value="${esc(l.instanceId)}"${marcado} required>
-          <div><div class="num">${esc(formatearNumero(l.numero) ?? "Sin número todavía")}${ya}</div>
+          <div><div class="num">${esc(principal)}${ya}</div>
+          ${l.nombre ? `<div class="meta">${esc(numero ?? "Sin número todavía")}</div>` : ""}
           <div class="meta"><span class="${ev.clase}"></span>${esc(ev.texto)}</div>
           <div class="id">${esc(l.instanceId)}</div></div></label></li>`;
       }).join("");
@@ -123,7 +128,7 @@ export function htmlPlacement(m: ModeloPlacement): string {
 
   return `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WhatsApp · Digsol Factory</title><style>${CSS}</style></head><body>
 <h1>WhatsApp · Digsol Factory</h1>
-<p class="sub">Línea abierta ${esc(m.line)}${m.lineaNombre ? ` · ${esc(m.lineaNombre)}` : ""}${enEsta.length ? ` · la atienden ${esc(enEsta.map((l) => formatearNumero(l.numero) ?? l.instanceId).join(", "))}` : " · sin número asignado"}</p>
+<p class="sub">Línea abierta ${esc(m.line)}${m.lineaNombre ? ` · ${esc(m.lineaNombre)}` : ""}${enEsta.length ? ` · la atienden ${esc(enEsta.map((l) => etiquetaLinea({ id: l.instanceId, numero: l.numero, nombre: l.nombre })).join(", "))}` : " · sin número asignado"}</p>
 ${aviso(m.aviso, m.line)}
 <form method="post" action="">
   <input type="hidden" name="accion" value="asignar">

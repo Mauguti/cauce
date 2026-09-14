@@ -4,7 +4,7 @@ import { RepositorioEnMemoria } from "../../store.ts";
 import { Cripto } from "../../cripto.ts";
 import { usarSalida } from "../../log.ts";
 import { ConectorOpenlines, ErrorConfirmacion } from "./conector.ts";
-import { chatExterno, formatearNumero, normalizarOpenlinesDoc } from "./tipos.ts";
+import { chatExterno, etiquetaLinea, formatearNumero, normalizarNombreLinea, normalizarOpenlinesDoc } from "./tipos.ts";
 
 const AUTH = {
   access_token: "acc", refresh_token: "ref", expires_in: 3600,
@@ -456,6 +456,42 @@ describe("ConectorOpenlines · mensajes", () => {
     expect(await c.conector.eventoAutentico("t1", { application_token: "apptok" })).toBe(true);
     expect(await c.conector.eventoAutentico("t1", { application_token: "otro" })).toBe(false);
     expect(await c.conector.eventoAutentico("t1", {})).toBe(false);
+  });
+});
+
+describe("nombre por línea", () => {
+  it("con nombre, Bitrix, el placement, la confirmación y la bitácora lo usan; el número queda al lado para soporte", async () => {
+    const c = armar();
+    const bitacora = capturarBitacora();
+    await instalar(c);
+    const i1 = (await c.repo.getInstance("t1", "i1"))!;
+    await c.repo.saveInstance({ ...i1, nombre: "Ventas Norte" });
+    await c.conector.asignar("t1", "i1", 3);
+    const datos = c.llamadas.find((l) => l.metodo === "imconnector.connector.data.set")!;
+    expect(datos.body.DATA.NAME).toBe("WhatsApp · Digsol Factory · Ventas Norte (+521 442 857 5347)");
+    expect(bitacora.some((l) => l.includes("openlines.asignacion") && l.includes('nombre="Ventas Norte"') && l.includes("instancia=i1"))).toBe(true);
+    expect((await c.conector.lineas("t1")).lineas[0]).toMatchObject({ instanceId: "i1", nombre: "Ventas Norte", numero: "+5214428575347" });
+
+    const p = await c.conector.paginaPlacement("t1", { line: 7, memberId: "m1" });
+    expect(p.html).toContain('<div class="num">Ventas Norte<span class="ya">ya atiende la línea abierta 3</span></div>');
+    expect(p.html).toContain('<div class="meta">+521 442 857 5347</div>');
+    const token = /name="token" value="([^"]+)"/.exec(p.html)![1]!;
+    const r = await c.conector.asignarDesdePlacement("t1", { token, instanceId: "i1", confirmarReasignacion: true, confirmarCompartida: false });
+    expect(r.html).toContain("Conectado en la línea abierta 7 · Ventas Norte (+521 442 857 5347)");
+
+    await c.conector.entrante("t1", "i1", entrante("i1", "in-n"));
+    expect(bitacora.at(-1)).toMatch(/openlines\.entrante .*instancia=i1 nombre="Ventas Norte" .*resultado=ok/);
+  });
+
+  it("sin nombre cae al número; sin número, al id. Nunca vacío. El nombre se normaliza y se acota", () => {
+    expect(etiquetaLinea({ id: "i1", numero: "+5214428575347", nombre: "Ventas Norte" })).toBe("Ventas Norte (+521 442 857 5347)");
+    expect(etiquetaLinea({ id: "i1", numero: "+5214428575347", nombre: null })).toBe("+521 442 857 5347");
+    expect(etiquetaLinea({ id: "i1", numero: "+5214428575347" })).toBe("+521 442 857 5347");
+    expect(etiquetaLinea({ id: "i1", numero: null, nombre: "  " })).toBe("i1");
+    expect(normalizarNombreLinea("  Ventas   Norte \n")).toBe("Ventas Norte");
+    expect(normalizarNombreLinea("")).toBeNull();
+    expect(normalizarNombreLinea(42)).toBeNull();
+    expect(normalizarNombreLinea("x".repeat(60))!.length).toBe(40);
   });
 });
 

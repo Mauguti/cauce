@@ -19,6 +19,7 @@ import {
 } from "@cauce/core";
 import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
 import { ErrorConfirmacion, type ConectorOpenlines } from "./bitrix/openlines/conector.ts";
+import { normalizarNombreLinea } from "./bitrix/openlines/tipos.ts";
 import { enmascararTelefono, registrar, registrarCadaMs, registrarError } from "./log.ts";
 
 declare global {
@@ -485,6 +486,18 @@ export function crearApp(
 
   tenantRouter.get("/instances", async (req, res) => {
     res.json(await repo.listInstances(req.tenantId!));
+  });
+
+  // Nombre de la línea ("Ventas Norte"): lo pone el cliente; vacío lo quita y vuelve a verse el número.
+  tenantRouter.put("/instances/:instanceId/nombre", async (req, res) => {
+    const instancia = await repo.getInstance(req.tenantId!, String(req.params.instanceId));
+    if (!instancia) { res.status(404).json({ error: "instancia no encontrada" }); return; }
+    if (req.body?.nombre !== null && typeof req.body?.nombre !== "string") { res.status(400).json({ error: "nombre debe ser texto o null" }); return; }
+    const nombre = normalizarNombreLinea(req.body.nombre);
+    const actualizada = { ...instancia, nombre };
+    await repo.saveInstance(actualizada);
+    registrar("instancia.nombre", { tenant: req.tenantId, instancia: instancia.id, nombre, numero: enmascararTelefono(instancia.numero) });
+    res.json(actualizada);
   });
 
   // Instancias con "sesión viva" (existe en el gestor) en una sola llamada:
