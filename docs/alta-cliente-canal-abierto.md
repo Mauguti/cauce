@@ -340,10 +340,14 @@ Bitácora que confirma: `openlines.bot_reflejado … metodo=imopenlines.bot.sess
 entró por el genérico. Si sale `error openlines.bot_reflejado` con los dos
 métodos, el paso 2 falta.
 
-La prueba de rebote: el teléfono del contacto debe recibir la respuesta
-**una sola vez**. Un segundo envío aparecería como
-`openlines.operador … motivo="mensaje del propio bot"` ignorado; si el
-contacto la recibiera dos veces, se retira el bot y se cierra en C.
+**Decisión (15-sep-2026): opción A, cerrada.** El reflejo funciona con
+`imopenlines.bot.session.message.send` una vez conectado el bot a la línea,
+y la ventana humana se queda: un cliente que se mueve al canal abierto
+conserva sus respuestas automáticas. El eco del reflejo (vuelve por el
+evento con `usuario=0`) se ignora y no cuenta como humano; el contacto
+recibe cada respuesta una sola vez. Si en la bitácora aparece
+`openlines.operador … motivo="eco del reflejo del bot (usuario=0)"`, es lo
+esperado.
 
 ---
 

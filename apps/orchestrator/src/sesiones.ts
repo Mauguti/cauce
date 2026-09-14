@@ -1,3 +1,4 @@
+import type { MessageOrigen } from "@cauce/core";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   pruebaVigente,
@@ -169,6 +170,7 @@ export class GestorSesiones {
     instanceId: InstanceId,
     telefono: string,
     cuerpo: string,
+    origen: MessageOrigen = "sistema",
   ): Promise<Message> {
     const sesion = this.#sesiones.get(instanceId);
     if (!sesion) throw new Error(`instancia ${instanceId} sin sesión activa`);
@@ -177,6 +179,7 @@ export class GestorSesiones {
       tenantId,
       instanceId,
       direccion: "out",
+      origen,
       telefono,
       cuerpo,
       estado: "enviando",

@@ -1149,6 +1149,7 @@ export function crearApp(
       tenantId: req.tenantId!,
       instanceId: String(req.params.instanceId),
       direccion: "out" as const,
+      origen: "manual" as const,
       telefono,
       cuerpo,
       estado: "encolado" as const,

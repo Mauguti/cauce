@@ -103,7 +103,7 @@ const openlines = urlPublica
       cola,
       cripto,
       urlPublica,
-      enviarInmediato: (t, i, tel, cuerpo) => gestor.enviarDirecto(t, i, tel, cuerpo),
+      enviarInmediato: (t, i, tel, cuerpo, origen) => gestor.enviarDirecto(t, i, tel, cuerpo, origen),
       sesionViva: (i) => gestor.obtener(i) !== null,
     })
   : undefined;
@@ -126,8 +126,7 @@ const motorEntrada = new MotorEntrada({
   bitrix,
   ...(openlines ? { openlines } : {}),
   // Carril inmediato: las respuestas automáticas no pasan por la cola.
-  enviarInmediato: (t, i, tel, cuerpo) =>
-    gestor.enviarDirecto(t, i, tel, cuerpo),
+  enviarInmediato: (t, i, tel, cuerpo, origen) => gestor.enviarDirecto(t, i, tel, cuerpo, origen),
 });
 
 const verificarToken = crearVerificadorToken();
@@ -212,7 +211,8 @@ crearApp(repo, gestor, {
   cripto,
   // Consumo en pesos: tipo de cambio con colchón. Se ajusta en /etc/factory.env sin tocar código.
   tipoCambio: {
-    usdMxn: Number(process.env.CAUCE_USD_MXN) > 0 ? Number(process.env.CAUCE_USD_MXN) : 18.5,
+    // Default revisado 15-sep-2026 (dólar a 17.13); se revisa cada mes, el peso se mueve.
+    usdMxn: Number(process.env.CAUCE_USD_MXN) > 0 ? Number(process.env.CAUCE_USD_MXN) : 17.15,
     colchon: Number(process.env.CAUCE_USD_MXN_COLCHON) > 0 ? Number(process.env.CAUCE_USD_MXN_COLCHON) : 1.1,
   },
 }).listen(puerto, () => {

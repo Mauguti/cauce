@@ -34,13 +34,13 @@ function armar(opciones: { respuesta?: (n: number) => string; avisos?: string } 
     },
   };
   let reloj = Date.parse("2026-09-15T04:00:00Z");
-  const enviados: { telefono: string; cuerpo: string }[] = [];
+  const enviados: { telefono: string; cuerpo: string; origen?: string }[] = [];
   const motor = new MotorEntrada({
     repo,
     agente: new Agente({ repo, proveedores: { anthropic: proveedor } }),
     ...(opciones.avisos ? { avisosWhatsApp: opciones.avisos } : {}),
     ahora: () => reloj,
-    enviarInmediato: async (_t, _i, telefono, cuerpo) => { enviados.push({ telefono, cuerpo }); },
+    enviarInmediato: async (_t, _i, telefono, cuerpo, origen) => { enviados.push({ telefono, cuerpo, ...(origen ? { origen } : {}) }); },
   });
   const bitacora: string[] = [];
   usarSalida((_n, l) => { bitacora.push(l); });
@@ -68,10 +68,19 @@ describe("anti-bucle 1 · remitente es línea propia", () => {
     expect(c.enviados).toEqual([]);
   });
 
-  it("un número ajeno sí recibe respuesta", async () => {
+  it("un número ajeno sí recibe respuesta, y el saliente lleva origen=agente", async () => {
     const c = armar();
     await c.motor.procesar("t1", "A", entrante("+5215512345678"));
-    expect(c.enviados).toHaveLength(1);
+    expect(c.enviados).toEqual([expect.objectContaining({ origen: "agente" })]);
+  });
+
+  it("una respuesta de disparador lleva origen=bot y el aviso del cortacircuitos origen=sistema", async () => {
+    const c = armar({ avisos: "+5214428575347", respuesta: () => "x" });
+    await c.repo.saveDisparadores("t1", [{ id: "hola", prioridad: 1, tipo: "palabra_clave", patron: "hola", coincidencia: "contiene", activo: true, respuesta: "¡Hola!" }]);
+    await c.motor.procesar("t1", "A", entrante("+5215512345678", "hola"));
+    expect(c.enviados[0]).toMatchObject({ cuerpo: "¡Hola!", origen: "bot" });
+    for (let k = 0; k < CORTACIRCUITOS.repeticiones; k += 1) { await c.motor.procesar("t1", "A", entrante("+5215512345678", "hola")); c.avanzar(5_000); }
+    expect(c.enviados.find((e) => e.telefono === "+5214428575347")?.origen).toBe("sistema");
   });
 });
 

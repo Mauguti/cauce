@@ -84,6 +84,22 @@ Opus rebasa la bolsa de $200 de un agente Pro antes de mitad de mes.
    `herramientas:[{nombre, descripcion, url, parametros, token}]`.
 4. ADN lleno en el Centro de Conocimiento por un usuario del tenant.
 
+## Consumo en pesos: tipo de cambio
+
+El costo se registra en USD y se muestra en MXN con `CAUCE_USD_MXN` y el
+colchón multiplicativo `CAUCE_USD_MXN_COLCHON` (defaults 17.15 y 1.10,
+≈18.9 efectivo). **Se revisa cada mes**: el peso se mueve y un default
+viejo infla o adelgaza lo que ve el cliente. Fijado el 15-sep-2026 con el
+dólar a 17.13.
+
+## Origen de cada saliente
+
+Todo mensaje saliente lleva `origen`: `agente`, `bot`, `operador` (desde
+el Contact Center), `crm` (disparo de monday/Bitrix), `manual` (plataforma
+o API) o `sistema` (avisos). Trazabilidad → Mensajes lo muestra junto a
+"SALE" y filtra por "Agente": así se revisa qué contestó Santiago sin
+entrar al journal. Mensajes anteriores a este campo no lo tienen.
+
 ## Anti-bucle
 
 - **Línea propia:** si el remitente es una línea conectada de cualquier
@@ -97,9 +113,13 @@ Opus rebasa la bolsa de $200 de un agente Pro antes de mitad de mes.
   desde la misma línea. Un operador que contesta (ventana humana) levanta la
   pausa. Es independiente del filtro anterior: cubre contestadores, otros
   bots o sistemas de tickets del otro lado.
-- **Eco del reflejo:** lo que el orquestador escribe como bot en el chat de
-  Bitrix se recuerda 10 min; si vuelve por OnImConnectorMessageAdd con otro
-  user_id, se ignora (`motivo="eco del reflejo del bot"`) y no va al contacto.
+- **Eco del reflejo:** lo que el orquestador escribe como bot vuelve por
+  OnImConnectorMessageAdd con `user_id=0` (journal del 15-sep; una persona
+  trae su id). Filtro primario: `usuario=0` se ignora siempre; respaldo: el
+  texto escrito como bot se recuerda 10 min y también se ignora si vuelve.
+  Un eco nunca cuenta como intervención humana: no se entrega, no se
+  confirma y no fija la ventana humana (antes el bot se callaba a sí mismo
+  30 min con cada respuesta).
 
 ## Bitácora
 

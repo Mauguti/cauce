@@ -266,6 +266,17 @@ de instancia); el alta de un cliente no exige reiniciar ni desplegar.
 Eventos: `openlines.alta|instalada|asignacion|linea_creada|placement|entrante|operador|rafaga|
 adjunto_no_soportado|bot_reflejado|token_renovado|evento_rechazado`.
 
+### `CAUCE_USD_MXN`, `CAUCE_USD_MXN_COLCHON`, `CAUCE_AVISOS_WHATSAPP` — agentes
+
+- `CAUCE_USD_MXN` (default 17.15) y `CAUCE_USD_MXN_COLCHON` (default 1.10):
+  el consumo de agentes se registra en USD y se muestra en pesos con este
+  tipo de cambio y colchón. **Revisar cada mes.**
+- `CAUCE_AVISOS_WHATSAPP`: número E.164 al que el orquestador avisa, desde
+  la misma línea, cuando salta el cortacircuitos de una conversación. Sin
+  él, solo bitácora (`cortacircuitos.disparado`).
+- `ANTHROPIC_API_KEY`: habilita los agentes. Sin ella, arrancan apagados y
+  lo dice al inicio.
+
 ### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)
 
 Dos orquestadores sobre el mismo proyecto Firebase compartirían la base

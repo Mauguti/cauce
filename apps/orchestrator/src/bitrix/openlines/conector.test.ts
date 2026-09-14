@@ -512,7 +512,26 @@ describe("reflejo del bot en el chat del operador", () => {
 });
 
 describe("eco del reflejo", () => {
-  it("lo que escribimos como bot y vuelve por OnImConnectorMessageAdd con otro user_id NO se reenvía al contacto", async () => {
+  it("PRIMARIO: un evento con usuario=0 es eco (journal 15-sep), no se reenvía, no se confirma y NO fija la ventana humana", async () => {
+    const c = armar();
+    const bitacora = capturarBitacora();
+    await instalarYAsignar(c);
+    const doc = (await c.repo.getOpenlinesBitrix("t1"))!;
+    await c.repo.saveOpenlinesBitrix("t1", { ...doc, botId: 324 });
+    await c.conector.entrante("t1", "i1", entrante("i1", "in-eco0"));
+    await c.conector.reflejarBot("t1", "i1", "+5214428575347", "Respuesta del agente");
+    // El eco llega con un texto DISTINTO al recordado (Bitrix lo recortó): solo usuario=0 lo delata
+    await c.conector.respuestaOperador("t1", evento({ userId: 0, texto: "Respuesta del agente (recortada por Bitrix)" }));
+    expect(c.enviados).toEqual([]);
+    expect(c.llamadas.some((l) => l.metodo === "imconnector.send.status.delivery")).toBe(false);
+    expect(bitacora.at(-1)).toMatch(/motivo="eco del reflejo del bot \(usuario=0\)"/);
+    // CRITERIO: tras una respuesta del agente reflejada, la conversación NO queda en ventana humana
+    const conv = (await c.repo.getConversacion("t1", "i1", "5214428575347"))!;
+    expect(conv.humanaHasta ?? null).toBeNull();
+    expect(ConectorOpenlines.enVentanaHumana(conv)).toBe(false);
+  });
+
+  it("RESPALDO: lo que escribimos como bot y vuelve con otro user_id NO se reenvía al contacto", async () => {
     const c = armar();
     const bitacora = capturarBitacora();
     await instalarYAsignar(c);
@@ -525,9 +544,10 @@ describe("eco del reflejo", () => {
     await c.conector.respuestaOperador("t1", evento({ userId: 999, texto: "Con gusto te explico el plan Estándar." }));
     expect(c.enviados).toEqual([]);
     expect(bitacora.filter((l) => l.includes('motivo="eco del reflejo del bot"'))).toHaveLength(2);
-    // Un operador de verdad sí pasa
+    // Un operador de verdad sí pasa, y solo entonces se abre la ventana humana
     await c.conector.respuestaOperador("t1", evento({ userId: 999, texto: "Soy Mau, ¿te ayudo?" }));
     expect(c.enviados).toHaveLength(1);
+    expect(ConectorOpenlines.enVentanaHumana((await c.repo.getConversacion("t1", "i1", "5214428575347"))!)).toBe(true);
   });
 });
 

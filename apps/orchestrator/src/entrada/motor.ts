@@ -1,4 +1,4 @@
-import type { InstanceId, Message, TenantId } from "@cauce/core";
+import type { InstanceId, Message, MessageOrigen, TenantId } from "@cauce/core";
 import { tieneCapacidad, type Capacidad } from "@cauce/core";
 import { enmascararTelefono, registrar, registrarCadaMs } from "../log.ts";
 import type { ConectorOpenlines } from "../bitrix/openlines/conector.ts";
@@ -27,6 +27,7 @@ export type EnviarInmediato = (
   instanceId: InstanceId,
   telefono: string,
   cuerpo: string,
+  origen?: MessageOrigen,
 ) => Promise<unknown>;
 
 /**
@@ -100,7 +101,7 @@ export class MotorEntrada {
     registrar("cortacircuitos.disparado", { ...base, motivo, conteo: enVentana, pausadaHasta: hasta }, "error");
     if (this.#avisosWhatsApp) {
       try {
-        await this.#enviar(tenantId, instanceId, this.#avisosWhatsApp, `⛔ Digsol Factory · cortacircuitos\nTenant ${tenantId}, línea ${instanceId}, contacto ${enmascararTelefono(`+${telefono}`)}.\n${motivo}. Respuestas automáticas apagadas hasta ${hasta}; un operador que conteste las reactiva.`);
+        await this.#enviar(tenantId, instanceId, this.#avisosWhatsApp, `⛔ Digsol Factory · cortacircuitos\nTenant ${tenantId}, línea ${instanceId}, contacto ${enmascararTelefono(`+${telefono}`)}.\n${motivo}. Respuestas automáticas apagadas hasta ${hasta}; un operador que conteste las reactiva.`, "sistema");
       } catch (err) {
         registrar("cortacircuitos.aviso_fallido", { ...base, error: err instanceof Error ? err.message : String(err) }, "warn");
       }
@@ -159,6 +160,7 @@ export class MotorEntrada {
     } else if (!humana && (puede("bots") || puede("agentes"))) {
       let respuesta: string | null = null;
       let origen = "";
+      let origenSaliente: MessageOrigen = "bot";
       if (puede("bots")) {
         const disparadores = await this.#repo.getDisparadores(tenantId);
         const disparador = primeroQueCoincide(disparadores, {
@@ -175,13 +177,14 @@ export class MotorEntrada {
         if (this.#agente) {
           respuesta = await this.#agente.responder(tenantId, instanceId, mensaje, conversacion.nombre ?? nombre ?? null);
           origen += respuesta ? "; agente respondió" : "; agente sin respuesta";
+          if (respuesta) origenSaliente = "agente";
         } else {
           origen += "; agente no disponible en este orquestador";
         }
       }
       registrar("entrada.respuesta", { ...base, esPrimerContacto, resultado: respuesta ? "enviada" : "ninguna", origen }, respuesta ? "info" : "warn");
       if (respuesta) {
-        await this.#enviar(tenantId, instanceId, mensaje.telefono, respuesta);
+        await this.#enviar(tenantId, instanceId, mensaje.telefono, respuesta, origenSaliente);
         // Espejo en el Contact Center para que el operador vea qué respondió el bot o el agente.
         if (this.#openlines) {
           await this.#openlines.reflejarBot(tenantId, instanceId, mensaje.telefono, respuesta).catch(() => {});

@@ -5,6 +5,7 @@ import {
   type Instance,
   type InstanceId,
   type Message,
+  type MessageOrigen,
   type TenantId,
 } from "@cauce/core";
 import type { Repositorio } from "../../store.ts";
@@ -33,6 +34,7 @@ export type EnviarInmediato = (
   instanceId: InstanceId,
   telefono: string,
   cuerpo: string,
+  origen?: MessageOrigen,
 ) => Promise<Message>;
 
 export interface AltaOpenlines {
@@ -751,6 +753,15 @@ export class ConectorOpenlines {
         registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "mensaje del propio bot", imMensaje: m.imMessageId });
         continue;
       }
+      // Filtro primario del eco: lo que escribimos con bot.session.message.send
+      // vuelve por el evento con user_id=0 (verificado en el journal del
+      // 15-sep: los ecos traen usuario=0; una persona trae su id). Nunca es
+      // una intervención humana: no se entrega, no se confirma y NO fija la
+      // ventana humana. La memoria de texto queda como respaldo.
+      if (m.userId === 0) {
+        registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "eco del reflejo del bot (usuario=0)", imMensaje: m.imMessageId, usuario: m.userId, chatBitrix: m.imChatId });
+        continue;
+      }
       if (this.#esEcoDeReflejo(m.imChatId, m.texto)) {
         // El texto que escribimos como bot volvió por el evento con otro user_id: no es un operador, es el eco. Al contacto no va.
         registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "eco del reflejo del bot", imMensaje: m.imMessageId, usuario: m.userId, chatBitrix: m.imChatId }, "warn");
@@ -791,7 +802,7 @@ export class ConectorOpenlines {
         // Excedente a la cola normal, con su espaciado. No se descarta.
         if (this.#cola) {
           await this.#cola.encolar({
-            id: randomUUID(), tenantId, instanceId, direccion: "out", telefono: `+${telefono}`,
+            id: randomUUID(), tenantId, instanceId, direccion: "out", origen: "operador", telefono: `+${telefono}`,
             cuerpo: m.texto, estado: "encolado", externalId: null, timestamp: new Date().toISOString(),
           });
         }
@@ -804,7 +815,7 @@ export class ConectorOpenlines {
       if (espera > 0) await this.#dormir(espera);
 
       try {
-        const enviado = await this.#enviar(tenantId, instanceId, `+${telefono}`, m.texto);
+        const enviado = await this.#enviar(tenantId, instanceId, `+${telefono}`, m.texto, "operador");
         this.#limitador.registrar(clave, instanceId);
         await this.#repo.marcarHumana(tenantId, instanceId, telefono, hasta);
         if (enviado.estado === "enviado") {

@@ -470,11 +470,21 @@ export type MessageEstado =
   | "recibido";
 
 /** Documento en `tenants/{tenantId}/messages/{messageId}` */
+/**
+ * Quién originó un saliente: el agente (Santiago), un bot (disparador), un
+ * operador desde el Contact Center, un disparo del CRM, un envío manual
+ * desde la plataforma o la API, o el propio sistema (avisos). Es lo que
+ * permite revisar qué contestó el agente sin leer el journal.
+ */
+export type MessageOrigen = "agente" | "bot" | "operador" | "crm" | "manual" | "sistema";
+
 export interface Message {
   id: MessageId;
   tenantId: TenantId;
   instanceId: InstanceId;
   direccion: MessageDireccion;
+  /** Solo salientes. Ausente en mensajes anteriores a este campo. */
+  origen?: MessageOrigen;
   /** Teléfono de la contraparte en formato E.164. */
   telefono: string;
   cuerpo: string;
