@@ -263,7 +263,7 @@ deshabilitado y el arranque lo avisa. El handler por tenant es
 Los `client_id`/`client_secret` de la app local y los tokens OAuth viven
 cifrados en Firestore con `CAUCE_CRYPTO_KEY` (un solo mecanismo, sin rol
 de instancia); el alta de un cliente no exige reiniciar ni desplegar.
-Eventos: `openlines.alta|instalada|activacion|entrante|operador|rafaga|
+Eventos: `openlines.alta|instalada|asignacion|linea_creada|placement|entrante|operador|rafaga|
 adjunto_no_soportado|bot_reflejado|token_renovado|evento_rechazado`.
 
 ### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)

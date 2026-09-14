@@ -25,8 +25,8 @@ por correo, ni a un documento. La plataforma no los vuelve a mostrar.
 
 ## 0. Antes de empezar
 
-- [ ] **México desplegado** con `4a6521e` o posterior (instalación
-      idempotente) y `CAUCE_URL_PUBLICA=https://api.factory.digsol.com.mx`.
+- [ ] **México desplegado** con `cb39d50` o posterior (múltiples
+      números, instalación idempotente) y `CAUCE_URL_PUBLICA=https://api.factory.digsol.com.mx`.
       Comprobar: `curl -s https://api.factory.digsol.com.mx/health` devuelve
       `{"ok":true,"version":"<commit>"}` con ese commit o uno posterior.
 - [ ] **Tenant del cliente en la plataforma** con plan **Estándar o Pro**
@@ -85,7 +85,6 @@ Qué capturar:
 
 | Campo | Valor |
 |---|---|
-| Línea | la instancia de WhatsApp que atenderá este canal |
 | Dominio del portal | `procesa.bitrix24.mx` (acepta la URL completa pegada; se normaliza al host) |
 | client_id | el Código de aplicación del paso 1 |
 | client_secret | la Clave de aplicación del paso 1 |
@@ -130,8 +129,8 @@ Si se reinstala (segunda vez en el mismo portal) la línea dice
 binded".
 
 La plataforma cambia sola en unos segundos a: aro punteado naranja, *"App
-instalada en procesa.bitrix24.mx. Falta activar el conector en tu línea
-abierta."*
+instalada en procesa.bitrix24.mx. Falta asignar tus números a una línea
+abierta."*, y aparece la tabla del paso 4.
 
 Si en vez de `instalada` sale `openlines.instalacion_rechazada`:
 
@@ -147,57 +146,93 @@ Qué pasó técnicamente: `imconnector.register` (la ficha en Contact Center) y
 ningún lado todavía.** La app instalada solo registra el conector: sin una
 línea abierta a la que activarlo, no hay dónde entregar. Este es el paso que
 nos costó diagnóstico en el dogfooding; ahora la bitácora lo dice (paso 5,
-`resultado=omitido`).
+`resultado=omitido`) y la asignación se hace desde la plataforma (paso 4).
 
 ---
 
-## 4. Crear la línea abierta y activar el conector
+## 4. Asignar cada número a una línea abierta (desde la plataforma)
 
-### 4a. La línea abierta (del cliente)
+Con la app instalada, el bloque de la plataforma muestra la **tabla de
+conjunto**: una fila por número de WhatsApp del tenant, con su id en chico,
+el número, el estado real de conexión y la línea abierta que atiende. Es la
+pantalla que se mira cuando el cliente llama. Desde ahí se hace toda la
+asignación; **el cliente no necesita entrar a Contact Center**.
 
-Dónde: Bitrix24 → **Contact Center** → **Canales abiertos** → **Crear
-canal abierto**. Si el cliente ya tiene una línea abierta con la cola que
-quiere para WhatsApp, se reutiliza y se salta este paso.
+Regla del modelo: **cada número atiende exactamente una línea abierta; una
+línea abierta puede tener varios números.** Un número en varias líneas no
+existe: el entrante no sabría a cuál ir.
 
-Qué capturar (lo decide el cliente; son sus reglas de atención):
+### 4a. Elegir la línea abierta de cada número
 
-| Ajuste | Nota |
-|---|---|
-| Nombre | p. ej. `WhatsApp Ventas`. Con varias líneas, un nombre por número o por equipo. |
-| Cola / agentes | empleados o un departamento entero |
-| Reparto | *Uniforme* (rota), *Estrictamente por orden* (al primero; si no responde, al siguiente) o *Simultáneo* (a todos) |
-| Horario y respuesta fuera de horario | opcional |
-
-Bitácora: nada. Esto ocurre dentro de Bitrix.
-
-### 4b. Activar el conector en esa línea
-
-Dónde: **Contact Center** → ficha **WhatsApp · Digsol Factory** → en el
-desplegable elegir la línea abierta del 4a → **Conectar**. Bitrix abre
-nuestra página dentro del panel lateral: *"Conectado en la línea abierta N.
-Los mensajes de WhatsApp de esta línea llegan aquí y tus respuestas salen
-por WhatsApp."*
+En la columna "Canal abierto asignado" de cada fila, el desplegable ofrece
+**las líneas abiertas que el cliente ya tiene** en su portal, con su nombre,
+su id y, si ya la atiende otro número, cuál. Se elige una y queda asignada.
 
 Bitácora, línea que confirma:
 
 ```
-openlines.activacion tenant=<t> linea=N resultado=activo
+openlines.asignacion tenant=<t> instancia=<i> numero=+52••••1234 linea=N resultado=asignada
 ```
 
-La plataforma pasa a punto sólido verde: *"Activo en la línea abierta N ·
-procesa.bitrix24.mx"*.
+La plataforma pasa a punto sólido verde: *"Activo: 1 número en 1 línea
+abierta · procesa.bitrix24.mx"*. Con siete números, *"7 números en 7
+líneas abiertas"* (o las que sean).
 
-Si sale `openlines.placement_rechazado … motivo="sin member_id"` o
-`"member_id distinto"`: el placement no vino del portal instalado (pestaña
-vieja, otro portal, o un POST externo). Repetir 4b desde el portal correcto.
+Qué pasó: `imconnector.activate` en esa línea y `connector.data.set`
+describiendo el canal con los números que la atienden.
 
-Qué pasó: `imconnector.activate` y `imconnector.connector.data.set` para el
-par (conector, línea N).
+### 4b. Reasignar y compartir: con confirmación, nunca en silencio
 
-> **Hoy: una línea de WhatsApp por tenant.** Con el diseño de múltiples
-> números (pendiente de decisión), este paso 4 se repite una vez por número:
-> cada línea de WhatsApp se activa en su propia línea abierta, con su cola y
-> su equipo.
+- **Mover un número a otra línea** (ya atendía la 7 y se elige la 12): la
+  fila avisa *"ya atiende la línea abierta #7; al moverlo deja de
+  atenderla"* y pide **Sí, moverlo**. Bitácora:
+  `openlines.asignacion … resultado=reasignada lineaAnterior=7 linea=12`.
+  Si la línea 7 queda sin números, el conector se desactiva ahí.
+- **Sumar un número a una línea que ya tiene otro**: la fila avisa *"esta
+  línea abierta ya la atiende +52 442 ••• 1234; los chats de todos caerán
+  en la misma cola"* y pide **Sí, compartir la línea**. Bitácora:
+  `openlines.asignacion … resultado=asignada compartidaCon=1`. Es la forma
+  de cubrir el tope de líneas abiertas del plan de Bitrix.
+- **Quitar** deja el número sin línea abierta; la línea se desactiva si
+  queda vacía. Bitácora: `… resultado=quitada`.
+
+### 4c. Crear una línea abierta nueva (acción explícita)
+
+Solo si el cliente la quiere: la última opción del desplegable, **"Crear
+una línea abierta nueva…"**, abre un campo de nombre y el botón **Crear y
+asignar**. Nunca se crea por default; Procesa ya tiene líneas abiertas para
+otros canales y llenarles el portal se las comería del tope del plan.
+
+La línea nace **activa y con el usuario que instaló la app como único
+operador**. El equipo, el reparto y el horario se afinan en Bitrix
+(Contact Center → Canales abiertos → la línea): la plataforma lo dice al
+crearla.
+
+Bitácora: `openlines.linea_creada tenant=<t> linea=N nombre="WhatsApp
+Ventas" operador=<id>` y luego la `asignacion`.
+
+Si Bitrix la rechaza por el tope del plan, la plataforma muestra el error
+de Bitrix **tal cual** y añade el tope por plan (Free 1 · Basic 2 ·
+Standard 10 · Professional sin tope) con las dos salidas: subir de plan en
+Bitrix o compartir una línea existente.
+
+### 4d. La otra puerta: desde Contact Center
+
+Si el cliente llega por Bitrix, funciona igual: **Contact Center** → ficha
+**WhatsApp · Digsol Factory** → elegir la línea abierta → **Conectar**.
+Bitrix abre nuestra página dentro de su panel, con la lista de números,
+su estado, quién atiende qué, y las mismas confirmaciones. Al terminar:
+*"Conectado en la línea abierta 12 · +52 442 857 5347"* con el id de
+instancia en chico.
+
+Bitácora: `openlines.placement tenant=<t> linea=N` y después la
+`asignacion`. `openlines.placement_rechazado … motivo="sin member_id"` o
+`"member_id distinto"` significa que el POST no vino del portal instalado.
+
+Si el cliente quiere la línea abierta configurada a su gusto antes de
+asignar, la crea él en Bitrix (Contact Center → Canales abiertos → Crear:
+nombre, cola o departamento, reparto uniforme / por orden / simultáneo,
+horario) y aparece en el desplegable al pulsar **Actualizar**.
 
 ---
 
@@ -224,7 +259,7 @@ Si en vez de `resultado=ok` aparece `resultado=omitido`:
 
 | `motivo=` | Falta |
 |---|---|
-| `conector sin activar en una línea abierta` | el paso 4b |
+| `número sin línea abierta asignada` | el paso 4a |
 | `app no instalada en el portal` | el paso 3 |
 | `instancia distinta a la del canal` (nivel info) | nada: el mensaje entró por otra línea de WhatsApp del tenant, que no es la de este canal |
 
@@ -281,11 +316,11 @@ Las seis líneas de bitácora, en orden, que dicen "este cliente quedó":
 
 1. `openlines.alta … resultado=creada`
 2. `openlines.instalada … evento=enlazado` (o `ya_enlazado`)
-3. `openlines.activacion … resultado=activo linea=N`
+3. `openlines.asignacion … resultado=asignada linea=N`
 4. `openlines.entrante … resultado=ok linea=N`
 5. `openlines.operador … resultado=entregado`
-6. (con varias líneas) una `activacion` y un `entrante … ok` por cada
-   línea de WhatsApp, cada una con su `linea=` distinta
+6. (con varios números) una `asignacion` y un `entrante … ok` por cada
+   número, cada uno con su `linea=` (distinta o compartida)
 
 Para leerlas en el servidor:
 
