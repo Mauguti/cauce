@@ -116,6 +116,8 @@ export interface Tenant {
   pagadoHasta?: string | null;
   /** Ajustes del canal abierto de Bitrix24 (ventana humana, espaciado, ráfaga). Ausente = defaults. */
   canalAbierto?: CanalAbiertoConfig | null;
+  /** Agente conversacional del tenant (Santiago). Ausente/null = sin agente. Exige la capacidad `agentes`. */
+  agente?: AgenteConfig | null;
   /** @deprecated Migrado a `limitesOverride.lineas`. Se lee solo por compatibilidad. */
   limiteLineas?: number;
   /** @deprecated Migrado a `limitesOverride.conectores`. Se lee solo por compatibilidad. */
@@ -148,6 +150,74 @@ export interface Tenant {
 
 /** Duración de la prueba, en días. */
 export const DIAS_PRUEBA = 14;
+
+/**
+ * Configuración del agente de un tenant. El proveedor y el modelo se
+ * eligen por tenant; el agente razona en el orquestador.
+ */
+export interface AgenteConfig {
+  activo: boolean;
+  /** Cómo se presenta: "Santiago". */
+  nombre: string;
+  proveedor: "anthropic";
+  /** Id exacto del modelo, p. ej. "claude-opus-5". */
+  modelo: string;
+  esfuerzo?: "low" | "medium" | "high";
+  /** Instrucciones adicionales del cliente, en texto. */
+  instrucciones?: string | null;
+  /** Tope de tokens de salida por respuesta. */
+  maxSalida?: number;
+}
+
+/** Producto del Catálogo del Centro de Conocimiento. */
+export interface ProductoConocimiento {
+  id?: string;
+  name: string;
+  description?: string;
+  price?: number;
+  currency?: "MXN" | "USD";
+}
+
+/**
+ * Base de conocimiento del tenant (Centro de Conocimiento / ADN de la
+ * plataforma). Campos cortos que van completos en cada consulta, más el
+ * catálogo. Todos opcionales: se usa lo que el cliente haya llenado.
+ */
+export interface Conocimiento {
+  pitch?: string | null;
+  buyerPersona?: string | null;
+  discountPolicy?: string | null;
+  prohibitedTopics?: string | null;
+  toneCasual?: boolean;
+  toneConcise?: boolean;
+  toneEmpathetic?: boolean;
+  idealPhrases?: string | null;
+  brandInstructions?: string | null;
+  products?: ProductoConocimiento[];
+}
+
+/** Una llamada al modelo, con su costo. Se registra siempre, se cobra después. */
+export interface RegistroConsumo {
+  id: string;
+  tenantId: TenantId;
+  agente: string;
+  instanceId: InstanceId;
+  /** Enmascarado. */
+  telefono: string;
+  proveedor: string;
+  modelo: string;
+  entrada: number;
+  salida: number;
+  cacheLectura: number;
+  cacheEscritura: number;
+  /** null si el modelo no tiene precio en la tabla. */
+  costoUsd: number | null;
+  ms: number;
+  resultado: "ok" | "rechazo" | "sin_texto" | "error";
+  error: string | null;
+  /** ISO 8601 */
+  en: string;
+}
 
 /** Definición efectiva del plan del tenant; tolera ids legado sin migrar. */
 export function planDe(t: Pick<Tenant, "plan">): DefinicionPlan {
@@ -514,4 +584,7 @@ export const rutas = {
     `tenants/${tenantId}/instances/${instanceId}/conversaciones`,
   conversacion: (tenantId: TenantId, instanceId: InstanceId, telefono: string) =>
     `tenants/${tenantId}/instances/${instanceId}/conversaciones/${telefono}`,
+  /** Consumo de agentes por mes (YYYY-MM): agregado en el doc, llamadas en la subcolección. */
+  consumoMes: (tenantId: TenantId, mes: string) => `tenants/${tenantId}/consumo/${mes}`,
+  consumoLlamadas: (tenantId: TenantId, mes: string) => `tenants/${tenantId}/consumo/${mes}/llamadas`,
 } as const;

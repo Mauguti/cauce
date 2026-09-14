@@ -11,6 +11,7 @@ import type { Repositorio } from "../../store.ts";
 import type { ColaEnvios } from "../../cola.ts";
 import { Cripto } from "../../cripto.ts";
 import { enmascararTelefono, registrar, registrarError } from "../../log.ts";
+import { resumirCrudo } from "../../webhook.ts";
 import { ClienteOpenlines, ErrorBitrix, interpretarEventoMensajes } from "./cliente.ts";
 import { tokensDesdeAuth, type CredencialesApp } from "./oauth.ts";
 import { LimitadorInmediato } from "./limitador.ts";
@@ -730,6 +731,10 @@ export class ConectorOpenlines {
         registrar("openlines.operador", { ...base, nota: `número reasignado a la línea ${lineaAsignada}; se entrega por el chat original` });
       }
 
+      if (!m.texto.trim() || m.archivos.length) {
+        // EXPERIMENTO multimedia: la entrada cruda (sin tokens; el auth no viene en data) para ver cómo llegan imagen y nota de voz.
+        registrar("openlines.adjunto_crudo", { ...base, crudo: resumirCrudo(m.crudo) });
+      }
       if (!m.texto.trim()) {
         // v1 solo texto: no se entrega ni se confirma; Bitrix lo mostrará como no entregado.
         registrar("openlines.adjunto_no_soportado", { ...base, archivos: m.archivos.length }, "warn");

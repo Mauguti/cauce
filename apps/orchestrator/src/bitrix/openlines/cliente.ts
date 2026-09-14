@@ -315,6 +315,7 @@ export function interpretarEventoMensajes(data: any): {
         archivos: archivosCrudos
           .map((a: any) => (typeof a?.url === "string" ? { url: a.url, nombre: typeof a?.name === "string" ? a.name : null } : null))
           .filter(Boolean),
+        crudo: m,
       };
     })
     .filter(Boolean);

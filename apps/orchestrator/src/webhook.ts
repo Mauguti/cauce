@@ -91,3 +91,21 @@ export function normalizarActualizacion(
 
   return null; // PENDING u otro: nada que registrar aún
 }
+
+/**
+ * Forma de un payload para la bitácora: mismas claves, pero las cadenas
+ * largas (base64, URLs firmadas kilométricas) se sustituyen por su tamaño.
+ * Acotado a 2 KB. Para el experimento de multimedia: qué llega y cómo.
+ */
+export function resumirCrudo(valor: unknown, profundidad = 0): string {
+  const reducir = (v: unknown, p: number): unknown => {
+    if (typeof v === "string") return v.length > 160 ? `<cadena de ${v.length} caracteres: ${v.slice(0, 40)}…>` : v;
+    if (Array.isArray(v)) return p > 4 ? `<array de ${v.length}>` : v.slice(0, 10).map((x) => reducir(x, p + 1));
+    if (v && typeof v === "object") {
+      if (p > 4) return "<objeto>";
+      return Object.fromEntries(Object.entries(v as Record<string, unknown>).slice(0, 40).map(([k, x]) => [k, reducir(x, p + 1)]));
+    }
+    return v;
+  };
+  return JSON.stringify(reducir(valor, profundidad)).slice(0, 2048);
+}

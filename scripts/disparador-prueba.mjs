@@ -6,8 +6,14 @@
  * exactamente lo que lee el motor de entrada; conserva los demás
  * disparadores del tenant si los hubiera.
  *
- * El disparador es por palabra clave: solo responde cuando el contacto
- * escribe exactamente "prueba bot". No interfiere con nada más.
+ * El disparador es por palabra clave: responde cuando el texto del
+ * contacto CONTIENE "prueba bot" (sin distinguir mayúsculas ni acentos;
+ * signos y texto alrededor no estorban). No interfiere con nada más.
+ *
+ * El motor NO cachea los disparadores: los lee de Firestore en cada
+ * entrante. Sembrar después de reiniciar es válido. Lo que sí importa es
+ * la base: sin CAUCE_FIRESTORE_DB=factory se escribe en (default), que el
+ * orquestador de México no lee.
  *
  * Uso (en la EC2 o donde haya credenciales de Firestore, como migrar-planes):
  *   CAUCE_FIRESTORE_DB=factory node scripts/disparador-prueba.mjs --tenant 9e718a68            # muestra
@@ -38,7 +44,7 @@ const DISPARADOR = {
   prioridad: 1,
   tipo: "palabra_clave",
   patron: "prueba bot",
-  coincidencia: "igual",
+  coincidencia: "contiene",
   activo: true,
   respuesta: "🤖 Respuesta automática de prueba de Digsol Factory. Si ves esto en el chat de Bitrix y UNA sola vez en WhatsApp, la prueba del imbot pasó.",
 };
@@ -48,6 +54,10 @@ const dbId = process.env.CAUCE_FIRESTORE_DB?.trim() || "(default)";
 const db = getFirestore(admin.app(), dbId);
 const ref = db.doc(`tenants/${tenant}/config/disparadores`);
 
+if (dbId === "(default)") {
+  console.error("AVISO: CAUCE_FIRESTORE_DB no está definida; se escribiría en la base (default). México lee la base 'factory'. Exporta CAUCE_FIRESTORE_DB=factory.");
+  if (poner || quitar) process.exit(2);
+}
 const snap = await ref.get();
 const lista = snap.exists ? (snap.data().lista ?? []) : [];
 console.log(`[${dbId}] tenant ${tenant} · disparadores actuales: ${lista.length}`);
@@ -56,7 +66,9 @@ for (const d of lista) console.log(`  ${d.id}  ${d.tipo}  activo=${d.activo}  ${
 if (poner) {
   const otros = lista.filter((d) => d.id !== ID);
   await ref.set({ lista: [DISPARADOR, ...otros] });
-  console.log(`sembrado "${ID}": el contacto escribe "prueba bot" y el bot responde. Total: ${otros.length + 1}`);
+  console.log(`sembrado "${ID}" en tenants/${tenant}/config/disparadores de la base ${dbId}.`);
+  console.log(`Coincide cuando el texto CONTIENE "prueba bot" (minúsculas/acentos indiferentes). Total de disparadores: ${otros.length + 1}`);
+  console.log("Recuerda: plan con bots (Estándar/Pro) y contacto SIN respuesta de operador en los últimos 30 min. La bitácora dirá 'entrada.respuesta' con el motivo.");
 } else if (quitar) {
   const otros = lista.filter((d) => d.id !== ID);
   if (otros.length === lista.length) console.log(`"${ID}" no estaba; nada que quitar`);

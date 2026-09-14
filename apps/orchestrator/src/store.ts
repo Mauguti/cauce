@@ -1,8 +1,10 @@
 import type {
+  Conocimiento,
   Conversacion,
   Instance,
   InstanceId,
   Message,
+  RegistroConsumo,
   Tenant,
   TenantId,
 } from "@cauce/core";
@@ -44,6 +46,12 @@ export interface Repositorio {
     externalId: string,
   ): Promise<Message | null>;
   listMessages(tenantId: TenantId, instanceId?: InstanceId): Promise<Message[]>;
+  /** Últimos `limite` mensajes de una conversación (instancia + teléfono en dígitos), en orden cronológico. */
+  listMessagesDeConversacion(tenantId: TenantId, instanceId: InstanceId, telefono: string, limite: number): Promise<Message[]>;
+
+  // Agentes: base de conocimiento (la escribe la plataforma) y consumo (lo escribe el orquestador).
+  getConocimiento(tenantId: TenantId): Promise<Conocimiento | null>;
+  registrarConsumo(registro: RegistroConsumo): Promise<void>;
   // Conector monday: configuración por tenant.
   getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null>;
   saveConectorMonday(tenantId: TenantId, config: ConectorMondayDoc): Promise<void>;
@@ -235,6 +243,35 @@ export class RepositorioEnMemoria implements Repositorio {
       : [...todos];
   }
 
+  async listMessagesDeConversacion(tenantId: TenantId, instanceId: InstanceId, telefono: string, limite: number): Promise<Message[]> {
+    const digitos = telefono.replace(/[^\d]/g, "");
+    return (this.#messages.get(tenantId) ?? [])
+      .filter((m) => m.instanceId === instanceId && m.telefono.replace(/[^\d]/g, "") === digitos)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      .slice(-limite);
+  }
+
+  #conocimiento = new Map<TenantId, Conocimiento>();
+  #consumos: RegistroConsumo[] = [];
+
+  async getConocimiento(tenantId: TenantId): Promise<Conocimiento | null> {
+    return this.#conocimiento.get(tenantId) ?? null;
+  }
+
+  /** Solo memoria (pruebas y desarrollo): en Firestore la escribe la plataforma. */
+  async saveConocimiento(tenantId: TenantId, c: Conocimiento): Promise<void> {
+    this.#conocimiento.set(tenantId, c);
+  }
+
+  async registrarConsumo(registro: RegistroConsumo): Promise<void> {
+    this.#consumos.push(registro);
+  }
+
+  /** Solo memoria (pruebas). */
+  listConsumos(tenantId: TenantId): RegistroConsumo[] {
+    return this.#consumos.filter((c) => c.tenantId === tenantId);
+  }
+
   #conectorMonday = new Map<TenantId, ConectorMondayDoc>();
   #conversaciones = new Map<string, Conversacion>();
   #disparadores = new Map<TenantId, DisparadorEntrada[]>();
@@ -395,7 +432,13 @@ export class RepositorioEnMemoria implements Repositorio {
     const clave = this.#claveConv(tenantId, instanceId, telefono);
     const previa = this.#conversaciones.get(clave);
     const esPrimerContacto = !previa || previa.primerContactoEn === null;
+    // Se conserva TODO lo previo (ventana humana, vínculo con el chat de
+    // Bitrix, lo que se agregue después) y solo se actualiza lo del
+    // entrante. Antes se reconstruía el doc a mano y cada mensaje borraba
+    // humanaHasta y bitrixOpenLine: los bots contestaban con el operador
+    // en el hilo y el espejo del bot perdía el chat.
     const conversacion: Conversacion = {
+      ...(previa ?? {}),
       tenantId,
       instanceId,
       telefono,

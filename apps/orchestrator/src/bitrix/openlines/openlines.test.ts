@@ -121,10 +121,11 @@ describe("interpretarEventoMensajes", () => {
     });
     expect(r.connector).toBe("digsol_factory");
     expect(r.line).toBe(3);
-    expect(r.mensajes).toEqual([{
+    expect(r.mensajes).toMatchObject([{
       chatExternoId: "f77d6518:5214428575347", imChatId: 901, imMessageId: 1234,
       texto: "Hola, ¿en qué te ayudo?", userId: 12, archivos: [{ url: "https://p/f.jpg", nombre: "f.jpg" }],
     }]);
+    expect(r.mensajes[0]!.crudo).toMatchObject({ chat: { id: "f77d6518:5214428575347" } });
   });
 
   it("tolera MESSAGES como objeto (form-urlencoded) y descarta entradas sin ids", () => {

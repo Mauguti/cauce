@@ -50,4 +50,15 @@ describe("conversaciones: nombre del contacto y listado", () => {
       server.close();
     }
   });
+  it("REGRESIÓN: un entrante nuevo conserva la ventana humana y el vínculo con el chat de Bitrix", async () => {
+    const repo = new RepositorioEnMemoria();
+    await repo.registrarEntrante("t", "i1", "5215500000000", "2026-09-14T10:00:00Z", "Ana");
+    await repo.marcarHumana("t", "i1", "5215500000000", "2099-01-01T00:00:00Z");
+    await repo.vincularOpenLine("t", "i1", "5215500000000", { lineId: 12, chatId: "901", sessionId: "55", actualizadoEn: "2026-09-14T10:00:01Z" });
+    const { conversacion, esPrimerContacto } = await repo.registrarEntrante("t", "i1", "5215500000000", "2026-09-14T10:05:00Z");
+    expect(esPrimerContacto).toBe(false);
+    expect(conversacion.humanaHasta).toBe("2099-01-01T00:00:00Z");
+    expect(conversacion.bitrixOpenLine).toMatchObject({ lineId: 12, chatId: "901" });
+    expect(conversacion.ultimoEntranteEn).toBe("2026-09-14T10:05:00Z");
+  });
 });

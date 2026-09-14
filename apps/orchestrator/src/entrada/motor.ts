@@ -1,12 +1,13 @@
 import type { InstanceId, Message, TenantId } from "@cauce/core";
 import { tieneCapacidad, type Capacidad } from "@cauce/core";
-import { registrar, registrarCadaMs } from "../log.ts";
+import { enmascararTelefono, registrar, registrarCadaMs } from "../log.ts";
 import type { ConectorOpenlines } from "../bitrix/openlines/conector.ts";
 import type { Repositorio } from "../store.ts";
 import type { ConectorMonday } from "../monday/conector.ts";
 import type { ConectorBitrix } from "../bitrix/conector.ts";
 import type { EntidadBitrix } from "../bitrix/cliente.ts";
 import { primeroQueCoincide } from "./disparadores.ts";
+import type { Agente } from "../agentes/agente.ts";
 
 /** Envía por el carril inmediato (sin cola). Lo provee GestorSesiones. */
 export type EnviarInmediato = (
@@ -28,6 +29,7 @@ export class MotorEntrada {
   readonly #monday: ConectorMonday | null;
   readonly #bitrix: ConectorBitrix | null;
   readonly #openlines: ConectorOpenlines | null;
+  readonly #agente: Agente | null;
 
   constructor(opciones: {
     repo: Repositorio;
@@ -35,12 +37,15 @@ export class MotorEntrada {
     monday?: ConectorMonday;
     bitrix?: ConectorBitrix;
     openlines?: ConectorOpenlines;
+    /** Agente conversacional (Santiago); contesta cuando ningún disparador lo hizo y el plan incluye agentes. */
+    agente?: Agente;
   }) {
     this.#repo = opciones.repo;
     this.#enviar = opciones.enviarInmediato;
     this.#monday = opciones.monday ?? null;
     this.#bitrix = opciones.bitrix ?? null;
     this.#openlines = opciones.openlines ?? null;
+    this.#agente = opciones.agente ?? null;
   }
 
   async procesar(
@@ -75,25 +80,51 @@ export class MotorEntrada {
     }
 
     // 2. Disparadores: primera coincidencia por prioridad gana; respuesta
-    //    por el carril inmediato (sin rate limiting).
-    if (puede("bots") && !humana) {
-      const disparadores = await this.#repo.getDisparadores(tenantId);
-      const disparador = primeroQueCoincide(disparadores, {
-        texto: mensaje.cuerpo,
-        esPrimerContacto,
-        ahora: new Date(mensaje.timestamp),
-      });
-      if (disparador) {
-        await this.#enviar(tenantId, instanceId, mensaje.telefono, disparador.respuesta);
-        // Espejo en el Contact Center para que el operador vea qué respondió el bot.
-        if (this.#openlines) {
-          await this.#openlines.reflejarBot(tenantId, instanceId, mensaje.telefono, disparador.respuesta).catch(() => {});
+    //    por el carril inmediato (sin rate limiting). Si ninguno coincide y
+    //    el plan incluye agentes, contesta el agente. Ambos respetan la
+    //    ventana humana.
+    // Una línea por entrante con qué pasó: "ninguno coincidió", "no hay
+    // disparadores", "el plan no los incluye" y "ventana humana" no pueden
+    // verse igual (silencio). Mismo criterio que openlines.entrante omitido.
+    const base = { tenant: tenantId, instancia: instanceId, mensaje: mensaje.id, telefono: enmascararTelefono(mensaje.telefono) };
+    if (!humana && (puede("bots") || puede("agentes"))) {
+      let respuesta: string | null = null;
+      let origen = "";
+      if (puede("bots")) {
+        const disparadores = await this.#repo.getDisparadores(tenantId);
+        const disparador = primeroQueCoincide(disparadores, {
+          texto: mensaje.cuerpo,
+          esPrimerContacto,
+          ahora: new Date(mensaje.timestamp),
+        });
+        respuesta = disparador?.respuesta ?? null;
+        origen = disparador ? `disparador:${disparador.id}` : disparadores.length === 0 ? "sin disparadores configurados" : `ninguno de ${disparadores.length} coincidió`;
+      } else {
+        origen = "plan sin bots";
+      }
+      if (respuesta === null && puede("agentes")) {
+        if (this.#agente) {
+          respuesta = await this.#agente.responder(tenantId, instanceId, mensaje, conversacion.nombre ?? nombre ?? null);
+          origen += respuesta ? "; agente respondió" : "; agente sin respuesta";
+        } else {
+          origen += "; agente no disponible en este orquestador";
         }
       }
-    } else if (tenant) {
+      registrar("entrada.respuesta", { ...base, esPrimerContacto, resultado: respuesta ? "enviada" : "ninguna", origen }, respuesta ? "info" : "warn");
+      if (respuesta) {
+        await this.#enviar(tenantId, instanceId, mensaje.telefono, respuesta);
+        // Espejo en el Contact Center para que el operador vea qué respondió el bot o el agente.
+        if (this.#openlines) {
+          await this.#openlines.reflejarBot(tenantId, instanceId, mensaje.telefono, respuesta).catch(() => {});
+        }
+      }
+    } else if (tenant && !humana) {
+      registrar("entrada.respuesta", { ...base, resultado: "ninguna", origen: `el plan ${tenant.plan} no incluye bots ni agentes, o la cuenta está en solo lectura` }, "warn");
       registrarCadaMs(`bots-pausados:${tenantId}`, 10 * 60_000, "bots.pausados", {
         tenant: tenantId, plan: tenant.plan, motivo: "el plan no incluye bots o la cuenta está en solo lectura",
       }, "warn");
+    } else if (humana) {
+      registrar("entrada.respuesta", { ...base, resultado: "ninguna", origen: `ventana humana hasta ${conversacion.humanaHasta}` });
     }
 
     // 3. Write-back al CRM: la respuesta del cliente vuelve al registro que

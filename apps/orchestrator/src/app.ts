@@ -18,7 +18,7 @@ import {
   PLANES, type Capacidad, type TenantPlan,
   estadoPago,
 } from "@cauce/core";
-import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
+import { normalizarActualizacion, normalizarEntrante, resumirCrudo } from "./webhook.ts";
 import { ErrorConfirmacion, type ConectorOpenlines } from "./bitrix/openlines/conector.ts";
 import { normalizarNombreLinea } from "./bitrix/openlines/tipos.ts";
 import { enmascararTelefono, registrar, registrarCadaMs, registrarError } from "./log.ts";
@@ -286,6 +286,12 @@ export function crearApp(
     // Responder rápido: normalizar y guardar es barato. El resto
     // (conversación, disparadores, write-back al CRM) lo hace el motor de
     // entrada sin bloquear el 200; un fallo suyo no rompe la recepción.
+    // EXPERIMENTO multimedia (no se construye nada todavía): un entrante que
+    // no es texto deja su forma cruda, sin base64, para decidir qué llega y cómo.
+    const tipoEntrante = req.body?.data?.messageType;
+    if (typeof tipoEntrante === "string" && !["conversation", "extendedTextMessage"].includes(tipoEntrante)) {
+      registrar("entrante.adjunto_crudo", { tenant: tenantId, instancia: instanceId, tipo: tipoEntrante, muestra: resumirCrudo(req.body?.data?.message) });
+    }
     const mensaje = normalizarEntrante(tenantId!, instanceId!, req.body);
     if (mensaje) {
       await repo.saveMessage(mensaje);
@@ -1216,6 +1222,37 @@ export function crearApp(
   app.use("/api/tenants/:tenantId", tenantRouter);
 
   // Cambio de plan MANUAL (Stripe va en otro bloque). Autenticado con
+  // Configuración del agente del tenant (Santiago). Proveedor y modelo por
+  // tenant; la capacidad `agentes` del plan decide si contesta.
+  app.post("/api/admin/tenants/:tenantId/agente", async (req, res) => {
+    const admin = req.headers["x-admin-key"];
+    if (!opciones.adminKey || admin !== opciones.adminKey) {
+      res.status(401).json({ error: "no autorizado" });
+      return;
+    }
+    const tenant = await repo.getTenant(String(req.params.tenantId));
+    if (!tenant) {
+      res.status(404).json({ error: "tenant no encontrado" });
+      return;
+    }
+    const b = req.body ?? {};
+    if (b.agente === null) {
+      await repo.saveTenant({ ...tenant, agente: null });
+      registrar("agente.configurado", { tenant: tenant.id, resultado: "quitado" });
+      res.json({ tenantId: tenant.id, agente: null });
+      return;
+    }
+    const nombre = typeof b.nombre === "string" && b.nombre.trim() ? b.nombre.trim() : tenant.agente?.nombre ?? "Santiago";
+    const modelo = typeof b.modelo === "string" && b.modelo.trim() ? b.modelo.trim() : tenant.agente?.modelo ?? "claude-opus-5";
+    const esfuerzo = ["low", "medium", "high"].includes(b.esfuerzo) ? b.esfuerzo : tenant.agente?.esfuerzo ?? "low";
+    const maxSalida = Number.isInteger(b.maxSalida) && b.maxSalida > 0 ? b.maxSalida : tenant.agente?.maxSalida ?? 600;
+    const instrucciones = typeof b.instrucciones === "string" ? b.instrucciones : tenant.agente?.instrucciones ?? null;
+    const agente = { activo: b.activo !== false, nombre, proveedor: "anthropic" as const, modelo, esfuerzo, maxSalida, instrucciones };
+    await repo.saveTenant({ ...tenant, agente });
+    registrar("agente.configurado", { tenant: tenant.id, agente: nombre, modelo, esfuerzo, activo: agente.activo, capacidad: tieneCapacidad(tenant, "agentes") ? "agentes ok" : "el plan NO incluye agentes" });
+    res.json({ tenantId: tenant.id, agente, tieneCapacidadAgentes: tieneCapacidad(tenant, "agentes") });
+  });
+
   // Registro manual de pago: hasta cuándo queda cubierto. Solo informa al
   // banner y a Billing; la suspensión sigue siendo a mano (docs/vencido-y-suspension.md).
   app.post("/api/admin/tenants/:tenantId/pago", async (req, res) => {

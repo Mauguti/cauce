@@ -148,6 +148,8 @@ export interface MensajeOperador {
   userId: number | null;
   /** URLs de adjuntos si el payload trae algo reconocible; vacío si no. */
   archivos: { url: string; nombre: string | null }[];
+  /** La entrada tal como llegó, para el experimento de multimedia. */
+  crudo: unknown;
 }
 
 /** chat.id externo estable por conversación: instancia + teléfono. */

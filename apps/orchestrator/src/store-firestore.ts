@@ -1,4 +1,4 @@
-import { Firestore } from "@google-cloud/firestore";
+import { FieldValue, Firestore } from "@google-cloud/firestore";
 import {
   rutas,
   type Conversacion,
@@ -7,6 +7,8 @@ import {
   type Message,
   type Tenant,
   type TenantId,
+  type Conocimiento,
+  type RegistroConsumo,
 } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
@@ -179,6 +181,72 @@ export class RepositorioFirestore implements Repositorio {
     return snap.docs.map((d) => d.data() as Message);
   }
 
+  async listMessagesDeConversacion(tenantId: TenantId, instanceId: InstanceId, telefono: string, limite: number): Promise<Message[]> {
+    // Dos igualdades: Firestore las sirve fusionando índices de campo único.
+    // El orden lo hacemos aquí para no exigir índice compuesto.
+    const digitos = telefono.replace(/[^\d]/g, "");
+    const snap = await this.#db
+      .collection(rutas.messages(tenantId))
+      .where("instanceId", "==", instanceId)
+      .where("telefono", "==", `+${digitos}`)
+      .get();
+    return snap.docs
+      .map((d) => d.data() as Message)
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+      .slice(-limite);
+  }
+
+  /**
+   * Base de conocimiento: la plataforma la guarda en users/{uid} (campos
+   * knowledge_*), y usuarios/{uid} dice a qué tenant pertenece. Se toma el
+   * primer usuario del tenant; con varios usuarios, el conocimiento vive
+   * en el que lo llenó (limitación conocida, se documenta).
+   */
+  async getConocimiento(tenantId: TenantId): Promise<Conocimiento | null> {
+    const usuarios = await this.#db.collection("usuarios").where("tenantId", "==", tenantId).limit(5).get();
+    for (const u of usuarios.docs) {
+      const perfil = await this.#db.doc(`users/${u.id}`).get();
+      if (!perfil.exists) continue;
+      const d = perfil.data()!;
+      const tiene = Object.keys(d).some((k) => k.startsWith("knowledge_"));
+      if (!tiene) continue;
+      return {
+        pitch: d.knowledge_pitch ?? null,
+        buyerPersona: d.knowledge_buyerPersona ?? null,
+        discountPolicy: d.knowledge_discountPolicy ?? null,
+        prohibitedTopics: d.knowledge_prohibitedTopics ?? null,
+        toneCasual: Boolean(d.knowledge_toneCasual),
+        toneConcise: Boolean(d.knowledge_toneConcise),
+        toneEmpathetic: Boolean(d.knowledge_toneEmpathetic),
+        idealPhrases: d.knowledge_idealPhrases ?? null,
+        brandInstructions: d.knowledge_brandInstructions ?? null,
+        products: Array.isArray(d.knowledge_products) ? d.knowledge_products : [],
+      };
+    }
+    return null;
+  }
+
+  async registrarConsumo(r: RegistroConsumo): Promise<void> {
+    const mes = r.en.slice(0, 7);
+    const agregado = this.#db.doc(rutas.consumoMes(r.tenantId, mes));
+    const llamada = this.#db.collection(rutas.consumoLlamadas(r.tenantId, mes)).doc(r.id);
+    const batch = this.#db.batch();
+    batch.set(llamada, r);
+    batch.set(agregado, {
+      tenantId: r.tenantId,
+      mes,
+      llamadas: FieldValue.increment(1),
+      entrada: FieldValue.increment(r.entrada),
+      salida: FieldValue.increment(r.salida),
+      cacheLectura: FieldValue.increment(r.cacheLectura),
+      cacheEscritura: FieldValue.increment(r.cacheEscritura),
+      costoUsd: FieldValue.increment(r.costoUsd ?? 0),
+      errores: FieldValue.increment(r.resultado === "error" ? 1 : 0),
+      actualizadoEn: r.en,
+    }, { merge: true });
+    await batch.commit();
+  }
+
   async getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null> {
     const doc = await this.#db
       .doc(`${rutas.tenant(tenantId)}/conectores/monday`)
@@ -324,7 +392,13 @@ export class RepositorioFirestore implements Repositorio {
       const snap = await tx.get(ref);
       const previa = snap.exists ? (snap.data() as Conversacion) : null;
       const esPrimerContacto = !previa || previa.primerContactoEn === null;
+      // Se conserva TODO lo previo (ventana humana, vínculo con el chat de
+      // Bitrix, lo que se agregue después) y solo se actualiza lo del
+      // entrante. Antes se reconstruía el doc a mano y cada mensaje borraba
+      // humanaHasta y bitrixOpenLine: los bots contestaban con el operador
+      // en el hilo y el espejo del bot perdía el chat.
       const conversacion: Conversacion = {
+        ...(previa ?? {}),
         tenantId,
         instanceId,
         telefono,

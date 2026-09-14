@@ -13,6 +13,8 @@ import { RepositorioFirestore } from "./store-firestore.ts";
 import { ConectorMonday } from "./monday/conector.ts";
 import { ConectorBitrix } from "./bitrix/conector.ts";
 import { MotorEntrada } from "./entrada/motor.ts";
+import { Agente } from "./agentes/agente.ts";
+import { ProveedorAnthropic } from "./agentes/proveedor.ts";
 import { Cripto } from "./cripto.ts";
 import { crearVerificadorToken } from "./firebase.ts";
 import { Provisioning } from "./provisioning.ts";
@@ -109,7 +111,15 @@ if (!openlines) {
   console.warn("CAUCE_URL_PUBLICA sin definir: el canal abierto de Bitrix24 queda deshabilitado");
 }
 
+// Agente conversacional: razona en el orquestador con el proveedor del
+// tenant. Hoy un proveedor (Anthropic) con la llave de ANTHROPIC_API_KEY.
+const agente = process.env.ANTHROPIC_API_KEY?.trim()
+  ? new Agente({ repo, proveedores: { anthropic: new ProveedorAnthropic() } })
+  : undefined;
+if (!agente) console.warn("ANTHROPIC_API_KEY sin definir: los agentes quedan deshabilitados");
+
 const motorEntrada = new MotorEntrada({
+  ...(agente ? { agente } : {}),
   repo,
   monday,
   bitrix,
