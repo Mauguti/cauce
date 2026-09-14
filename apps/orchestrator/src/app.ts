@@ -16,6 +16,7 @@ import {
   churnReciente, limitesTenant, pruebaVigente, capacidadesTenant, tieneCapacidad,
   mensajeRequierePlan, soloLectura, planDe, normalizarPlan, esPlanConocido, esSubida,
   PLANES, type Capacidad, type TenantPlan,
+  estadoPago,
 } from "@cauce/core";
 import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
 import { ErrorConfirmacion, type ConectorOpenlines } from "./bitrix/openlines/conector.ts";
@@ -359,6 +360,9 @@ export function crearApp(
       soloLectura: soloLectura(tenant),
       planPendiente: tenant.planPendiente ?? null,
       cicloCorteEn: tenant.cicloCorteEn ?? null,
+      // Solo para mostrar: el paso 3 de activación y Billing. No apaga nada.
+      estadoPago: estadoPago(tenant),
+      pagadoHasta: tenant.pagadoHasta ?? null,
       limites,
       pruebaExpiraEn: tenant.pruebaExpiraEn ?? null,
       pruebaVigente: pruebaVigente(tenant),
@@ -1212,6 +1216,30 @@ export function crearApp(
   app.use("/api/tenants/:tenantId", tenantRouter);
 
   // Cambio de plan MANUAL (Stripe va en otro bloque). Autenticado con
+  // Registro manual de pago: hasta cuándo queda cubierto. Solo informa al
+  // banner y a Billing; la suspensión sigue siendo a mano (docs/vencido-y-suspension.md).
+  app.post("/api/admin/tenants/:tenantId/pago", async (req, res) => {
+    const admin = req.headers["x-admin-key"];
+    if (!opciones.adminKey || admin !== opciones.adminKey) {
+      res.status(401).json({ error: "no autorizado" });
+      return;
+    }
+    const tenant = await repo.getTenant(String(req.params.tenantId));
+    if (!tenant) {
+      res.status(404).json({ error: "tenant no encontrado" });
+      return;
+    }
+    const { pagadoHasta } = req.body ?? {};
+    if (pagadoHasta !== null && (typeof pagadoHasta !== "string" || Number.isNaN(new Date(pagadoHasta).getTime()))) {
+      res.status(400).json({ error: "pagadoHasta debe ser una fecha ISO 8601 o null" });
+      return;
+    }
+    const actualizado = { ...tenant, pagadoHasta: pagadoHasta ?? null };
+    await repo.saveTenant(actualizado);
+    registrar("pago.registrado", { tenant: tenant.id, pagadoHasta: pagadoHasta ?? null, estado: estadoPago(actualizado) });
+    res.json({ tenantId: tenant.id, pagadoHasta: pagadoHasta ?? null, estadoPago: estadoPago(actualizado) });
+  });
+
   // CAUCE_ADMIN_KEY, no con credenciales de tenant. Sube a plan pagado
   // (limpia la caducidad) o ajusta límites contratados ("extras").
   app.post("/api/admin/tenants/:tenantId/plan", async (req, res) => {

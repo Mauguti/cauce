@@ -107,6 +107,13 @@ export interface Tenant {
   planPendiente?: { plan: TenantPlan; aplicaEn: string } | null;
   /** ISO 8601 de la fecha de corte del ciclo pagado en curso; null si no aplica. */
   cicloCorteEn?: string | null;
+  /**
+   * Hasta cuándo está cubierto el pago (ISO 8601). Lo registra una persona
+   * (cobro manual). Ausente/null = sin registro: se trata como al
+   * corriente, porque no hay cobranza que lo contradiga. Primer pedazo de
+   * docs/vencido-y-suspension.md; la suspensión NO se deriva de aquí.
+   */
+  pagadoHasta?: string | null;
   /** Ajustes del canal abierto de Bitrix24 (ventana humana, espaciado, ráfaga). Ausente = defaults. */
   canalAbierto?: CanalAbiertoConfig | null;
   /** @deprecated Migrado a `limitesOverride.lineas`. Se lee solo por compatibilidad. */
@@ -180,6 +187,20 @@ export function pruebaVigente(t: Tenant, ahora: Date = new Date()): boolean {
  */
 export function soloLectura(t: Tenant, ahora: Date = new Date()): boolean {
   return !pruebaVigente(t, ahora);
+}
+
+export type EstadoPago = "prueba" | "al_corriente" | "vencido";
+
+/**
+ * Estado de pago para mostrarlo (banner de activación, Billing). Solo
+ * informa: no apaga nada. La prueba se reporta aparte porque no es un
+ * cliente que paga; vencido es un cliente de paga con pagadoHasta en el
+ * pasado. Sin registro de pago, al corriente.
+ */
+export function estadoPago(t: Tenant, ahora: Date = new Date()): EstadoPago {
+  if (normalizarPlan(t.plan) === "prueba") return "prueba";
+  if (t.pagadoHasta && new Date(t.pagadoHasta) <= ahora) return "vencido";
+  return "al_corriente";
 }
 
 /**

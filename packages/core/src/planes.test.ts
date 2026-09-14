@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   capacidadesTenant, esSubida, limitesTenant, mensajeRequierePlan, normalizarPlan,
-  planDe, planQueHabilita, pruebaVigente, soloLectura, tieneCapacidad, type Tenant,
-} from "./index.ts";
+  planDe, planQueHabilita, pruebaVigente, soloLectura, tieneCapacidad, type Tenant, estadoPago } from "./index.ts";
 
 const t = (over: Partial<Tenant>): Tenant => ({
   id: "t", nombre: "T", plan: "basico", estado: "activo", apiKeyHash: "x", creadoEn: "2026-09-01T00:00:00Z", ...over,
@@ -23,6 +22,16 @@ describe("modelo de planes", () => {
     expect(pruebaVigente(vencida)).toBe(false);
     expect(soloLectura(vencida)).toBe(true);
     expect(capacidadesTenant(vencida)).toEqual([]);
+  });
+
+  it("estado de pago: prueba aparte; sin registro al corriente; pagadoHasta en el pasado es vencido; no apaga capacidades", () => {
+    const ahora = new Date("2026-09-15T00:00:00Z");
+    const base = { id: "t", nombre: "T", estado: "activo", apiKeyHash: "x", creadoEn: "2026-09-01T00:00:00Z" } as const;
+    expect(estadoPago({ ...base, plan: "prueba" }, ahora)).toBe("prueba");
+    expect(estadoPago({ ...base, plan: "estandar" }, ahora)).toBe("al_corriente");
+    expect(estadoPago({ ...base, plan: "estandar", pagadoHasta: "2026-10-01T00:00:00Z" }, ahora)).toBe("al_corriente");
+    expect(estadoPago({ ...base, plan: "estandar", pagadoHasta: "2026-09-01T00:00:00Z" }, ahora)).toBe("vencido");
+    expect(capacidadesTenant({ ...base, plan: "estandar", pagadoHasta: "2026-09-01T00:00:00Z" }, ahora)).toContain("salientes");
   });
 
   it("los ids legado se leen como Estándar sin migrar (base, extras)", () => {
