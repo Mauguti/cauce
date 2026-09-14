@@ -547,6 +547,16 @@ export interface Conversacion {
    */
   traspaso?: { motivo: string; resumen: string; en: string; agente: string; atendidoEn?: string | null } | null;
   /**
+   * Cortacircuitos de respuestas automáticas: marcas de tiempo de las
+   * últimas respuestas de bot/agente (acotado) y el último texto, para
+   * detectar bucles; `autoPausadaHasta` apaga las respuestas automáticas
+   * de ESTA conversación hasta esa hora o hasta que un humano conteste.
+   */
+  autoRespuestas?: string[];
+  ultimaAutoRespuesta?: string | null;
+  autoPausadaHasta?: string | null;
+  cortacircuitos?: { en: string; motivo: string; conteo: number } | null;
+  /**
    * Canal abierto de Bitrix24 (Contact Center). `chatId`/`sessionId` son
    * lo que Bitrix devolvió en el ÚLTIMO envío; nunca se asumen, porque
    * al cerrar la sesión y volver a escribir pueden cambiar. Null si esta

@@ -84,8 +84,26 @@ Opus rebasa la bolsa de $200 de un agente Pro antes de mitad de mes.
    `herramientas:[{nombre, descripcion, url, parametros, token}]`.
 4. ADN lleno en el Centro de Conocimiento por un usuario del tenant.
 
+## Anti-bucle
+
+- **Línea propia:** si el remitente es una línea conectada de cualquier
+  tenant (registro `numeros/{dígitos}`, con variantes +521/+52), ni bots ni
+  agente responden; el mensaje se guarda y se espeja al CRM. Sin esto, dos
+  líneas con agente se contestan entre sí para siempre.
+- **Cortacircuitos por conversación** (`CORTACIRCUITOS` en motor.ts): más
+  de 12 respuestas automáticas en 10 min sin humano, o 3 idénticas seguidas
+  en menos de 3 min → `autoPausadaHasta` 6 h, `cortacircuitos.disparado` en
+  bitácora (nivel error) y aviso por WhatsApp a `CAUCE_AVISOS_WHATSAPP`
+  desde la misma línea. Un operador que contesta (ventana humana) levanta la
+  pausa. Es independiente del filtro anterior: cubre contestadores, otros
+  bots o sistemas de tickets del otro lado.
+- **Eco del reflejo:** lo que el orquestador escribe como bot en el chat de
+  Bitrix se recuerda 10 min; si vuelve por OnImConnectorMessageAdd con otro
+  user_id, se ignora (`motivo="eco del reflejo del bot"`) y no va al contacto.
+
 ## Bitácora
 
 `entrada.respuesta` (qué pasó con cada entrante), `agente.consumo`,
 `agente.traspaso`, `agente.herramienta`, `agente.catalogo_recortado`,
-`agente.sin_proveedor`, `agente.configurado`, `openlines.aviso_operadores`.
+`agente.sin_proveedor`, `agente.configurado`, `openlines.aviso_operadores`,
+`cortacircuitos.disparado`, `cortacircuitos.aviso_fallido`.

@@ -10,7 +10,7 @@ import {
   type Conocimiento,
   type RegistroConsumo,
 } from "@cauce/core";
-import type { Repositorio } from "./store.ts";
+import { variantesNumero, type Repositorio } from "./store.ts";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
 import type { ConectorBitrixDoc } from "./bitrix/conector.ts";
 import type { OpenlinesBitrixDoc } from "./bitrix/openlines/tipos.ts";
@@ -124,16 +124,53 @@ export class RepositorioFirestore implements Repositorio {
   }
 
   async saveInstance(instance: Instance): Promise<void> {
-    await this.#db
-      .doc(rutas.instance(instance.tenantId, instance.id))
-      .set(instance);
+    const batch = this.#db.batch();
+    batch.set(this.#db.doc(rutas.instance(instance.tenantId, instance.id)), instance);
+    // Registro global número → línea, para reconocer líneas propias de
+    // cualquier tenant sin índice de grupo de colección.
+    if (instance.numero) {
+      batch.set(this.#db.doc(`numeros/${instance.numero.replace(/[^\d]/g, "")}`), { tenantId: instance.tenantId, instanceId: instance.id, actualizadoEn: new Date().toISOString() });
+    }
+    await batch.commit();
   }
 
   async deleteInstance(
     tenantId: TenantId,
     instanceId: InstanceId,
   ): Promise<void> {
-    await this.#db.doc(rutas.instance(tenantId, instanceId)).delete();
+    const previa = await this.getInstance(tenantId, instanceId);
+    const batch = this.#db.batch();
+    batch.delete(this.#db.doc(rutas.instance(tenantId, instanceId)));
+    if (previa?.numero) batch.delete(this.#db.doc(`numeros/${previa.numero.replace(/[^\d]/g, "")}`));
+    await batch.commit();
+  }
+
+  async buscarInstanciaPorNumero(telefono: string): Promise<{ tenantId: TenantId; instanceId: InstanceId } | null> {
+    for (const d of variantesNumero(telefono)) {
+      const doc = await this.#db.doc(`numeros/${d}`).get();
+      if (doc.exists) {
+        const x = doc.data()!;
+        return { tenantId: String(x.tenantId), instanceId: String(x.instanceId) };
+      }
+    }
+    return null;
+  }
+
+  async registrarRespuestaAutomatica(tenantId: TenantId, instanceId: InstanceId, telefono: string, en: string, texto: string, maxGuardadas: number): Promise<Conversacion> {
+    const ref = this.#db.doc(rutas.conversacion(tenantId, instanceId, telefono));
+    return this.#db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const previa = snap.exists ? (snap.data() as Conversacion) : null;
+      const autoRespuestas = [...(previa?.autoRespuestas ?? []), en].slice(-maxGuardadas);
+      tx.set(ref, { tenantId, instanceId, telefono, autoRespuestas, ultimaAutoRespuesta: texto }, { merge: true });
+      return { ...(previa ?? { tenantId, instanceId, telefono, primerContactoEn: null, ultimoEntranteEn: null, mondayItemId: null }), autoRespuestas, ultimaAutoRespuesta: texto } as Conversacion;
+    });
+  }
+
+  async pausarAutomatico(tenantId: TenantId, instanceId: InstanceId, telefono: string, datos: { hasta: string; motivo: string; conteo: number }): Promise<void> {
+    await this.#db
+      .doc(rutas.conversacion(tenantId, instanceId, telefono))
+      .set({ tenantId, instanceId, telefono, autoPausadaHasta: datos.hasta, cortacircuitos: { en: new Date().toISOString(), motivo: datos.motivo, conteo: datos.conteo } }, { merge: true });
   }
 
   /** Upsert por id: el ciclo de la cola reescribe el mismo mensaje. */
@@ -324,7 +361,7 @@ export class RepositorioFirestore implements Repositorio {
   ): Promise<void> {
     await this.#db
       .doc(rutas.conversacion(tenantId, instanceId, telefono))
-      .set({ tenantId, instanceId, telefono, humanaHasta: hasta }, { merge: true });
+      .set({ tenantId, instanceId, telefono, humanaHasta: hasta, ...(hasta ? { autoPausadaHasta: null, autoRespuestas: [] } : {}) }, { merge: true });
   }
 
   async marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void> {

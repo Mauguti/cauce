@@ -120,6 +120,7 @@ if (!agente) console.warn("ANTHROPIC_API_KEY sin definir: los agentes quedan des
 
 const motorEntrada = new MotorEntrada({
   ...(agente ? { agente } : {}),
+  ...(process.env.CAUCE_AVISOS_WHATSAPP?.trim() ? { avisosWhatsApp: process.env.CAUCE_AVISOS_WHATSAPP.trim() } : {}),
   repo,
   monday,
   bitrix,

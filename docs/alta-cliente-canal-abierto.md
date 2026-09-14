@@ -306,9 +306,15 @@ Cada entrante deja **una** línea `entrada.respuesta` con lo que pasó:
 `origen="disparador:<id>"`, `"ninguno de N coincidió"`, `"sin disparadores
 configurados"`, `"plan sin bots"`, `"…; agente respondió"` o `"ventana humana
 hasta …"`. Si no hay respuesta automática, esa línea dice por qué; no hay
-que adivinar. **No existe ningún filtro por remitente propio**: un mensaje
-desde otra línea del mismo tenant entra como cualquier otro (solo se
-descartan los `fromMe` y los chats de grupo).
+que adivinar. **Anti-bucle:** un mensaje que viene de una línea conectada
+nuestra (de este tenant o de cualquier otro) se guarda y se espeja al CRM
+como tráfico real, pero NO recibe respuesta automática; la línea dice
+`origen="remitente es línea propia (mismo tenant: <id>)"`. Además, cada
+conversación tiene cortacircuitos: más de 12 respuestas automáticas en 10
+min sin humano, o 3 idénticas seguidas, la apagan 6 h con
+`cortacircuitos.disparado` y aviso por WhatsApp a `CAUCE_AVISOS_WHATSAPP`;
+un operador que contesta la reactiva. Para probar bots o al agente hay que
+escribir desde un teléfono que NO sea una línea conectada.
 
 Condiciones para que un bot o el agente contesten: plan con la capacidad
 (`bots` en Estándar y Pro; `agentes` solo en Pro) y que la conversación no

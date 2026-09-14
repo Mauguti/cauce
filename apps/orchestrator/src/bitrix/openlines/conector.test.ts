@@ -511,6 +511,26 @@ describe("reflejo del bot en el chat del operador", () => {
   });
 });
 
+describe("eco del reflejo", () => {
+  it("lo que escribimos como bot y vuelve por OnImConnectorMessageAdd con otro user_id NO se reenvía al contacto", async () => {
+    const c = armar();
+    const bitacora = capturarBitacora();
+    await instalarYAsignar(c);
+    const doc = (await c.repo.getOpenlinesBitrix("t1"))!;
+    await c.repo.saveOpenlinesBitrix("t1", { ...doc, botId: 324 });
+    await c.conector.entrante("t1", "i1", entrante("i1", "in-eco"));
+    await c.conector.reflejarBot("t1", "i1", "+5214428575347", "Con gusto te explico el plan Estándar.");
+    // Bitrix nos devuelve ese mismo texto como si fuera de un operador (user_id distinto al bot), con y sin prefijo
+    await c.conector.respuestaOperador("t1", evento({ userId: 999, texto: "🤖 Con gusto te explico el plan Estándar." }));
+    await c.conector.respuestaOperador("t1", evento({ userId: 999, texto: "Con gusto te explico el plan Estándar." }));
+    expect(c.enviados).toEqual([]);
+    expect(bitacora.filter((l) => l.includes('motivo="eco del reflejo del bot"'))).toHaveLength(2);
+    // Un operador de verdad sí pasa
+    await c.conector.respuestaOperador("t1", evento({ userId: 999, texto: "Soy Mau, ¿te ayudo?" }));
+    expect(c.enviados).toHaveLength(1);
+  });
+});
+
 describe("formatearNumero", () => {
   it("agrupa a la mexicana con o sin el 1 de WhatsApp", () => {
     expect(formatearNumero("+5214428575347")).toBe("+521 442 857 5347");

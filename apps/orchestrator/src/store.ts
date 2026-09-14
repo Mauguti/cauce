@@ -56,6 +56,12 @@ export interface Repositorio {
   listConsumo(tenantId: TenantId, mes: string): Promise<RegistroConsumo[]>;
   /** El agente traspasó la conversación a una persona. */
   marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void>;
+  /** ¿Este número es una línea conectada de ALGÚN tenant? (anti-bucle entre agentes). */
+  buscarInstanciaPorNumero(telefono: string): Promise<{ tenantId: TenantId; instanceId: InstanceId } | null>;
+  /** Anota una respuesta automática en la conversación (ventana acotada) y devuelve el estado para el cortacircuitos. */
+  registrarRespuestaAutomatica(tenantId: TenantId, instanceId: InstanceId, telefono: string, en: string, texto: string, maxGuardadas: number): Promise<Conversacion>;
+  /** Apaga las respuestas automáticas de la conversación hasta `hasta`. */
+  pausarAutomatico(tenantId: TenantId, instanceId: InstanceId, telefono: string, datos: { hasta: string; motivo: string; conteo: number }): Promise<void>;
   // Conector monday: configuración por tenant.
   getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null>;
   saveConectorMonday(tenantId: TenantId, config: ConectorMondayDoc): Promise<void>;
@@ -402,11 +408,32 @@ export class RepositorioEnMemoria implements Repositorio {
     telefono: string,
     hasta: string | null,
   ): Promise<void> {
-    this.#fusionarConversacion(tenantId, instanceId, telefono, { humanaHasta: hasta });
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { humanaHasta: hasta, ...(hasta ? { autoPausadaHasta: null, autoRespuestas: [] } : {}) });
   }
 
   async marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void> {
     this.#fusionarConversacion(tenantId, instanceId, telefono, { traspaso });
+  }
+
+  async buscarInstanciaPorNumero(telefono: string): Promise<{ tenantId: TenantId; instanceId: InstanceId } | null> {
+    const buscados = new Set(variantesNumero(telefono));
+    for (const [tenantId, porTenant] of this.#instances) {
+      for (const i of porTenant.values()) {
+        if (i.numero && buscados.has(i.numero.replace(/[^\d]/g, ""))) return { tenantId, instanceId: i.id };
+      }
+    }
+    return null;
+  }
+
+  async registrarRespuestaAutomatica(tenantId: TenantId, instanceId: InstanceId, telefono: string, en: string, texto: string, maxGuardadas: number): Promise<Conversacion> {
+    const previa = this.#conversaciones.get(this.#claveConv(tenantId, instanceId, telefono));
+    const autoRespuestas = [...(previa?.autoRespuestas ?? []), en].slice(-maxGuardadas);
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { autoRespuestas, ultimaAutoRespuesta: texto });
+    return this.#conversaciones.get(this.#claveConv(tenantId, instanceId, telefono))!;
+  }
+
+  async pausarAutomatico(tenantId: TenantId, instanceId: InstanceId, telefono: string, datos: { hasta: string; motivo: string; conteo: number }): Promise<void> {
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { autoPausadaHasta: datos.hasta, cortacircuitos: { en: new Date().toISOString(), motivo: datos.motivo, conteo: datos.conteo } });
   }
 
   #claveConv(t: TenantId, i: InstanceId, tel: string): string {
@@ -473,4 +500,13 @@ export class RepositorioEnMemoria implements Repositorio {
   ): Promise<void> {
     this.#disparadores.set(tenantId, [...disparadores]);
   }
+}
+
+/** Dígitos de un número y sus variantes mexicanas (+521/+52), para comparar líneas. */
+export function variantesNumero(telefono: string): string[] {
+  const d = telefono.replace(/[^\d]/g, "");
+  const v = new Set([d]);
+  if (d.startsWith("521") && d.length === 13) v.add(`52${d.slice(3)}`);
+  else if (d.startsWith("52") && d.length === 12) v.add(`521${d.slice(2)}`);
+  return [...v];
 }

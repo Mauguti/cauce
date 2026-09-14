@@ -126,6 +126,21 @@ export class ConectorOpenlines {
   readonly #ahora: () => number;
   /** Nombres de líneas abiertas por tenant, 60 s: la tabla se abre seguido y Bitrix no es rápido. */
   readonly #nombresLineas = new Map<TenantId, { hasta: number; nombres: Map<number, string> }>();
+  /** Textos escritos como bot en cada chat, 10 min: si vuelven por OnImConnectorMessageAdd son eco, no un operador. */
+  readonly #reflejos = new Map<number, { texto: string; en: number }[]>();
+
+  #recordarReflejo(imChatId: number, texto: string): void {
+    const ahora = this.#ahora();
+    const lista = (this.#reflejos.get(imChatId) ?? []).filter((r) => ahora - r.en < 10 * 60_000);
+    lista.push({ texto, en: ahora });
+    this.#reflejos.set(imChatId, lista.slice(-20));
+  }
+
+  #esEcoDeReflejo(imChatId: number, texto: string): boolean {
+    const ahora = this.#ahora();
+    const t = texto.trim();
+    return (this.#reflejos.get(imChatId) ?? []).some((r) => ahora - r.en < 10 * 60_000 && (r.texto.trim() === t || r.texto.replace(/^🤖\s*/, "").trim() === t.replace(/^🤖\s*/, "").trim()));
+  }
 
   constructor(opciones: {
     repo: Repositorio;
@@ -689,6 +704,7 @@ export class ConectorOpenlines {
     // visibilidad, y decide A o C sin otro despliegue.
     const cliente = this.#cliente(tenantId, doc);
     const base = { tenant: tenantId, instancia: instanceId, chatBitrix: imChatId, botId: doc.botId };
+    this.#recordarReflejo(imChatId, texto);
     try {
       await cliente.mensajeDeBotEnSesion({ imChatId, texto });
       registrar(evento, { ...base, metodo: "imopenlines.bot.session.message.send" });
@@ -733,6 +749,11 @@ export class ConectorOpenlines {
     for (const m of mensajes) {
       if (doc.botId !== null && m.userId === doc.botId) {
         registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "mensaje del propio bot", imMensaje: m.imMessageId });
+        continue;
+      }
+      if (this.#esEcoDeReflejo(m.imChatId, m.texto)) {
+        // El texto que escribimos como bot volvió por el evento con otro user_id: no es un operador, es el eco. Al contacto no va.
+        registrar("openlines.operador", { tenant: tenantId, resultado: "ignorado", motivo: "eco del reflejo del bot", imMensaje: m.imMessageId, usuario: m.userId, chatBitrix: m.imChatId }, "warn");
         continue;
       }
       const partes = partirChatExterno(m.chatExternoId);
