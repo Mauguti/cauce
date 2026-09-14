@@ -82,6 +82,18 @@ export function costoUsd(modelo: string, uso: Uso): number | null {
 /** Rondas máximas de herramientas por respuesta: evita bucles y acota el gasto. */
 const RONDAS_MAX = 4;
 
+/**
+ * Falló una ronda, pero las anteriores ya gastaron: el error lleva ese uso
+ * para que el agente lo registre. Si no, Billing mostraría menos que la
+ * factura real de Anthropic.
+ */
+export class ErrorProveedor extends Error {
+  constructor(readonly causa: unknown, readonly usoParcial: Uso, readonly modelo: string, readonly ronda: number) {
+    super(causa instanceof Error ? causa.message : String(causa));
+    this.name = "ErrorProveedor";
+  }
+}
+
 /** Anthropic vía el SDK oficial. La llave sale de ANTHROPIC_API_KEY (por ahora la paga Digsol). */
 export class ProveedorAnthropic implements ProveedorModelo {
   readonly nombre = "anthropic";
@@ -109,7 +121,9 @@ export class ProveedorAnthropic implements ProveedorModelo {
     let parada: string | null = null;
 
     for (let ronda = 0; ronda <= RONDAS_MAX; ronda += 1) {
-      const res = await this.#client.beta.messages.create({
+      let res: Anthropic.Beta.BetaMessage;
+      try {
+        res = await this.#client.beta.messages.create({
         model: p.modelo,
         max_tokens: p.maxSalida,
         // Si un clasificador declina, el servidor reintenta en el modelo de respaldo dentro de la misma llamada.
@@ -120,7 +134,10 @@ export class ProveedorAnthropic implements ProveedorModelo {
         system: [{ type: "text", text: p.sistema, cache_control: { type: "ephemeral" } }],
         ...(herramientas.length ? { tools: herramientas } : {}),
         messages: mensajes,
-      });
+        });
+      } catch (err) {
+        throw new ErrorProveedor(err, uso, modeloServido, ronda);
+      }
       uso.entrada += res.usage.input_tokens;
       uso.salida += res.usage.output_tokens;
       uso.cacheLectura += res.usage.cache_read_input_tokens ?? 0;

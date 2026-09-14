@@ -209,6 +209,11 @@ crearApp(repo, gestor, {
   version,
   ...(adminKey ? { adminKey } : {}),
   cripto,
+  // Consumo en pesos: tipo de cambio con colchón. Se ajusta en /etc/factory.env sin tocar código.
+  tipoCambio: {
+    usdMxn: Number(process.env.CAUCE_USD_MXN) > 0 ? Number(process.env.CAUCE_USD_MXN) : 18.5,
+    colchon: Number(process.env.CAUCE_USD_MXN_COLCHON) > 0 ? Number(process.env.CAUCE_USD_MXN_COLCHON) : 1.1,
+  },
 }).listen(puerto, () => {
   console.log(`orquestador escuchando en :${puerto} (versión ${version})`);
   // Ya con el puerto abierto: ¿los contenedores rehidratados alcanzan al

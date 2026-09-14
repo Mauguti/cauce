@@ -247,6 +247,11 @@ export class RepositorioFirestore implements Repositorio {
     await batch.commit();
   }
 
+  async listConsumo(tenantId: TenantId, mes: string): Promise<RegistroConsumo[]> {
+    const snap = await this.#db.collection(rutas.consumoLlamadas(tenantId, mes)).get();
+    return snap.docs.map((d) => d.data() as RegistroConsumo);
+  }
+
   async getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null> {
     const doc = await this.#db
       .doc(`${rutas.tenant(tenantId)}/conectores/monday`)

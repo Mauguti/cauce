@@ -81,6 +81,8 @@ export interface AppOpciones {
   adminKey?: string;
   /** Cifrado de secretos (tokens de herramientas del agente). */
   cripto?: Cripto;
+  /** Tipo de cambio para mostrar el consumo en pesos: USD→MXN y colchón multiplicativo (p. ej. 1.10). */
+  tipoCambio?: { usdMxn: number; colchon: number };
   /** Versión desplegada (commit corto); se expone en /health. */
   version?: string;
 }
@@ -862,6 +864,62 @@ export function crearApp(
     } catch (err: any) {
       res.status(400).json({ error: err?.message ?? "no se pudo guardar el canal abierto" });
     }
+  });
+
+  // ── Agentes: lectura del medidor (solo mostrar; nada se descuenta ni se corta) ──
+  tenantRouter.get("/agentes", async (req, res) => {
+    const tenant = (await repo.getTenant(req.tenantId!))!;
+    const cfg = tenant.agente;
+    if (!cfg) { res.json([]); return; }
+    const instancias = await repo.listInstances(req.tenantId!);
+    res.json([{
+      nombre: cfg.nombre,
+      proveedor: cfg.proveedor,
+      modelo: cfg.modelo,
+      esfuerzo: cfg.esfuerzo ?? "low",
+      activo: cfg.activo,
+      // Contesta cuando el plan incluye agentes; si no, está configurado pero en pausa por plan.
+      enPausaPorPlan: !tieneCapacidad(tenant, "agentes"),
+      herramientas: ["pasar_a_humano", "buscar_prospecto", "calificar_prospecto", ...(cfg.herramientas ?? []).map((h) => h.nombre)],
+      // Atiende todas las líneas del tenant: cualquier entrante que ningún disparador conteste.
+      lineas: instancias.map((i) => ({ instanceId: i.id, nombre: i.nombre ?? null, numero: i.numero, estado: i.estado, viva: gestor ? gestor.obtener(i.id) !== null : false })),
+    }]);
+  });
+
+  tenantRouter.get("/consumo", async (req, res) => {
+    const mes = typeof req.query.mes === "string" && /^\d{4}-\d{2}$/.test(req.query.mes) ? req.query.mes : new Date().toISOString().slice(0, 7);
+    const tc = opciones.tipoCambio ?? { usdMxn: 18.5, colchon: 1.1 };
+    const efectivo = Math.round(tc.usdMxn * tc.colchon * 10_000) / 10_000;
+    const llamadas = await repo.listConsumo(req.tenantId!, mes);
+    const vacio = () => ({ llamadas: 0, errores: 0, entrada: 0, salida: 0, cacheLectura: 0, cacheEscritura: 0, costoUsd: 0, costoMxn: 0, conversaciones: 0, herramientas: 0, ultimaEn: null as string | null });
+    const porAgente = new Map<string, ReturnType<typeof vacio> & { agente: string; modelos: Set<string>; convs: Set<string> }>();
+    const total = { ...vacio(), convs: new Set<string>() };
+    for (const l of llamadas) {
+      const a = porAgente.get(l.agente) ?? { ...vacio(), agente: l.agente, modelos: new Set<string>(), convs: new Set<string>() };
+      for (const acc of [a, total] as const) {
+        acc.llamadas += 1;
+        if (l.resultado === "error") acc.errores += 1;
+        acc.entrada += l.entrada; acc.salida += l.salida; acc.cacheLectura += l.cacheLectura; acc.cacheEscritura += l.cacheEscritura;
+        acc.costoUsd += l.costoUsd ?? 0;
+        acc.herramientas += l.herramientas?.length ?? 0;
+        acc.convs.add(`${l.instanceId}/${l.telefono}`);
+        if (!acc.ultimaEn || l.en > acc.ultimaEn) acc.ultimaEn = l.en;
+      }
+      a.modelos.add(l.modelo);
+      porAgente.set(l.agente, a);
+    }
+    const cerrar = (x: ReturnType<typeof vacio> & { convs: Set<string> }) => ({
+      llamadas: x.llamadas, errores: x.errores, entrada: x.entrada, salida: x.salida, cacheLectura: x.cacheLectura, cacheEscritura: x.cacheEscritura,
+      costoUsd: Math.round(x.costoUsd * 1_000_000) / 1_000_000,
+      costoMxn: Math.round(x.costoUsd * efectivo * 100) / 100,
+      conversaciones: x.convs.size, herramientas: x.herramientas, ultimaEn: x.ultimaEn,
+    });
+    res.json({
+      mes,
+      tipoCambio: { usdMxn: tc.usdMxn, colchon: tc.colchon, efectivo },
+      total: cerrar(total),
+      porAgente: [...porAgente.values()].map((a) => ({ agente: a.agente, modelos: [...a.modelos], ...cerrar(a) })),
+    });
   });
 
   // Tabla de líneas del tenant con estado real y línea abierta asignada: una llamada.

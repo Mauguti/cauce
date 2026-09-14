@@ -52,6 +52,8 @@ export interface Repositorio {
   // Agentes: base de conocimiento (la escribe la plataforma) y consumo (lo escribe el orquestador).
   getConocimiento(tenantId: TenantId): Promise<Conocimiento | null>;
   registrarConsumo(registro: RegistroConsumo): Promise<void>;
+  /** Llamadas del mes (YYYY-MM), para el medidor. */
+  listConsumo(tenantId: TenantId, mes: string): Promise<RegistroConsumo[]>;
   /** El agente traspasó la conversación a una persona. */
   marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void>;
   // Conector monday: configuración por tenant.
@@ -272,6 +274,10 @@ export class RepositorioEnMemoria implements Repositorio {
   /** Solo memoria (pruebas). */
   listConsumos(tenantId: TenantId): RegistroConsumo[] {
     return this.#consumos.filter((c) => c.tenantId === tenantId);
+  }
+
+  async listConsumo(tenantId: TenantId, mes: string): Promise<RegistroConsumo[]> {
+    return this.#consumos.filter((c) => c.tenantId === tenantId && c.en.startsWith(mes));
   }
 
   #conectorMonday = new Map<TenantId, ConectorMondayDoc>();

@@ -7,7 +7,7 @@ import type { ConectorOpenlines } from "../bitrix/openlines/conector.ts";
 import type { ConectorBitrix, ProspectoCrm } from "../bitrix/conector.ts";
 import type { ConectorMonday } from "../monday/conector.ts";
 import type { EntidadBitrix } from "../bitrix/cliente.ts";
-import type { HerramientaDef, ProveedorModelo } from "./proveedor.ts";
+import { costoUsd, ErrorProveedor, type HerramientaDef, type ProveedorModelo } from "./proveedor.ts";
 
 /**
  * Agente conversacional del tenant (el primero: Santiago, que contesta
@@ -239,12 +239,16 @@ export class Agente {
       return r.texto;
     } catch (err) {
       const ms = fin();
+      // Lo ya gastado en rondas anteriores se registra igual: la factura de Anthropic lo cobra.
+      const parcial = err instanceof ErrorProveedor ? err.usoParcial : { entrada: 0, salida: 0, cacheLectura: 0, cacheEscritura: 0 };
+      const modelo = err instanceof ErrorProveedor ? err.modelo : cfg.modelo;
       await this.#repo.registrarConsumo({
         id, tenantId, agente: cfg.nombre, instanceId, telefono: enmascararTelefono(mensaje.telefono), proveedor: proveedor.nombre,
-        modelo: cfg.modelo, entrada: 0, salida: 0, cacheLectura: 0, cacheEscritura: 0, costoUsd: 0, ms, resultado: "error",
+        modelo, entrada: parcial.entrada, salida: parcial.salida, cacheLectura: parcial.cacheLectura, cacheEscritura: parcial.cacheEscritura,
+        costoUsd: costoUsd(modelo, parcial) ?? 0, ms, resultado: "error",
         error: err instanceof Error ? err.message : String(err), en,
       }).catch(() => {});
-      registrarError("agente.consumo", err, { ...base, proveedor: proveedor.nombre, modelo: cfg.modelo, ms, resultado: "error" });
+      registrarError("agente.consumo", err, { ...base, proveedor: proveedor.nombre, modelo, ms, resultado: "error", ...(err instanceof ErrorProveedor ? { rondaFallida: err.ronda, entrada: parcial.entrada, salida: parcial.salida } : {}) });
       return null;
     }
   }
