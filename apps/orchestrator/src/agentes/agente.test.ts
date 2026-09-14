@@ -3,7 +3,8 @@ import type { Message, Tenant } from "@cauce/core";
 import { RepositorioEnMemoria } from "../store.ts";
 import { usarSalida } from "../log.ts";
 import { MotorEntrada } from "../entrada/motor.ts";
-import { Agente, armarSistema, CATALOGO_MAX_CARACTERES } from "./agente.ts";
+import { Cripto } from "../cripto.ts";
+import { Agente, armarSistema, CATALOGO_MAX_CARACTERES, HERRAMIENTA_PASAR_A_HUMANO, TRASPASO_HORAS } from "./agente.ts";
 import { costoUsd, type PeticionModelo, type ProveedorModelo } from "./proveedor.ts";
 
 const TENANT: Tenant = {
@@ -14,31 +15,42 @@ const TENANT: Tenant = {
 const entrante = (cuerpo: string, id: string = crypto.randomUUID(), ts = new Date().toISOString()): Message =>
   ({ id, tenantId: "t1", instanceId: "i1", direccion: "in", telefono: "+5214428575347", cuerpo, estado: "recibido", externalId: null, timestamp: ts });
 
-function proveedorFalso(respuesta: string | null = "Con gusto: Digsol Factory conecta tu WhatsApp con tu CRM.", opciones: { falla?: boolean; rechazo?: boolean } = {}) {
+function proveedorFalso(
+  respuesta: string | null = "Con gusto: Digsol Factory conecta tu WhatsApp con tu CRM.",
+  opciones: { falla?: boolean; rechazo?: boolean; usar?: { nombre: string; argumentos: Record<string, unknown> } } = {},
+) {
   const peticiones: PeticionModelo[] = [];
+  const resultadosHerramienta: string[] = [];
   const p: ProveedorModelo = {
     nombre: "anthropic",
     async responder(pet) {
       peticiones.push(pet);
       if (opciones.falla) throw new Error("529 overloaded");
+      const usadas: string[] = [];
+      if (opciones.usar && pet.ejecutar) {
+        // Simula al modelo pidiendo una herramienta y leyendo su resultado.
+        resultadosHerramienta.push(await pet.ejecutar(opciones.usar.nombre, opciones.usar.argumentos));
+        usadas.push(opciones.usar.nombre);
+      }
       return {
         texto: opciones.rechazo ? null : respuesta,
         modelo: pet.modelo,
         uso: { entrada: 1200, salida: 80, cacheLectura: 1000, cacheEscritura: 0 },
         costoUsd: costoUsd(pet.modelo, { entrada: 1200, salida: 80, cacheLectura: 1000, cacheEscritura: 0 }),
         parada: opciones.rechazo ? "refusal" : "end_turn",
+        herramientasUsadas: usadas,
       };
     },
   };
-  return { p, peticiones };
+  return { p, peticiones, resultadosHerramienta };
 }
 
-function armar(tenant: Tenant = TENANT, prov = proveedorFalso()) {
+function armar(tenant: Tenant = TENANT, prov = proveedorFalso(), fetchImpl?: typeof fetch) {
   const repo = new RepositorioEnMemoria({
     tenants: [tenant],
     instances: [{ id: "i1", tenantId: "t1", transportType: "mock", contenedorId: null, numero: "+5214420000001", estado: "connected", ultimoHeartbeat: null }],
   });
-  const agente = new Agente({ repo, proveedores: { anthropic: prov.p } });
+  const agente = new Agente({ repo, proveedores: { anthropic: prov.p }, cripto: new Cripto(), ...(fetchImpl ? { fetchImpl } : {}) });
   return { repo, agente, ...prov };
 }
 
@@ -122,6 +134,57 @@ describe("Agente", () => {
     const falla = armar(TENANT, proveedorFalso("x", { falla: true }));
     expect(await falla.agente.responder("t1", "i1", entrante("hola"))).toBeNull();
     expect(falla.repo.listConsumos("t1")[0]).toMatchObject({ resultado: "error", error: "529 overloaded", costoUsd: 0 });
+  });
+});
+
+describe("herramientas del agente", () => {
+  it("pasar_a_humano siempre está: marca el traspaso, calla al agente 12 h y lo deja en bitácora; sin dónde avisar, lo dice", async () => {
+    const c = armar(TENANT, proveedorFalso("Listo, alguien del equipo te escribe por aquí.", { usar: { nombre: "pasar_a_humano", argumentos: { motivo: "intencion_de_compra", resumen: "Quiere el plan Estándar para 7 líneas." } } }));
+    const bitacora = capturarBitacora();
+    const texto = await c.agente.responder("t1", "i1", entrante("¿cómo lo contrato?"), "Aurelio");
+    expect(texto).toContain("alguien del equipo");
+    expect(c.peticiones[0]!.herramientas!.map((h) => h.nombre)).toEqual([HERRAMIENTA_PASAR_A_HUMANO.nombre]);
+    expect(c.resultadosHerramienta[0]).toMatch(/una persona del equipo seguirá/);
+    const conv = (await c.repo.getConversacion("t1", "i1", "5214428575347"))!;
+    expect(conv.traspaso).toMatchObject({ motivo: "intencion_de_compra", resumen: "Quiere el plan Estándar para 7 líneas.", agente: "Santiago" });
+    const horas = (new Date(conv.humanaHasta!).getTime() - Date.now()) / 3_600_000;
+    expect(horas).toBeGreaterThan(TRASPASO_HORAS - 0.1);
+    expect(bitacora.some((l) => l.includes("agente.traspaso") && l.includes("motivo=intencion_de_compra") && l.includes("avisadoEn=ninguno"))).toBe(true);
+    expect(c.repo.listConsumos("t1")[0]!.herramientas).toEqual(["pasar_a_humano"]);
+  });
+
+  it("tras el traspaso, el siguiente entrante NO vuelve al agente (ventana humana)", async () => {
+    const c = armar(TENANT, proveedorFalso("ok", { usar: { nombre: "pasar_a_humano", argumentos: { motivo: "pide_persona", resumen: "x" } } }));
+    const enviados: string[] = [];
+    const motor = new MotorEntrada({ repo: c.repo, agente: c.agente, enviarInmediato: async (_t, _i, _tel, cuerpo) => { enviados.push(cuerpo); } });
+    await motor.procesar("t1", "i1", entrante("quiero hablar con alguien"));
+    await motor.procesar("t1", "i1", entrante("¿hola?"));
+    expect(enviados).toEqual(["ok"]);
+    expect(c.peticiones).toHaveLength(1);
+  });
+
+  it("una herramienta por webhook del tenant hace POST JSON con el contexto y el Bearer descifrado, y devuelve el cuerpo al modelo", async () => {
+    const llamadas: { url: string; init: any }[] = [];
+    const fetchImpl = (async (url: string, init: any) => { llamadas.push({ url, init }); return new Response(JSON.stringify({ disponible: true, siguiente: "martes 10:00" }), { status: 200 }); }) as unknown as typeof fetch;
+    const cripto = new Cripto();
+    const tenant: Tenant = { ...TENANT, agente: { ...TENANT.agente!, herramientas: [{ nombre: "consultar_agenda", descripcion: "Devuelve el próximo hueco libre", url: "https://n8n.digsol.com.mx/webhook/agenda", parametros: { properties: { dia: { type: "string" } }, required: ["dia"], additionalProperties: false }, tokenCifrado: cripto.cifrar("s3cr3t") }] } };
+    const c = armar(tenant, proveedorFalso("Hay hueco el martes a las 10.", { usar: { nombre: "consultar_agenda", argumentos: { dia: "martes" } } }), fetchImpl);
+    // El agente descifra con SU Cripto; usa la misma llave de desarrollo que la del test.
+    const texto = await c.agente.responder("t1", "i1", entrante("¿tienen hueco el martes?"), "Mau");
+    expect(texto).toContain("martes");
+    expect(c.peticiones[0]!.herramientas!.map((h) => h.nombre)).toEqual(["pasar_a_humano", "consultar_agenda"]);
+    expect(llamadas[0]!.url).toBe("https://n8n.digsol.com.mx/webhook/agenda");
+    expect(llamadas[0]!.init.headers.authorization).toBe("Bearer s3cr3t");
+    expect(JSON.parse(llamadas[0]!.init.body)).toMatchObject({ tenantId: "t1", instanceId: "i1", telefono: "+5214428575347", contacto: "Mau", herramienta: "consultar_agenda", argumentos: { dia: "martes" } });
+    expect(c.resultadosHerramienta[0]).toContain("martes 10:00");
+  });
+
+  it("una herramienta desconocida no rompe: devuelve error al modelo y queda en bitácora", async () => {
+    const c = armar(TENANT, proveedorFalso("ok", { usar: { nombre: "no_existe", argumentos: {} } }));
+    const bitacora = capturarBitacora();
+    await c.agente.responder("t1", "i1", entrante("hola"));
+    expect(c.resultadosHerramienta[0]).toBe("error: herramienta desconocida");
+    expect(bitacora.some((l) => l.includes("agente.herramienta") && l.includes("resultado=desconocida"))).toBe(true);
   });
 });
 

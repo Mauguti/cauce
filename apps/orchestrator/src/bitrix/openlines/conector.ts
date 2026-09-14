@@ -670,26 +670,37 @@ export class ConectorOpenlines {
    * verifica en el dogfooding que NO rebote al contacto.
    */
   async reflejarBot(tenantId: TenantId, instanceId: InstanceId, telefono: string, texto: string): Promise<void> {
+    await this.#escribirComoBot(tenantId, instanceId, telefono, `🤖 ${texto}`, "openlines.bot_reflejado");
+  }
+
+  /** Aviso a los operadores en el chat de la sesión (traspaso del agente). true si se pudo escribir. */
+  async avisarOperadores(tenantId: TenantId, instanceId: InstanceId, telefono: string, texto: string): Promise<boolean> {
+    return this.#escribirComoBot(tenantId, instanceId, telefono, texto, "openlines.aviso_operadores");
+  }
+
+  async #escribirComoBot(tenantId: TenantId, instanceId: InstanceId, telefono: string, texto: string, evento: string): Promise<boolean> {
     const doc = await this.#doc(tenantId);
-    if (!doc?.tokensCifrados || doc.botId === null || lineaDe(doc, instanceId) === null) return;
+    if (!doc?.tokensCifrados || doc.botId === null || lineaDe(doc, instanceId) === null) return false;
     const conv = await this.#repo.getConversacion(tenantId, instanceId, telefono.replace(/[^\d]/g, ""));
     const imChatId = conv?.bitrixOpenLine?.chatId ? Number(conv.bitrixOpenLine.chatId) : null;
-    if (!imChatId) return;
+    if (!imChatId) return false;
     // Primero el método de chatbots de Open Channels; si Bitrix lo rechaza,
     // el genérico de imbot. La bitácora dice cuál entró: es la prueba de
     // visibilidad, y decide A o C sin otro despliegue.
     const cliente = this.#cliente(tenantId, doc);
     const base = { tenant: tenantId, instancia: instanceId, chatBitrix: imChatId, botId: doc.botId };
     try {
-      await cliente.mensajeDeBotEnSesion({ imChatId, texto: `🤖 ${texto}` });
-      registrar("openlines.bot_reflejado", { ...base, metodo: "imopenlines.bot.session.message.send" });
-      return;
+      await cliente.mensajeDeBotEnSesion({ imChatId, texto });
+      registrar(evento, { ...base, metodo: "imopenlines.bot.session.message.send" });
+      return true;
     } catch (err1) {
       try {
-        await cliente.mensajeDeBot({ botId: doc.botId, imChatId, texto: `🤖 ${texto}` });
-        registrar("openlines.bot_reflejado", { ...base, metodo: "imbot.message.add", nota: `session.message.send falló: ${err1 instanceof Error ? err1.message : String(err1)}` });
+        await cliente.mensajeDeBot({ botId: doc.botId, imChatId, texto });
+        registrar(evento, { ...base, metodo: "imbot.message.add", nota: `session.message.send falló: ${err1 instanceof Error ? err1.message : String(err1)}` });
+        return true;
       } catch (err2) {
-        registrarError("openlines.bot_reflejado", err2, { ...base, errorSesion: err1 instanceof Error ? err1.message : String(err1) });
+        registrarError(evento, err2, { ...base, errorSesion: err1 instanceof Error ? err1.message : String(err1) });
+        return false;
       }
     }
   }

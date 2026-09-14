@@ -167,6 +167,25 @@ export interface AgenteConfig {
   instrucciones?: string | null;
   /** Tope de tokens de salida por respuesta. */
   maxSalida?: number;
+  /** Herramientas externas por webhook que el agente puede invocar (n8n u otro). */
+  herramientas?: HerramientaWebhook[];
+}
+
+/**
+ * Herramienta externa del agente: un POST JSON a una URL del tenant con
+ * {tenantId, instanceId, telefono, contacto, herramienta, argumentos}; la
+ * respuesta (texto o JSON) vuelve al modelo. El token, si lo hay, viaja
+ * como Bearer y se guarda cifrado con Cripto.
+ */
+export interface HerramientaWebhook {
+  /** Nombre que ve el modelo: snake_case, p. ej. "consultar_disponibilidad". */
+  nombre: string;
+  /** Cuándo usarla y qué devuelve; es lo que el modelo lee para decidir. */
+  descripcion: string;
+  url: string;
+  /** JSON Schema de los argumentos (properties, required…). Vacío = sin argumentos. */
+  parametros?: Record<string, unknown>;
+  tokenCifrado?: string | null;
 }
 
 /** Producto del Catálogo del Centro de Conocimiento. */
@@ -217,6 +236,8 @@ export interface RegistroConsumo {
   error: string | null;
   /** ISO 8601 */
   en: string;
+  /** Herramientas invocadas en la respuesta, si hubo. */
+  herramientas?: string[];
 }
 
 /** Definición efectiva del plan del tenant; tolera ids legado sin migrar. */
@@ -520,6 +541,11 @@ export interface Conversacion {
    * timeline. Análogo a `mondayItemId` para el otro CRM.
    */
   bitrixEntidad?: { tipo: string; id: string } | null;
+  /**
+   * El agente entregó la conversación a una persona. Se conserva hasta
+   * que alguien la marque atendida; mientras, el agente calla.
+   */
+  traspaso?: { motivo: string; resumen: string; en: string; agente: string; atendidoEn?: string | null } | null;
   /**
    * Canal abierto de Bitrix24 (Contact Center). `chatId`/`sessionId` son
    * lo que Bitrix devolvió en el ÚLTIMO envío; nunca se asumen, porque

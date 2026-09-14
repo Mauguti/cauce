@@ -52,6 +52,8 @@ export interface Repositorio {
   // Agentes: base de conocimiento (la escribe la plataforma) y consumo (lo escribe el orquestador).
   getConocimiento(tenantId: TenantId): Promise<Conocimiento | null>;
   registrarConsumo(registro: RegistroConsumo): Promise<void>;
+  /** El agente traspasó la conversación a una persona. */
+  marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void>;
   // Conector monday: configuración por tenant.
   getConectorMonday(tenantId: TenantId): Promise<ConectorMondayDoc | null>;
   saveConectorMonday(tenantId: TenantId, config: ConectorMondayDoc): Promise<void>;
@@ -336,18 +338,7 @@ export class RepositorioEnMemoria implements Repositorio {
     entidadTipo: string,
     entidadId: string,
   ): Promise<void> {
-    const clave = this.#claveConv(tenantId, instanceId, telefono);
-    const previa = this.#conversaciones.get(clave);
-    this.#conversaciones.set(clave, {
-      tenantId,
-      instanceId,
-      telefono,
-      nombre: previa?.nombre ?? null,
-      primerContactoEn: previa?.primerContactoEn ?? null,
-      ultimoEntranteEn: previa?.ultimoEntranteEn ?? null,
-      mondayItemId: previa?.mondayItemId ?? null,
-      bitrixEntidad: { tipo: entidadTipo, id: entidadId },
-    });
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { bitrixEntidad: { tipo: entidadTipo, id: entidadId } });
   }
 
   #openlines = new Map<TenantId, OpenlinesBitrixDoc>();
@@ -372,17 +363,20 @@ export class RepositorioEnMemoria implements Repositorio {
   ): void {
     const clave = this.#claveConv(tenantId, instanceId, telefono);
     const previa = this.#conversaciones.get(clave);
+    // Se conserva TODO lo previo (misma regla que registrarEntrante): un
+    // campo nuevo en Conversacion no debe perderse por no estar listado aquí.
     this.#conversaciones.set(clave, {
+      nombre: null,
+      primerContactoEn: null,
+      ultimoEntranteEn: null,
+      mondayItemId: null,
+      bitrixEntidad: null,
+      bitrixOpenLine: null,
+      humanaHasta: null,
+      ...(previa ?? {}),
       tenantId,
       instanceId,
       telefono,
-      nombre: previa?.nombre ?? null,
-      primerContactoEn: previa?.primerContactoEn ?? null,
-      ultimoEntranteEn: previa?.ultimoEntranteEn ?? null,
-      mondayItemId: previa?.mondayItemId ?? null,
-      bitrixEntidad: previa?.bitrixEntidad ?? null,
-      bitrixOpenLine: previa?.bitrixOpenLine ?? null,
-      humanaHasta: previa?.humanaHasta ?? null,
       ...cambios,
     });
   }
@@ -403,6 +397,10 @@ export class RepositorioEnMemoria implements Repositorio {
     hasta: string | null,
   ): Promise<void> {
     this.#fusionarConversacion(tenantId, instanceId, telefono, { humanaHasta: hasta });
+  }
+
+  async marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void> {
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { traspaso });
   }
 
   #claveConv(t: TenantId, i: InstanceId, tel: string): string {
@@ -464,18 +462,7 @@ export class RepositorioEnMemoria implements Repositorio {
     telefono: string,
     itemId: string,
   ): Promise<void> {
-    const clave = this.#claveConv(tenantId, instanceId, telefono);
-    const previa = this.#conversaciones.get(clave);
-    this.#conversaciones.set(clave, {
-      tenantId,
-      instanceId,
-      telefono,
-      nombre: previa?.nombre ?? null,
-      primerContactoEn: previa?.primerContactoEn ?? null,
-      ultimoEntranteEn: previa?.ultimoEntranteEn ?? null,
-      mondayItemId: itemId,
-      bitrixEntidad: previa?.bitrixEntidad ?? null,
-    });
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { mondayItemId: itemId });
   }
 
   async getDisparadores(tenantId: TenantId): Promise<DisparadorEntrada[]> {

@@ -6,6 +6,11 @@ import Anthropic from "@anthropic-ai/sdk";
  * se elige por tenant en su configuración (`Tenant.agente.proveedor`) y hoy
  * existe uno, Anthropic. Un bake-off futuro agrega otro sin tocar al agente.
  *
+ * Herramientas: el agente entrega definiciones y una función `ejecutar`;
+ * el proveedor corre el ciclo de uso de herramientas (el modelo pide una,
+ * se ejecuta, se le devuelve el resultado, y sigue) hasta que contesta
+ * con texto o se agota el tope de rondas.
+ *
  * Regla desde el primer commit: cada llamada devuelve tokens y costo, y el
  * agente los registra aunque no se cobre nada todavía.
  */
@@ -17,6 +22,16 @@ export interface Uso {
   cacheEscritura: number;
 }
 
+/** Definición de una herramienta tal como la ve el modelo (JSON Schema en `parametros`). */
+export interface HerramientaDef {
+  nombre: string;
+  descripcion: string;
+  parametros: Record<string, unknown>;
+}
+
+/** Ejecuta una herramienta y devuelve el resultado como texto para el modelo. */
+export type EjecutarHerramienta = (nombre: string, argumentos: Record<string, unknown>) => Promise<string>;
+
 export interface PeticionModelo {
   modelo: string;
   /** Instrucciones + base de conocimiento; se cachea como prefijo. */
@@ -25,6 +40,8 @@ export interface PeticionModelo {
   historial: { rol: "usuario" | "asistente"; texto: string }[];
   esfuerzo: "low" | "medium" | "high";
   maxSalida: number;
+  herramientas?: HerramientaDef[];
+  ejecutar?: EjecutarHerramienta;
 }
 
 export interface RespuestaModelo {
@@ -32,10 +49,13 @@ export interface RespuestaModelo {
   texto: string | null;
   /** Modelo que sirvió de verdad (puede diferir si hubo fallback). */
   modelo: string;
+  /** Sumado sobre todas las rondas de herramientas. */
   uso: Uso;
   /** null si el modelo no está en la tabla de precios: se registra igual. */
   costoUsd: number | null;
   parada: string | null;
+  /** Herramientas invocadas en esta respuesta, en orden. */
+  herramientasUsadas: string[];
 }
 
 export interface ProveedorModelo {
@@ -59,6 +79,9 @@ export function costoUsd(modelo: string, uso: Uso): number | null {
   return Math.round(usd * 1_000_000) / 1_000_000;
 }
 
+/** Rondas máximas de herramientas por respuesta: evita bucles y acota el gasto. */
+const RONDAS_MAX = 4;
+
 /** Anthropic vía el SDK oficial. La llave sale de ANTHROPIC_API_KEY (por ahora la paga Digsol). */
 export class ProveedorAnthropic implements ProveedorModelo {
   readonly nombre = "anthropic";
@@ -71,30 +94,65 @@ export class ProveedorAnthropic implements ProveedorModelo {
   async responder(p: PeticionModelo): Promise<RespuestaModelo> {
     // El historial debe abrir con el usuario; se descarta lo anterior si no.
     const desde = p.historial.findIndex((h) => h.rol === "usuario");
-    const mensajes = (desde >= 0 ? p.historial.slice(desde) : []).map((h) => ({
-      role: h.rol === "usuario" ? ("user" as const) : ("assistant" as const),
+    const mensajes: Anthropic.Beta.BetaMessageParam[] = (desde >= 0 ? p.historial.slice(desde) : []).map((h) => ({
+      role: h.rol === "usuario" ? "user" : "assistant",
       content: h.texto,
     }));
-    const res = await this.#client.beta.messages.create({
-      model: p.modelo,
-      max_tokens: p.maxSalida,
-      // Si un clasificador declina, el servidor reintenta en el modelo de respaldo dentro de la misma llamada.
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      thinking: { type: "adaptive" },
-      output_config: { effort: p.esfuerzo },
-      system: [{ type: "text", text: p.sistema, cache_control: { type: "ephemeral" } }],
-      messages: mensajes,
-    });
-    const uso: Uso = {
-      entrada: res.usage.input_tokens,
-      salida: res.usage.output_tokens,
-      cacheLectura: res.usage.cache_read_input_tokens ?? 0,
-      cacheEscritura: res.usage.cache_creation_input_tokens ?? 0,
-    };
-    const texto = res.stop_reason === "refusal"
-      ? null
-      : res.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim() || null;
-    return { texto, modelo: res.model, uso, costoUsd: costoUsd(res.model, uso), parada: res.stop_reason ?? null };
+    const herramientas: Anthropic.Beta.BetaTool[] = (p.herramientas ?? []).map((h) => ({
+      name: h.nombre,
+      description: h.descripcion,
+      input_schema: { type: "object" as const, ...h.parametros },
+    }));
+    const uso: Uso = { entrada: 0, salida: 0, cacheLectura: 0, cacheEscritura: 0 };
+    const usadas: string[] = [];
+    let modeloServido = p.modelo;
+    let parada: string | null = null;
+
+    for (let ronda = 0; ronda <= RONDAS_MAX; ronda += 1) {
+      const res = await this.#client.beta.messages.create({
+        model: p.modelo,
+        max_tokens: p.maxSalida,
+        // Si un clasificador declina, el servidor reintenta en el modelo de respaldo dentro de la misma llamada.
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        thinking: { type: "adaptive" },
+        output_config: { effort: p.esfuerzo },
+        system: [{ type: "text", text: p.sistema, cache_control: { type: "ephemeral" } }],
+        ...(herramientas.length ? { tools: herramientas } : {}),
+        messages: mensajes,
+      });
+      uso.entrada += res.usage.input_tokens;
+      uso.salida += res.usage.output_tokens;
+      uso.cacheLectura += res.usage.cache_read_input_tokens ?? 0;
+      uso.cacheEscritura += res.usage.cache_creation_input_tokens ?? 0;
+      modeloServido = res.model;
+      parada = res.stop_reason ?? null;
+
+      if (res.stop_reason === "refusal") {
+        return { texto: null, modelo: modeloServido, uso, costoUsd: costoUsd(modeloServido, uso), parada, herramientasUsadas: usadas };
+      }
+      const pedidos = res.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
+      if (res.stop_reason !== "tool_use" || pedidos.length === 0 || !p.ejecutar) {
+        const texto = res.content.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim() || null;
+        return { texto, modelo: modeloServido, uso, costoUsd: costoUsd(modeloServido, uso), parada, herramientasUsadas: usadas };
+      }
+      // Ejecutar TODAS las herramientas pedidas y devolverlas en UN solo mensaje.
+      const resultados: Anthropic.Beta.BetaToolResultBlockParam[] = [];
+      for (const t of pedidos) {
+        usadas.push(t.name);
+        let salida: string;
+        let error = false;
+        try {
+          salida = await p.ejecutar(t.name, (t.input ?? {}) as Record<string, unknown>);
+        } catch (err) {
+          salida = `error: ${err instanceof Error ? err.message : String(err)}`;
+          error = true;
+        }
+        resultados.push({ type: "tool_result", tool_use_id: t.id, content: salida, ...(error ? { is_error: true } : {}) });
+      }
+      mensajes.push({ role: "assistant", content: res.content });
+      mensajes.push({ role: "user", content: resultados });
+    }
+    return { texto: null, modelo: modeloServido, uso, costoUsd: costoUsd(modeloServido, uso), parada: "rondas_agotadas", herramientasUsadas: usadas };
   }
 }

@@ -114,7 +114,7 @@ if (!openlines) {
 // Agente conversacional: razona en el orquestador con el proveedor del
 // tenant. Hoy un proveedor (Anthropic) con la llave de ANTHROPIC_API_KEY.
 const agente = process.env.ANTHROPIC_API_KEY?.trim()
-  ? new Agente({ repo, proveedores: { anthropic: new ProveedorAnthropic() } })
+  ? new Agente({ repo, proveedores: { anthropic: new ProveedorAnthropic() }, bitrix, monday, cripto, ...(openlines ? { openlines } : {}) })
   : undefined;
 if (!agente) console.warn("ANTHROPIC_API_KEY sin definir: los agentes quedan deshabilitados");
 
@@ -208,6 +208,7 @@ crearApp(repo, gestor, {
   provisioning,
   version,
   ...(adminKey ? { adminKey } : {}),
+  cripto,
 }).listen(puerto, () => {
   console.log(`orquestador escuchando en :${puerto} (versión ${version})`);
   // Ya con el puerto abierto: ¿los contenedores rehidratados alcanzan al

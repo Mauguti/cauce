@@ -4,6 +4,7 @@ import type { TenantId } from "@cauce/core";
 import type { Repositorio } from "./store.ts";
 import { SesionNoCerrada, type GestorSesiones } from "./sesiones.ts";
 import { autenticar } from "./auth.ts";
+import type { Cripto } from "./cripto.ts";
 import type { ColaEnvios } from "./cola.ts";
 import type { ConectorMonday } from "./monday/conector.ts";
 import type { ConectorBitrix } from "./bitrix/conector.ts";
@@ -78,6 +79,8 @@ export interface AppOpciones {
   provisioning?: Provisioning;
   /** Clave del endpoint admin de cambio de plan. */
   adminKey?: string;
+  /** Cifrado de secretos (tokens de herramientas del agente). */
+  cripto?: Cripto;
   /** Versión desplegada (commit corto); se expone en /health. */
   version?: string;
 }
@@ -1247,7 +1250,25 @@ export function crearApp(
     const esfuerzo = ["low", "medium", "high"].includes(b.esfuerzo) ? b.esfuerzo : tenant.agente?.esfuerzo ?? "low";
     const maxSalida = Number.isInteger(b.maxSalida) && b.maxSalida > 0 ? b.maxSalida : tenant.agente?.maxSalida ?? 600;
     const instrucciones = typeof b.instrucciones === "string" ? b.instrucciones : tenant.agente?.instrucciones ?? null;
-    const agente = { activo: b.activo !== false, nombre, proveedor: "anthropic" as const, modelo, esfuerzo, maxSalida, instrucciones };
+    // Herramientas por webhook: [{nombre, descripcion, url, parametros?, token?}]. El token se guarda cifrado.
+    let herramientas = tenant.agente?.herramientas ?? [];
+    if (Array.isArray(b.herramientas)) {
+      const cripto = opciones.cripto;
+      herramientas = [];
+      for (const h of b.herramientas) {
+        if (typeof h?.nombre !== "string" || !/^[a-z][a-z0-9_]{1,40}$/.test(h.nombre) || typeof h?.descripcion !== "string" || typeof h?.url !== "string" || !h.url.startsWith("https://")) {
+          res.status(400).json({ error: "cada herramienta necesita nombre (snake_case), descripcion y url https" });
+          return;
+        }
+        const previa = tenant.agente?.herramientas?.find((x) => x.nombre === h.nombre);
+        herramientas.push({
+          nombre: h.nombre, descripcion: h.descripcion, url: h.url,
+          ...(h.parametros && typeof h.parametros === "object" ? { parametros: h.parametros } : {}),
+          tokenCifrado: typeof h.token === "string" && h.token ? (cripto ? cripto.cifrar(h.token) : null) : previa?.tokenCifrado ?? null,
+        });
+      }
+    }
+    const agente = { activo: b.activo !== false, nombre, proveedor: "anthropic" as const, modelo, esfuerzo, maxSalida, instrucciones, herramientas };
     await repo.saveTenant({ ...tenant, agente });
     registrar("agente.configurado", { tenant: tenant.id, agente: nombre, modelo, esfuerzo, activo: agente.activo, capacidad: tieneCapacidad(tenant, "agentes") ? "agentes ok" : "el plan NO incluye agentes" });
     res.json({ tenantId: tenant.id, agente, tieneCapacidadAgentes: tieneCapacidad(tenant, "agentes") });
