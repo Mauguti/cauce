@@ -300,13 +300,44 @@ respuesta del agente la renueva. Bitácora: `bots.pausados_por_operador`.
 
 ---
 
-## 6. imbot (solo Pro, opcional, pendiente de decisión)
+## 6. Bots y agente: cómo se prueban y cómo se ven en Bitrix
 
-No hacerlo en Procesa hasta cerrar la prueba de visibilidad del dogfooding
-(decisión A o C). Cuando se haga: `POST
-/api/tenants/<t>/conectores/bitrix-openlines/bot` (capacidad `bots`) →
-`openlines.bot_registrado tenant=<t> botId=<n>`. Luego cada respuesta de bot
-se refleja en el chat del agente: `openlines.bot_reflejado`.
+Cada entrante deja **una** línea `entrada.respuesta` con lo que pasó:
+`origen="disparador:<id>"`, `"ninguno de N coincidió"`, `"sin disparadores
+configurados"`, `"plan sin bots"`, `"…; agente respondió"` o `"ventana humana
+hasta …"`. Si no hay respuesta automática, esa línea dice por qué; no hay
+que adivinar. **No existe ningún filtro por remitente propio**: un mensaje
+desde otra línea del mismo tenant entra como cualquier otro (solo se
+descartan los `fromMe` y los chats de grupo).
+
+Condiciones para que un bot o el agente contesten: plan con la capacidad
+(`bots` en Estándar y Pro; `agentes` solo en Pro) y que la conversación no
+esté en **ventana humana**: si un operador respondió desde Bitrix en los
+últimos 30 min, los bots callan en esa conversación y la línea lo dice.
+
+**Reflejo en el chat del operador (visibilidad del bot).** Para que lo que
+contestó el bot o el agente se vea en el diálogo de Bitrix:
+
+1. Registrar el bot del tenant: `POST /api/tenants/<t>/conectores/bitrix-openlines/bot`
+   → `openlines.bot_registrado botId=<n>`.
+2. **Conectarlo a la línea abierta en Bitrix**: Contact Center → Canales
+   abiertos → editar la línea → bloque **Chatbot** → elegir "Bot · Digsol
+   Factory". Sin este paso Bitrix responde "No puede enviar mensajes al
+   chat especificado": el bot existe pero no está en el diálogo.
+3. En ese bloque, que el bot **no retenga la conversación**: que se sume
+   a cada diálogo y la deje en cuanto un operador conteste. Nuestro
+   orquestador es quien responde por WhatsApp; el bot de Bitrix es solo el
+   espejo.
+
+Bitácora que confirma: `openlines.bot_reflejado … metodo=imopenlines.bot.session.message.send`
+(el método de chatbots de Open Channels) o `metodo=imbot.message.add` si
+entró por el genérico. Si sale `error openlines.bot_reflejado` con los dos
+métodos, el paso 2 falta.
+
+La prueba de rebote: el teléfono del contacto debe recibir la respuesta
+**una sola vez**. Un segundo envío aparecería como
+`openlines.operador … motivo="mensaje del propio bot"` ignorado; si el
+contacto la recibiera dos veces, se retira el bot y se cierra en C.
 
 ---
 

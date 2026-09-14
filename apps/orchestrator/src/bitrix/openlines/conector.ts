@@ -675,11 +675,22 @@ export class ConectorOpenlines {
     const conv = await this.#repo.getConversacion(tenantId, instanceId, telefono.replace(/[^\d]/g, ""));
     const imChatId = conv?.bitrixOpenLine?.chatId ? Number(conv.bitrixOpenLine.chatId) : null;
     if (!imChatId) return;
+    // Primero el método de chatbots de Open Channels; si Bitrix lo rechaza,
+    // el genérico de imbot. La bitácora dice cuál entró: es la prueba de
+    // visibilidad, y decide A o C sin otro despliegue.
+    const cliente = this.#cliente(tenantId, doc);
+    const base = { tenant: tenantId, instancia: instanceId, chatBitrix: imChatId, botId: doc.botId };
     try {
-      await this.#cliente(tenantId, doc).mensajeDeBot({ botId: doc.botId, imChatId, texto: `🤖 ${texto}` });
-      registrar("openlines.bot_reflejado", { tenant: tenantId, instancia: instanceId, chatBitrix: imChatId });
-    } catch (err) {
-      registrarError("openlines.bot_reflejado", err, { tenant: tenantId, instancia: instanceId });
+      await cliente.mensajeDeBotEnSesion({ imChatId, texto: `🤖 ${texto}` });
+      registrar("openlines.bot_reflejado", { ...base, metodo: "imopenlines.bot.session.message.send" });
+      return;
+    } catch (err1) {
+      try {
+        await cliente.mensajeDeBot({ botId: doc.botId, imChatId, texto: `🤖 ${texto}` });
+        registrar("openlines.bot_reflejado", { ...base, metodo: "imbot.message.add", nota: `session.message.send falló: ${err1 instanceof Error ? err1.message : String(err1)}` });
+      } catch (err2) {
+        registrarError("openlines.bot_reflejado", err2, { ...base, errorSesion: err1 instanceof Error ? err1.message : String(err1) });
+      }
     }
   }
 

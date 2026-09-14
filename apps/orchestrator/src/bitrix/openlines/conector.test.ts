@@ -495,6 +495,22 @@ describe("nombre por línea", () => {
   });
 });
 
+describe("reflejo del bot en el chat del operador", () => {
+  it("usa imopenlines.bot.session.message.send con CHAT_ID numérico y, si falla, imbot.message.add con chatNN; la bitácora dice cuál", async () => {
+    const c = armar();
+    const bitacora = capturarBitacora();
+    await instalarYAsignar(c);
+    const doc = (await c.repo.getOpenlinesBitrix("t1"))!;
+    await c.repo.saveOpenlinesBitrix("t1", { ...doc, botId: 324 });
+    await c.conector.entrante("t1", "i1", entrante("i1", "in-b")); // vincula chatBitrix 901
+    await c.conector.reflejarBot("t1", "i1", "+5214428575347", "hola desde el bot");
+    const sesion = c.llamadas.find((l) => l.metodo === "imopenlines.bot.session.message.send")!;
+    expect(sesion.body).toMatchObject({ CHAT_ID: 901, NAME: "DEFAULT", MESSAGE: "🤖 hola desde el bot" });
+    expect(c.llamadas.some((l) => l.metodo === "imbot.message.add")).toBe(false);
+    expect(bitacora.at(-1)).toMatch(/openlines\.bot_reflejado .*metodo=imopenlines\.bot\.session\.message\.send/);
+  });
+});
+
 describe("formatearNumero", () => {
   it("agrupa a la mexicana con o sin el 1 de WhatsApp", () => {
     expect(formatearNumero("+5214428575347")).toBe("+521 442 857 5347");

@@ -280,7 +280,17 @@ export class ClienteOpenlines {
     });
   }
 
-  /** Escribe en el chat de la sesión del lado interno (operador). */
+  /**
+   * Escribe como bot en el diálogo de una línea abierta. Es el método que
+   * la doc de Bitrix da para chatbots de Open Channels
+   * (imopenlines.bot.session.message.send, CHAT_ID numérico); exige que
+   * el bot esté conectado a la línea en su bloque de chatbot.
+   */
+  mensajeDeBotEnSesion(o: { imChatId: number; texto: string }) {
+    return this.llamar("imopenlines.bot.session.message.send", { CHAT_ID: o.imChatId, NAME: "DEFAULT", MESSAGE: o.texto });
+  }
+
+  /** Escribe como bot en un chat del que el bot ya es miembro (imbot.message.add, DIALOG_ID chatNN). */
   mensajeDeBot(o: { botId: number; imChatId: number; texto: string }) {
     return this.llamar("imbot.message.add", { BOT_ID: o.botId, DIALOG_ID: `chat${o.imChatId}`, MESSAGE: o.texto });
   }
