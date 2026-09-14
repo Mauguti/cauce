@@ -428,6 +428,114 @@ Debe responder `{"ok":true}`.
    exactamente la Hosting URL (sin barra final).
 3. Abre la consola, entra con tu cuenta y crea una sesión.
 
+### 2.8 Redimensionar la EC2 de México (t3.small → t3.large)
+
+Por qué: 324 MiB por sesión de Evolution; una t3.small (2 GiB) aguanta 3–4
+líneas y Procesa sola necesita 7. La t3.large (8 GiB) da ~18 líneas.
+Costo on-demand en mx-central-1: t3.small 15.91 → t3.large 63.80 USD/mes.
+Se hace **antes** de la tanda piloto de Procesa, no después.
+
+Qué sobrevive al stop/start: el disco raíz (EBS) con `/opt/factory`,
+`/etc/factory.env`, Caddy y sus certificados; los volúmenes de Docker
+(`cauce-db-data` y un volumen de estado por instancia). Los contenedores
+tienen `RestartPolicy: unless-stopped` y el orquestador rehidrata las
+sesiones desde los labels de los contenedores al arrancar
+(`instancia.rehidratar`). **No hay reescaneo de QR** si todo eso se
+cumple; el paso 0 lo verifica antes de apagar nada.
+
+Corte esperado: 5–10 min. Los mensajes que lleguen a los números en ese
+hueco llegan al teléfono, pero no se capturan.
+
+#### 0. Antes de apagar (5 min, todo de solo lectura)
+
+```bash
+# En la EC2
+free -m                                        # RAM actual: ~1.86 GiB total
+docker ps --format '{{.Names}}\t{{.Status}}'   # anotar cuántos contenedores y cuáles
+systemctl is-enabled factory docker caddy      # los tres deben decir "enabled"
+docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' $(docker ps -q)  # todos "unless-stopped"
+curl -s https://api.factory.digsol.com.mx/health  # anotar la versión
+```
+
+```bash
+# Desde tu máquina, con la CLI de AWS (perfil de la cuenta)
+aws ec2 describe-instances --instance-ids <i-xxxx> --region mx-central-1 \
+  --query 'Reservations[0].Instances[0].[InstanceType,State.Name,PublicIpAddress]'
+aws ec2 describe-addresses --region mx-central-1 \
+  --filters Name=instance-id,Values=<i-xxxx> --query 'Addresses[0].PublicIp'
+```
+
+**Si `describe-addresses` devuelve vacío, la IP pública NO es elástica y
+cambiará al arrancar.** Antes de seguir: asignar una Elastic IP y
+asociarla a la instancia (`aws ec2 allocate-address` +
+`aws ec2 associate-address`), y apuntar el registro A de
+`api.factory.digsol.com.mx` a esa IP. Sin esto, el dominio queda muerto
+tras el start y Caddy no puede renovar certificados.
+
+Verificar también que la instancia está en modo de créditos `unlimited`
+(default en t3; evita que 8 sesiones reconectando a la vez la dejen sin
+CPU):
+
+```bash
+aws ec2 describe-instance-credit-specifications --instance-ids <i-xxxx> --region mx-central-1
+```
+
+#### 1. Apagar en orden
+
+```bash
+# En la EC2: parar el orquestador primero para que no acepte trabajo a medias
+sudo systemctl stop factory
+```
+
+```bash
+# Desde tu máquina
+aws ec2 stop-instances --instance-ids <i-xxxx> --region mx-central-1
+aws ec2 wait instance-stopped --instance-ids <i-xxxx> --region mx-central-1
+```
+
+#### 2. Cambiar el tipo y arrancar
+
+```bash
+aws ec2 modify-instance-attribute --instance-id <i-xxxx> --region mx-central-1 \
+  --instance-type '{"Value":"t3.large"}'
+aws ec2 start-instances --instance-ids <i-xxxx> --region mx-central-1
+aws ec2 wait instance-status-ok --instance-ids <i-xxxx> --region mx-central-1
+```
+
+#### 3. Al volver, en este orden
+
+```bash
+# En la EC2
+free -m                                        # total ≈ 7.7 GiB
+systemctl status docker caddy factory --no-pager | grep -E 'Active|●'
+docker ps --format '{{.Names}}\t{{.Status}}'   # los mismos contenedores del paso 0, todos "Up"
+journalctl -u factory --since "10 min ago" -o cat | grep -E 'instancia\.rehidratar|webhook\.alcance|error'
+curl -s https://api.factory.digsol.com.mx/health  # misma versión del paso 0
+```
+
+Luego, desde la plataforma:
+
+1. **Sesiones**: la línea de Digsol en punto sólido verde **sin** volver a
+   escanear. Si aparece "sin sesión viva" o pide QR, esperar 2 min (la
+   reconexión de Evolution tarda) y recargar antes de asumir que se perdió.
+2. **Mensaje de prueba** desde el panel de Sesiones al teléfono de control:
+   `envio.enviado` en bitácora y estado entregado en Trazabilidad →
+   Mensajes.
+3. Si hay canal abierto activo: WhatsApp de entrada al número →
+   `openlines.entrante … resultado=ok`.
+
+#### 4. Si algo no vuelve
+
+- **Contenedor ausente en `docker ps`**: `docker ps -a` para ver si quedó
+  `Exited`; `docker start <nombre>` y revisar `docker logs`. Reportar el
+  caso al dev: el `unless-stopped` debió levantarlo.
+- **Sesión pide QR**: la sesión de WhatsApp se invalidó. Reescanear desde
+  Sesiones; el número no cambia ni pierde nada del lado del teléfono.
+- **Dominio no responde**: la IP cambió (paso 0 omitido). Actualizar el
+  registro A y esperar el TTL; o asociar la Elastic IP anterior.
+- **Rollback**: mismo procedimiento con `t3.small`. No hay cambios de
+  datos que deshacer.
+
 ## 3. Despliegue sin desfase — `scripts/deploy.sh`
 
 Consola y orquestador se despliegan por separado; si quedan en
