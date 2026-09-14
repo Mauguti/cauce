@@ -87,6 +87,16 @@ export function crearApp(
   opciones: AppOpciones = {},
 ): express.Express {
   const app = express();
+  // Toda petición que tarde más de 5 s deja línea: cuando la plataforma
+  // reporte "el orquestador tardó demasiado" (20 s), aquí está cuál fue.
+  app.use((req, res, next) => {
+    const inicio = process.hrtime.bigint();
+    res.on("finish", () => {
+      const ms = Number((process.hrtime.bigint() - inicio) / 1_000_000n);
+      if (ms >= 5_000) registrar("http.lenta", { metodo: req.method, ruta: req.originalUrl.split("?")[0], status: res.statusCode, ms }, "warn");
+    });
+    next();
+  });
   app.use(express.json({ limit: "1mb" }));
   // Bitrix24 manda sus webhooks salientes como form-urlencoded con claves
   // anidadas (data[FIELDS][ID], auth[application_token]); extended:true las

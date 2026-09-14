@@ -123,6 +123,8 @@ export class ConectorOpenlines {
   readonly #dormir: (ms: number) => Promise<void>;
   readonly #sesionViva: (instanceId: InstanceId) => boolean;
   readonly #ahora: () => number;
+  /** Nombres de líneas abiertas por tenant, 60 s: la tabla se abre seguido y Bitrix no es rápido. */
+  readonly #nombresLineas = new Map<TenantId, { hasta: number; nombres: Map<number, string> }>();
 
   constructor(opciones: {
     repo: Repositorio;
@@ -217,11 +219,12 @@ export class ConectorOpenlines {
     return JSON.parse(this.#cripto.descifrar(doc.tokensCifrados)) as TokensOAuth;
   }
 
-  #cliente(tenantId: TenantId, doc: OpenlinesBitrixDoc): ClienteOpenlines {
+  #cliente(tenantId: TenantId, doc: OpenlinesBitrixDoc, timeoutMs?: number): ClienteOpenlines {
     return new ClienteOpenlines({
       tokens: this.#tokens(doc),
       credenciales: this.#credenciales(doc),
       ...(this.#fetch ? { fetchImpl: this.#fetch } : {}),
+      ...(timeoutMs ? { timeoutMs } : {}),
       alRenovar: async (t) => {
         const actual = (await this.#doc(tenantId)) ?? doc;
         await this.#repo.saveOpenlinesBitrix(tenantId, {
@@ -342,11 +345,18 @@ export class ConectorOpenlines {
     let nombres = new Map<number, string>();
     let lineasAbiertasError: string | null = null;
     if (doc?.tokensCifrados) {
-      try {
-        nombres = new Map((await this.#cliente(tenantId, doc).listarLineasAbiertas()).map((l) => [l.id, l.nombre]));
-      } catch (err) {
-        lineasAbiertasError = err instanceof Error ? err.message : String(err);
-        registrarError("openlines.lineas_abiertas", err, { tenant: tenantId });
+      const cache = this.#nombresLineas.get(tenantId);
+      if (cache && cache.hasta > this.#ahora()) {
+        nombres = cache.nombres;
+      } else {
+        try {
+          // Best-effort y con tiempo límite corto: la tabla no debe esperar a Bitrix.
+          nombres = new Map((await this.#cliente(tenantId, doc, 5_000).listarLineasAbiertas()).map((l) => [l.id, l.nombre]));
+          this.#nombresLineas.set(tenantId, { hasta: this.#ahora() + 60_000, nombres });
+        } catch (err) {
+          lineasAbiertasError = err instanceof Error ? err.message : String(err);
+          registrarError("openlines.lineas_abiertas", err, { tenant: tenantId });
+        }
       }
     }
     const lineas = instancias.map((i): LineaResumen => {
