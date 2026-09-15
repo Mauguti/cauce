@@ -118,6 +118,8 @@ export interface Tenant {
   canalAbierto?: CanalAbiertoConfig | null;
   /** Agente conversacional del tenant (Santiago). Ausente/null = sin agente. Exige la capacidad `agentes`. */
   agente?: AgenteConfig | null;
+  /** Cobro: método de pago, periodo y contratación. Ausente = transferencia, como hasta ahora. */
+  cobro?: CobroConfig | null;
   /** @deprecated Migrado a `limitesOverride.lineas`. Se lee solo por compatibilidad. */
   limiteLineas?: number;
   /** @deprecated Migrado a `limitesOverride.conectores`. Se lee solo por compatibilidad. */
@@ -295,6 +297,123 @@ export interface Atribucion {
   /** Anuncio click-to-WhatsApp (contextInfo.externalAdReply), tal como llegó. */
   anuncio: { titulo: string | null; cuerpo: string | null; sourceUrl: string | null; sourceId: string | null; sourceType: string | null; ctwaClid: string | null } | null;
   capturadaEn: string;
+}
+
+export type PeriodoCobro = "mensual" | "semestral" | "anual";
+
+/** Cómo y cuánto se le cobra al tenant. Los montos NO viven aquí: salen de la foto de precios. */
+export interface CobroConfig {
+  modo: "tarjeta" | "transferencia";
+  periodo: PeriodoCobro;
+  /** Líneas TOTALES contratadas (adicionales = total − incluidas). Ausente = 1. */
+  lineasContratadas?: number;
+  /** Agentes contratados en total (adicionales = contratados − incluidos en Pro). Ausente = los del plan. */
+  agentesContratados?: number;
+  stripeCustomerId?: string | null;
+  metodo?: { id: string; marca: string; ultimos4: string; vence: string } | null;
+  /** Estado del cobro del corte en curso; se limpia al registrar el pago. */
+  intentos?: {
+    corte: string;
+    fallos: number;
+    ultimoError: string | null;
+    ultimoIntentoEn: string | null;
+    /** El banco pidió autenticación fuera de sesión: client_secret del PaymentIntent para confirmarlo desde la plataforma. */
+    requiereAccion?: string | null;
+    agotado?: boolean;
+  } | null;
+  actualizadoEn: string;
+}
+
+/**
+ * Fila del ledger de pagos (`tenants/{t}/pagos/{id}`). APPEND-ONLY: un
+ * reembolso es una fila negativa, nunca un borrado. Es la única verdad
+ * sobre quién está al corriente; `pagadoHasta` se deriva de aquí y solo
+ * lo escribe registrarPago.
+ */
+export interface Pago {
+  id: string;
+  tenantId: TenantId;
+  fuente: "stripe" | "transferencia";
+  tipo: "pago" | "reembolso";
+  /** pi_… / re_… de Stripe, o folio de la transferencia. Idempotente. */
+  referencia: string;
+  /** MXN con IVA; negativo en reembolsos. */
+  montoMxn: number;
+  periodo: PeriodoCobro | null;
+  /** Meses que cubre (negativo en reembolsos: los que recorta). */
+  meses: number;
+  pagadoHastaAntes: string | null;
+  pagadoHastaDespues: string;
+  registradoPor: string;
+  /** Con qué precios se calculó (hash de precios.json y cuándo se leyó); null en transferencias. */
+  fotoPrecios: { hash: string; leidoEn: string } | null;
+  /** Previsto para el PAC: nace pendiente; la emisión se dispara con el pago, sea tarjeta o transferencia. */
+  cfdi: { estado: "pendiente" | "emitida" | "no_aplica"; uuid?: string | null; emitidaEn?: string | null };
+  detalle?: Record<string, unknown>;
+  en: string;
+}
+
+/**
+ * Foto de precios que publica la plataforma (`precios.json`, generado
+ * desde lib/precios.ts, la única fuente). El orquestador nunca los tiene
+ * en código: sin foto leída, no cobra.
+ */
+export interface FotoPrecios {
+  version: string;
+  IVA: number;
+  PRECIO_PLAN: Record<"basico" | "estandar" | "pro", number>;
+  LINEAS_INCLUIDAS: number;
+  LINEA_ADICIONAL: { precioHasta4: number; precioDesde5: number; umbral: number };
+  AGENTE: { incluidosEnPro: number; bolsaApiMensual: number; adicional: number };
+  PERIODOS: Record<PeriodoCobro, { nombre: string; meses: number; descuento: number }>;
+}
+
+export interface DesgloseCobro {
+  plan: "basico" | "estandar" | "pro";
+  periodo: PeriodoCobro;
+  meses: number;
+  descuento: number;
+  lineasTotales: number;
+  lineasAdicionales: number;
+  precioLineaAdicional: number;
+  agentesAdicionales: number;
+  subtotalMensual: number;
+  subtotalPeriodo: number;
+  iva: number;
+  /** Total con IVA, en pesos con dos decimales. */
+  total: number;
+  /** Total en centavos, lo que se manda a Stripe. */
+  centavos: number;
+}
+
+/**
+ * Lo que se cobra en un corte. Misma regla que lib/precios.ts (los VALORES
+ * vienen de la foto; la regla del escalón por volumen se replica aquí y se
+ * prueba contra los mismos números: 7 líneas totales en Estándar = 3,773).
+ */
+export function calcularCobro(f: FotoPrecios, o: { plan: "basico" | "estandar" | "pro"; lineasTotales: number; agentesAdicionales: number; periodo: PeriodoCobro }): DesgloseCobro {
+  const lineasTotales = Math.max(f.LINEAS_INCLUIDAS, Math.floor(o.lineasTotales));
+  const lineasAdicionales = lineasTotales - f.LINEAS_INCLUIDAS;
+  const precioLineaAdicional = lineasAdicionales >= f.LINEA_ADICIONAL.umbral ? f.LINEA_ADICIONAL.precioDesde5 : f.LINEA_ADICIONAL.precioHasta4;
+  const agentesAdicionales = Math.max(0, Math.floor(o.agentesAdicionales));
+  const subtotalMensual = f.PRECIO_PLAN[o.plan] + lineasAdicionales * precioLineaAdicional + agentesAdicionales * f.AGENTE.adicional;
+  const p = f.PERIODOS[o.periodo];
+  const subtotalPeriodo = Math.round(subtotalMensual * p.meses * (1 - p.descuento) * 100) / 100;
+  const iva = Math.round(subtotalPeriodo * f.IVA * 100) / 100;
+  const total = Math.round((subtotalPeriodo + iva) * 100) / 100;
+  return { plan: o.plan, periodo: o.periodo, meses: p.meses, descuento: p.descuento, lineasTotales, lineasAdicionales, precioLineaAdicional, agentesAdicionales, subtotalMensual, subtotalPeriodo, iva, total, centavos: Math.round(total * 100) };
+}
+
+/** Suma meses calendario a una fecha ISO. */
+export function sumarMeses(iso: string, meses: number): string {
+  const d = new Date(iso);
+  const dia = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() + meses);
+  // 31-ene + 1 mes = 28/29-feb, no 3-mar: se recorta al último día del mes destino.
+  const ultimo = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(dia, ultimo));
+  return d.toISOString();
 }
 
 export type EstadoPago = "prueba" | "al_corriente" | "vencido";
@@ -656,4 +775,7 @@ export const rutas = {
   /** Consumo de agentes por mes (YYYY-MM): agregado en el doc, llamadas en la subcolección. */
   consumoMes: (tenantId: TenantId, mes: string) => `tenants/${tenantId}/consumo/${mes}`,
   consumoLlamadas: (tenantId: TenantId, mes: string) => `tenants/${tenantId}/consumo/${mes}/llamadas`,
+  /** Ledger de pagos, append-only. */
+  pagos: (tenantId: TenantId) => `tenants/${tenantId}/pagos`,
+  pago: (tenantId: TenantId, pagoId: string) => `tenants/${tenantId}/pagos/${pagoId}`,
 } as const;

@@ -1,6 +1,7 @@
 import type {
   Atribucion,
   Conocimiento,
+  Pago,
   Conversacion,
   Instance,
   InstanceId,
@@ -57,6 +58,12 @@ export interface Repositorio {
   listConsumo(tenantId: TenantId, mes: string): Promise<RegistroConsumo[]>;
   /** El agente traspasó la conversación a una persona. */
   marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void>;
+  // Ledger de pagos. guardarPago es la ÚNICA escritura de pagadoHasta/cicloCorteEn:
+  // atómica con la fila del ledger e idempotente por id (fuente + referencia).
+  // Devuelve false si la fila ya existía (nada se escribe).
+  guardarPago(pago: Pago, tenant: Pick<Tenant, "pagadoHasta" | "cicloCorteEn">): Promise<boolean>;
+  listPagos(tenantId: TenantId): Promise<Pago[]>;
+  getPago(tenantId: TenantId, pagoId: string): Promise<Pago | null>;
   /** Atribución de campaña de la conversación; solo se escribe una vez (primer contacto). */
   marcarAtribucion(tenantId: TenantId, instanceId: InstanceId, telefono: string, atribucion: Atribucion): Promise<void>;
   /** ¿Este número es una línea conectada de ALGÚN tenant? (anti-bucle entre agentes). */
@@ -420,6 +427,27 @@ export class RepositorioEnMemoria implements Repositorio {
 
   async marcarAtribucion(tenantId: TenantId, instanceId: InstanceId, telefono: string, atribucion: Atribucion): Promise<void> {
     this.#fusionarConversacion(tenantId, instanceId, telefono, { atribucion });
+  }
+
+  #pagos = new Map<TenantId, Map<string, Pago>>();
+
+  async guardarPago(pago: Pago, tenant: Pick<Tenant, "pagadoHasta" | "cicloCorteEn">): Promise<boolean> {
+    const porTenant = this.#pagos.get(pago.tenantId) ?? new Map<string, Pago>();
+    if (porTenant.has(pago.id)) return false;
+    const t = this.#tenants.get(pago.tenantId);
+    if (!t) throw new Error(`tenant ${pago.tenantId} no existe`);
+    porTenant.set(pago.id, pago);
+    this.#pagos.set(pago.tenantId, porTenant);
+    this.#tenants.set(pago.tenantId, { ...t, pagadoHasta: tenant.pagadoHasta ?? null, cicloCorteEn: tenant.cicloCorteEn ?? null });
+    return true;
+  }
+
+  async listPagos(tenantId: TenantId): Promise<Pago[]> {
+    return [...(this.#pagos.get(tenantId)?.values() ?? [])].sort((a, b) => b.en.localeCompare(a.en));
+  }
+
+  async getPago(tenantId: TenantId, pagoId: string): Promise<Pago | null> {
+    return this.#pagos.get(tenantId)?.get(pagoId) ?? null;
   }
 
   async buscarInstanciaPorNumero(telefono: string): Promise<{ tenantId: TenantId; instanceId: InstanceId } | null> {

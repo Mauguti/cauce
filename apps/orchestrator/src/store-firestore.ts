@@ -10,6 +10,7 @@ import {
   type Conocimiento,
   type RegistroConsumo,
   type Atribucion,
+  type Pago,
 } from "@cauce/core";
 import { variantesNumero, type Repositorio } from "./store.ts";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
@@ -144,6 +145,28 @@ export class RepositorioFirestore implements Repositorio {
     batch.delete(this.#db.doc(rutas.instance(tenantId, instanceId)));
     if (previa?.numero) batch.delete(this.#db.doc(`numeros/${previa.numero.replace(/[^\d]/g, "")}`));
     await batch.commit();
+  }
+
+  async guardarPago(pago: Pago, tenant: Pick<Tenant, "pagadoHasta" | "cicloCorteEn">): Promise<boolean> {
+    const refPago = this.#db.doc(rutas.pago(pago.tenantId, pago.id));
+    const refTenant = this.#db.doc(rutas.tenant(pago.tenantId));
+    return this.#db.runTransaction(async (tx) => {
+      const existe = await tx.get(refPago);
+      if (existe.exists) return false;
+      tx.set(refPago, pago);
+      tx.set(refTenant, { pagadoHasta: tenant.pagadoHasta ?? null, cicloCorteEn: tenant.cicloCorteEn ?? null }, { merge: true });
+      return true;
+    });
+  }
+
+  async listPagos(tenantId: TenantId): Promise<Pago[]> {
+    const snap = await this.#db.collection(rutas.pagos(tenantId)).get();
+    return snap.docs.map((d) => d.data() as Pago).sort((a, b) => b.en.localeCompare(a.en));
+  }
+
+  async getPago(tenantId: TenantId, pagoId: string): Promise<Pago | null> {
+    const doc = await this.#db.doc(rutas.pago(tenantId, pagoId)).get();
+    return doc.exists ? (doc.data() as Pago) : null;
   }
 
   async marcarAtribucion(tenantId: TenantId, instanceId: InstanceId, telefono: string, atribucion: Atribucion): Promise<void> {

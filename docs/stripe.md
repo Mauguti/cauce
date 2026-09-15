@@ -1,4 +1,15 @@
-# Stripe: propuesta de diseño (15-sep-2026, pendiente de aprobación)
+# Stripe: diseño aprobado y construido (fase 1, 15-sep-2026)
+
+**Estado.** Fase 1 construida en el orquestador (`apps/orchestrator/src/cobro/`:
+`cobrador.ts`, `stripe.ts`, `precios.ts`, con pruebas) y en la plataforma
+(Billing). Condiciones de aprobación de Mau, todas en código o en este doc:
+(1) corrida completa en modo test sobre el tenant de Mau antes de cualquier
+llave live; el primer cobro real, Mau a sí mismo; (2) el webhook rechaza
+todo lo que no traiga firma válida de Stripe y registra el rechazo con
+motivo (`stripe.webhook_rechazado`), sin leer el cuerpo antes; (3) un
+reembolso es una fila negativa del ledger vía `registrarPago`, que recorta
+`pagadoHasta` los meses devueltos; (4) la verificación de la cuenta de
+Stripe México puede bloquear el modo live: lo revisa Mau.
 
 Cuenta de Stripe de Digsol, México, cobros en MXN. Alcance aprobado: método
 de pago por tenant con SetupIntent (3DS, sin cargo), cobro recurrente en
@@ -114,9 +125,15 @@ Lo que hace, siempre igual:
 1. Escribe una fila en `tenants/{t}/pagos/{id}`: ledger **append-only**. Si
    la referencia ya existe, no hace nada (un webhook reenviado o un
    admin que pega dos veces no duplican).
-2. Calcula el nuevo `pagadoHasta`: si el anterior está en el futuro,
-   suma los meses del periodo desde ahí (renovación); si ya pasó, desde
-   la fecha del pago (regularización). `cicloCorteEn = pagadoHasta`.
+2. Calcula el nuevo `pagadoHasta`: si el anterior sigue vigente **o venció
+   dentro de la gracia (10 días)**, suma los meses del periodo desde ahí
+   (renovación: el corte cobrado el mismo día no pierde horas y pagar
+   tarde dentro de la gracia no regala días); si lleva más tiempo
+   vencido, desde la fecha del pago (regularización).
+   `cicloCorteEn = pagadoHasta`. Un reembolso resta sus meses desde
+   `pagadoHasta` (completo = todos los meses del pago original; parcial,
+   en proporción al monto, redondeado al mes; menos de medio mes deja la
+   fecha y solo asienta la fila).
 3. Bitácora `pago.registrado` con fuente, referencia y hasta cuándo.
 
 **Stripe entra por el webhook** `payment_intent.succeeded`, con firma
@@ -130,6 +147,24 @@ ledger y en el mismo campo. `estadoPago` sigue derivándose de
 Billing muestra el ledger: fecha, fuente (tarjeta · transferencia),
 monto, periodo cubierto, referencia. Esa lista es la única verdad sobre
 quién está al corriente, para el cliente y para Mau.
+
+**Rutas.** Tenant (auth de tenant): `GET /api/tenants/:t/cobro` (modo,
+periodo, contratación, tarjeta enmascarada, intentos, próximo cobro
+cotizado con hash de la foto; nunca `cus_`/`pm_`), `PUT /cobro` (periodo,
+líneas y agentes contratados, modo; `tarjeta` exige tarjeta guardada →
+409), `POST /cobro/setup-intent` (`client_secret` para Elements),
+`GET /pagos` (ledger). Admin (`x-admin-key`):
+`POST /api/admin/tenants/:t/pago` con `{folio, montoMxn, periodo,
+registradoPor}` (ya no acepta `pagadoHasta`), `POST /reembolso` con
+`{referencia, referenciaPago, montoMxn, fuente, registradoPor}`. Público:
+`POST /webhooks/stripe` (cuerpo crudo, firma obligatoria).
+
+**Job.** `cobrarCortes` corre cada hora (la clave de idempotencia
+`tenant:cicloCorteEn` hace inocuo correrlo seguido); el calendario
+0/+3/+7 se mide en días desde el corte. Solo cobra a tenants `activo`, con
+`cobro.modo = tarjeta`, tarjeta guardada, plan cobrable y corte vencido.
+Bitácora: `cobro.exitoso|fallido|agotado|requiere_accion|en_proceso|
+sin_precios|no_cobrable`, `pago.registrado`, `stripe.webhook`.
 
 ## CFDI: previsto, no construido
 
@@ -157,8 +192,30 @@ haya elegido; sin elección, no cobra y queda en solo lectura como hoy.
    sin acceso), a `/etc/factory.env`. Nunca por chat.
 2. Endpoint de webhook `https://api.factory.digsol.com.mx/webhooks/stripe`
    con `setup_intent.succeeded`, `payment_intent.succeeded`,
-   `payment_intent.payment_failed`, `payment_method.detached`; su secreto
-   al mismo archivo.
+   `payment_intent.payment_failed`, `payment_method.detached`,
+   `refund.created`, `charge.refunded`; su secreto al mismo archivo.
+4. `CAUCE_PRECIOS_URL` apuntando al `precios.json` publicado por la
+   plataforma (ver docs/deploy.md).
+
+## Corrida en modo test (condición 1), paso a paso
+
+1. Llaves `sk_test_…` + `whsec_…` de prueba en `/etc/factory.env`,
+   `CAUCE_PRECIOS_URL` y `VITE_STRIPE_PUBLISHABLE_KEY` (`pk_test_…`) en el
+   build de la plataforma. `GET /health` debe decir `stripe: "test"`.
+2. En Billing del tenant de Mau: "Guardar tarjeta" con la tarjeta de
+   prueba `4242 4242 4242 4242`; aparece "visa •••• 4242" tras el webhook
+   `setup_intent.succeeded` (bitácora `cobro.metodo_guardado`).
+3. Elegir periodo y modo tarjeta; fijar `cicloCorteEn` en el pasado desde
+   el admin (o esperar al corte real). A la siguiente corrida del job:
+   `cobro.exitoso`, `pago.registrado`, fila en el ledger de Billing y
+   `pagadoHasta` movido un periodo.
+4. Repetir con la tarjeta `4000 0000 0000 0341` (falla al cobrar):
+   `cobro.fallido`, banner de vencido, reintento a +3/+7 y aviso por
+   WhatsApp al agotarse.
+5. Reembolsar el PaymentIntent desde el panel de Stripe: `refund.created`
+   → fila negativa y `pagadoHasta` recortado.
+6. Mandar un POST sin firma al webhook: 400 y `stripe.webhook_rechazado`.
+Solo entonces llaves live, y el primer cobro real Mau a sí mismo.
 3. Llave publicable al entorno del build de la plataforma.
 
 ## Estimado

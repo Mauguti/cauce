@@ -277,6 +277,29 @@ adjunto_no_soportado|bot_reflejado|token_renovado|evento_rechazado`.
 - `ANTHROPIC_API_KEY`: habilita los agentes. Sin ella, arrancan apagados y
   lo dice al inicio.
 
+### `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `CAUCE_PRECIOS_URL` — cobro con tarjeta
+
+Ver `docs/stripe.md`. Las tres van en `/etc/factory.env`; ninguna en el
+repo ni por chat.
+
+- `STRIPE_SECRET_KEY`: llave **restringida** (customers, payment_methods,
+  setup_intents, payment_intents: escritura). El prefijo `sk_test_` /
+  `sk_live_` decide el modo; `/health` lo expone en `stripe: test|live|null`.
+- `STRIPE_WEBHOOK_SECRET`: secreto del endpoint
+  `https://api.factory.digsol.com.mx/webhooks/stripe` (eventos:
+  `setup_intent.succeeded`, `payment_intent.succeeded`,
+  `payment_intent.payment_failed`, `payment_method.detached`,
+  `refund.created`, `charge.refunded`). Sin las dos llaves, el cobro con
+  tarjeta queda apagado y el arranque lo dice; la transferencia por admin
+  sigue funcionando.
+- `CAUCE_PRECIOS_URL`: URL de `precios.json` que publica el build de la
+  plataforma (p. ej. `https://factory.digsol.com.mx/precios.json`). El
+  orquestador no tiene precios en código: **sin foto leída no cotiza ni
+  cobra** y lo registra (`precios.sin_url`, `cobro.sin_precios`). Si la
+  URL cae, usa la última foto leída (`precios.error usaCache=true`).
+- Los avisos de cobro agotado o tarjeta inválida salen por
+  `CAUCE_AVISOS_WHATSAPP`, desde la primera línea viva del tenant afectado.
+
 ### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)
 
 Dos orquestadores sobre el mismo proyecto Firebase compartirían la base

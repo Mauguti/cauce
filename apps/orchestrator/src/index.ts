@@ -18,6 +18,9 @@ import { ProveedorAnthropic } from "./agentes/proveedor.ts";
 import { Cripto } from "./cripto.ts";
 import { crearVerificadorToken } from "./firebase.ts";
 import { Provisioning } from "./provisioning.ts";
+import { Cobrador } from "./cobro/cobrador.ts";
+import { CargadorPrecios } from "./cobro/precios.ts";
+import { ClienteStripeReal } from "./cobro/stripe.ts";
 import { ConectorOpenlines } from "./bitrix/openlines/conector.ts";
 
 const puerto = Number(process.env.PORT ?? 3001);
@@ -129,6 +132,32 @@ const motorEntrada = new MotorEntrada({
   enviarInmediato: (t, i, tel, cuerpo, origen) => gestor.enviarDirecto(t, i, tel, cuerpo, origen),
 });
 
+// Cobro con tarjeta (docs/stripe.md). Las llaves viven en /etc/factory.env;
+// el prefijo sk_test_/sk_live_ decide el modo y /health lo expone. Los
+// precios se leen de la plataforma (CAUCE_PRECIOS_URL): sin foto, no se cobra.
+const stripeKey = process.env.STRIPE_SECRET_KEY?.trim();
+const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+const stripe = stripeKey && stripeWebhookSecret ? new ClienteStripeReal({ secretKey: stripeKey, webhookSecret: stripeWebhookSecret }) : null;
+if (!stripe) console.warn("STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET sin definir: el cobro con tarjeta queda deshabilitado (solo transferencia por admin)");
+const preciosUrl = process.env.CAUCE_PRECIOS_URL?.trim();
+if (!preciosUrl) console.warn("CAUCE_PRECIOS_URL sin definir: no se cotiza ni se cobra ningún corte");
+const avisosWhatsApp = process.env.CAUCE_AVISOS_WHATSAPP?.trim();
+const cobrador = new Cobrador({
+  repo,
+  stripe,
+  precios: new CargadorPrecios({ url: preciosUrl }),
+  // Aviso a Mau desde la primera línea viva del tenant afectado (mismo canal que el cortacircuitos); sin línea viva, solo bitácora.
+  ...(avisosWhatsApp
+    ? {
+        avisar: async (tenantId: string, texto: string) => {
+          const viva = (await repo.listInstances(tenantId)).find((i) => gestor.obtener(i.id) !== null);
+          if (!viva) throw new Error(`tenant ${tenantId} sin línea viva para avisar`);
+          await gestor.enviarDirecto(tenantId, viva.id, avisosWhatsApp, texto, "sistema");
+        },
+      }
+    : {}),
+});
+
 const verificarToken = crearVerificadorToken();
 const provisioning = new Provisioning(repo);
 const adminKey = process.env.CAUCE_ADMIN_KEY;
@@ -175,6 +204,19 @@ const aplicarPlanesPendientes = async () => {
 void aplicarPlanesPendientes();
 setInterval(aplicarPlanesPendientes, 5 * 60_000);
 
+// Cobro de cortes con tarjeta: cada hora (el calendario 0/+3/+7 es en días;
+// correr seguido no duplica: clave de idempotencia por tenant:corte).
+const cobrarCortes = async () => {
+  try {
+    const n = await cobrador.cobrarCortes();
+    if (n > 0) console.log(`cobros intentados: ${n}`);
+  } catch (err: any) {
+    console.warn(`cobro de cortes falló: ${err?.message}`);
+  }
+};
+setTimeout(() => { void cobrarCortes(); }, 60_000);
+setInterval(cobrarCortes, 60 * 60_000);
+
 /**
  * Versión desplegada para /health y el log de arranque. Si CAUCE_VERSION
  * viene vacía, se lee el HEAD de git del directorio del código: así
@@ -209,6 +251,7 @@ crearApp(repo, gestor, {
   version,
   ...(adminKey ? { adminKey } : {}),
   cripto,
+  cobrador,
   // Consumo en pesos: tipo de cambio con colchón. Se ajusta en /etc/factory.env sin tocar código.
   tipoCambio: {
     // Default revisado 15-sep-2026 (dólar a 17.13); se revisa cada mes, el peso se mueve.

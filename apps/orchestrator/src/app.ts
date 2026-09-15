@@ -13,6 +13,7 @@ import type { MotorEntrada } from "./entrada/motor.ts";
 import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 import type { VerificadorToken } from "./firebase.ts";
 import type { Provisioning } from "./provisioning.ts";
+import { ErrorCobro, ErrorFirmaStripe, type Cobrador } from "./cobro/cobrador.ts";
 import {
   churnReciente, limitesTenant, pruebaVigente, capacidadesTenant, tieneCapacidad,
   mensajeRequierePlan, soloLectura, planDe, normalizarPlan, esPlanConocido, esSubida,
@@ -85,6 +86,8 @@ export interface AppOpciones {
   tipoCambio?: { usdMxn: number; colchon: number };
   /** Versión desplegada (commit corto); se expone en /health. */
   version?: string;
+  /** Cobro con tarjeta (Stripe) y ledger de pagos; sin él, solo transferencia por admin. */
+  cobrador?: Cobrador;
 }
 
 export function crearApp(
@@ -103,6 +106,33 @@ export function crearApp(
     });
     next();
   });
+  /**
+   * Webhook de Stripe. Va ANTES de express.json: la firma se verifica sobre
+   * los bytes crudos y nada del cuerpo se cree antes de eso. Sin firma o con
+   * firma inválida: 400 y `stripe.webhook_rechazado` con motivo.
+   */
+  app.post("/webhooks/stripe", express.raw({ type: () => true, limit: "1mb" }), async (req, res) => {
+    const cobrador = opciones.cobrador;
+    const firma = req.headers["stripe-signature"];
+    const cuerpo = Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === "string" ? req.body : "");
+    if (!cobrador) {
+      registrar("stripe.webhook_rechazado", { motivo: "cobrador sin configurar", ip: req.ip ?? null }, "warn");
+      res.status(503).json({ error: "Stripe no configurado" });
+      return;
+    }
+    try {
+      const r = await cobrador.procesarWebhook(cuerpo, typeof firma === "string" ? firma : undefined, req.ip);
+      res.json(r);
+    } catch (err) {
+      if (err instanceof ErrorFirmaStripe) {
+        res.status(400).json({ error: "firma inválida" });
+        return;
+      }
+      registrarError("stripe.webhook_error", err, { ip: req.ip ?? null });
+      // 500: Stripe reintenta; registrarPago es idempotente.
+      res.status(500).json({ error: "error al procesar el evento" });
+    }
+  });
   app.use(express.json({ limit: "1mb" }));
   // Bitrix24 manda sus webhooks salientes como form-urlencoded con claves
   // anidadas (data[FIELDS][ID], auth[application_token]); extended:true las
@@ -114,7 +144,7 @@ export function crearApp(
   // desfases consola↔orquestador (ver docs/deploy.md, scripts/deploy.sh).
   const version = opciones.version ?? process.env.CAUCE_VERSION ?? "dev";
   app.get("/health", (_req, res) => {
-    res.json({ ok: true, version });
+    res.json({ ok: true, version, stripe: opciones.cobrador?.stripeModo ?? null });
   });
 
   /**
@@ -886,6 +916,86 @@ export function crearApp(
     }]);
   });
 
+  // ── Cobro (docs/stripe.md) ────────────────────────────────────────────────
+  const conCobrador = (res: Response): Cobrador | null => {
+    if (!opciones.cobrador) {
+      res.status(503).json({ error: "cobro no disponible en este orquestador" });
+      return null;
+    }
+    return opciones.cobrador;
+  };
+  const responderErrorCobro = (res: Response, err: unknown, contexto: Record<string, unknown>) => {
+    if (err instanceof ErrorCobro) {
+      res.status(err.status).json({ error: err.message });
+      return;
+    }
+    registrarError("cobro.ruta_error", err, contexto);
+    res.status(502).json({ error: "no se pudo completar la operación de cobro" });
+  };
+
+  /** Estado del cobro del tenant: método, periodo, contratación, próximo cobro cotizado. Nada de ids secretos. */
+  tenantRouter.get("/cobro", async (req, res) => {
+    const cobrador = conCobrador(res);
+    if (!cobrador) return;
+    const tenant = (await repo.getTenant(req.tenantId!))!;
+    const cobro = tenant.cobro ?? null;
+    let proximo = null;
+    try {
+      const cot = await cobrador.cotizar(tenant);
+      if (cot) proximo = { ...cot.desglose, fotoHash: cot.foto.hash, fotoLeidoEn: cot.foto.leidoEn, fotoOrigen: cot.foto.origen };
+    } catch (err) {
+      registrarError("cobro.cotizar_error", err, { tenant: tenant.id });
+    }
+    res.json({
+      tenantId: tenant.id,
+      modo: cobro?.modo ?? "transferencia",
+      periodo: cobro?.periodo ?? "mensual",
+      lineasContratadas: cobro?.lineasContratadas ?? 1,
+      agentesContratados: cobro?.agentesContratados ?? null,
+      metodo: cobro?.metodo ?? null,
+      intentos: cobro?.intentos ? { corte: cobro.intentos.corte, fallos: cobro.intentos.fallos, ultimoError: cobro.intentos.ultimoError, ultimoIntentoEn: cobro.intentos.ultimoIntentoEn, requiereAccion: cobro.intentos.requiereAccion ?? null, agotado: cobro.intentos.agotado ?? false } : null,
+      cicloCorteEn: tenant.cicloCorteEn ?? null,
+      pagadoHasta: tenant.pagadoHasta ?? null,
+      estadoPago: estadoPago(tenant),
+      stripe: cobrador.stripeModo,
+      proximoCobro: proximo,
+    });
+  });
+
+  tenantRouter.put("/cobro", async (req, res) => {
+    const cobrador = conCobrador(res);
+    if (!cobrador) return;
+    const b = req.body ?? {};
+    try {
+      const cobro = await cobrador.configurar(req.tenantId!, {
+        ...(b.modo !== undefined ? { modo: b.modo } : {}),
+        ...(b.periodo !== undefined ? { periodo: b.periodo } : {}),
+        ...(b.lineasContratadas !== undefined ? { lineasContratadas: Number(b.lineasContratadas) } : {}),
+        ...(b.agentesContratados !== undefined ? { agentesContratados: Number(b.agentesContratados) } : {}),
+      });
+      res.json({ modo: cobro.modo, periodo: cobro.periodo, lineasContratadas: cobro.lineasContratadas ?? 1, agentesContratados: cobro.agentesContratados ?? null, metodo: cobro.metodo ?? null });
+    } catch (err) {
+      responderErrorCobro(res, err, { tenant: req.tenantId, ruta: "PUT /cobro" });
+    }
+  });
+
+  /** SetupIntent para guardar tarjeta con Stripe Elements en el navegador (3DS ahí, sin cargo). */
+  tenantRouter.post("/cobro/setup-intent", async (req, res) => {
+    const cobrador = conCobrador(res);
+    if (!cobrador) return;
+    try {
+      res.json(await cobrador.crearSetupIntent(req.tenantId!));
+    } catch (err) {
+      responderErrorCobro(res, err, { tenant: req.tenantId, ruta: "POST /cobro/setup-intent" });
+    }
+  });
+
+  /** Ledger de pagos, más reciente primero. La única verdad sobre quién está al corriente. */
+  tenantRouter.get("/pagos", async (req, res) => {
+    const pagos = await repo.listPagos(req.tenantId!);
+    res.json(pagos.map((p) => ({ id: p.id, en: p.en, fuente: p.fuente, tipo: p.tipo, referencia: p.referencia, montoMxn: p.montoMxn, periodo: p.periodo, meses: p.meses, pagadoHastaDespues: p.pagadoHastaDespues, cfdi: p.cfdi })));
+  });
+
   tenantRouter.get("/consumo", async (req, res) => {
     const mes = typeof req.query.mes === "string" && /^\d{4}-\d{2}$/.test(req.query.mes) ? req.query.mes : new Date().toISOString().slice(0, 7);
     const tc = opciones.tipoCambio ?? { usdMxn: 18.5, colchon: 1.1 };
@@ -1333,12 +1443,18 @@ export function crearApp(
     res.json({ tenantId: tenant.id, agente, tieneCapacidadAgentes: tieneCapacidad(tenant, "agentes") });
   });
 
-  // Registro manual de pago: hasta cuándo queda cubierto. Solo informa al
-  // banner y a Billing; la suspensión sigue siendo a mano (docs/vencido-y-suspension.md).
+  // Registro de transferencia: folio, monto y periodo; la fecha se deriva.
+  // Nadie escribe pagadoHasta directamente: pasa por registrarPago y queda
+  // en el ledger (docs/stripe.md §3). La suspensión sigue siendo a mano.
   app.post("/api/admin/tenants/:tenantId/pago", async (req, res) => {
     const admin = req.headers["x-admin-key"];
     if (!opciones.adminKey || admin !== opciones.adminKey) {
       res.status(401).json({ error: "no autorizado" });
+      return;
+    }
+    const cobrador = opciones.cobrador;
+    if (!cobrador) {
+      res.status(503).json({ error: "cobro no disponible en este orquestador" });
       return;
     }
     const tenant = await repo.getTenant(String(req.params.tenantId));
@@ -1346,15 +1462,79 @@ export function crearApp(
       res.status(404).json({ error: "tenant no encontrado" });
       return;
     }
-    const { pagadoHasta } = req.body ?? {};
-    if (pagadoHasta !== null && (typeof pagadoHasta !== "string" || Number.isNaN(new Date(pagadoHasta).getTime()))) {
-      res.status(400).json({ error: "pagadoHasta debe ser una fecha ISO 8601 o null" });
+    const { folio, montoMxn, periodo, registradoPor } = req.body ?? {};
+    if (typeof folio !== "string" || !folio.trim()) {
+      res.status(400).json({ error: "folio requerido (referencia bancaria)" });
       return;
     }
-    const actualizado = { ...tenant, pagadoHasta: pagadoHasta ?? null };
-    await repo.saveTenant(actualizado);
-    registrar("pago.registrado", { tenant: tenant.id, pagadoHasta: pagadoHasta ?? null, estado: estadoPago(actualizado) });
-    res.json({ tenantId: tenant.id, pagadoHasta: pagadoHasta ?? null, estadoPago: estadoPago(actualizado) });
+    if (!(Number(montoMxn) > 0)) {
+      res.status(400).json({ error: "montoMxn debe ser mayor a 0 (con IVA)" });
+      return;
+    }
+    if (periodo !== "mensual" && periodo !== "semestral" && periodo !== "anual") {
+      res.status(400).json({ error: "periodo debe ser mensual, semestral o anual" });
+      return;
+    }
+    try {
+      const r = await cobrador.registrarTransferencia(tenant.id, { folio, montoMxn: Number(montoMxn), periodo, registradoPor: `admin:${typeof registradoPor === "string" && registradoPor.trim() ? registradoPor.trim() : "sin nombre"}` });
+      const actualizado = (await repo.getTenant(tenant.id)) ?? tenant;
+      res.status(r.nuevo ? 201 : 200).json({ tenantId: tenant.id, nuevo: r.nuevo, pago: r.pago, pagadoHasta: actualizado.pagadoHasta ?? null, estadoPago: estadoPago(actualizado) });
+    } catch (err) {
+      if (err instanceof ErrorCobro) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      registrarError("pago.admin_error", err, { tenant: tenant.id });
+      res.status(500).json({ error: "no se pudo registrar el pago" });
+    }
+  });
+
+  /** Reembolso a mano (transferencia devuelta o reembolso de Stripe hecho desde el panel): fila negativa. */
+  app.post("/api/admin/tenants/:tenantId/reembolso", async (req, res) => {
+    const admin = req.headers["x-admin-key"];
+    if (!opciones.adminKey || admin !== opciones.adminKey) {
+      res.status(401).json({ error: "no autorizado" });
+      return;
+    }
+    const cobrador = opciones.cobrador;
+    if (!cobrador) {
+      res.status(503).json({ error: "cobro no disponible en este orquestador" });
+      return;
+    }
+    const tenant = await repo.getTenant(String(req.params.tenantId));
+    if (!tenant) {
+      res.status(404).json({ error: "tenant no encontrado" });
+      return;
+    }
+    const { referencia, referenciaPago, montoMxn, fuente, registradoPor } = req.body ?? {};
+    if (typeof referencia !== "string" || !referencia.trim() || typeof referenciaPago !== "string" || !referenciaPago.trim()) {
+      res.status(400).json({ error: "referencia (del reembolso) y referenciaPago (del pago original) son requeridas" });
+      return;
+    }
+    if (!(Number(montoMxn) > 0)) {
+      res.status(400).json({ error: "montoMxn debe ser mayor a 0" });
+      return;
+    }
+    if (fuente !== "stripe" && fuente !== "transferencia") {
+      res.status(400).json({ error: "fuente debe ser stripe o transferencia" });
+      return;
+    }
+    try {
+      const r = await cobrador.registrarReembolso(tenant.id, { referencia: referencia.trim(), referenciaPago: referenciaPago.trim(), montoMxn: Number(montoMxn), fuente, registradoPor: `admin:${typeof registradoPor === "string" && registradoPor.trim() ? registradoPor.trim() : "sin nombre"}` });
+      if (!r) {
+        res.status(404).json({ error: "no existe un pago con esa referencia" });
+        return;
+      }
+      const actualizado = (await repo.getTenant(tenant.id)) ?? tenant;
+      res.status(r.nuevo ? 201 : 200).json({ tenantId: tenant.id, nuevo: r.nuevo, pago: r.pago, pagadoHasta: actualizado.pagadoHasta ?? null, estadoPago: estadoPago(actualizado) });
+    } catch (err) {
+      if (err instanceof ErrorCobro) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      registrarError("reembolso.admin_error", err, { tenant: tenant.id });
+      res.status(500).json({ error: "no se pudo registrar el reembolso" });
+    }
   });
 
   // CAUCE_ADMIN_KEY, no con credenciales de tenant. Sube a plan pagado
