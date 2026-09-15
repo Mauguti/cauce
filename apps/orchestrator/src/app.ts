@@ -14,6 +14,7 @@ import type { DisparadorEntrada } from "./entrada/disparadores.ts";
 import type { VerificadorToken } from "./firebase.ts";
 import type { Provisioning } from "./provisioning.ts";
 import { ErrorCobro, ErrorFirmaStripe, type Cobrador } from "./cobro/cobrador.ts";
+import { resumirTrazabilidad } from "./agentes/trazabilidad.ts";
 import {
   churnReciente, limitesTenant, pruebaVigente, capacidadesTenant, tieneCapacidad,
   mensajeRequierePlan, soloLectura, planDe, normalizarPlan, esPlanConocido, esSubida,
@@ -914,6 +915,22 @@ export function crearApp(
       // Atiende todas las líneas del tenant: cualquier entrante que ningún disparador conteste.
       lineas: instancias.map((i) => ({ instanceId: i.id, nombre: i.nombre ?? null, numero: i.numero, estado: i.estado, viva: gestor ? gestor.obtener(i.id) !== null : false })),
     }]);
+  });
+
+  /**
+   * Trazabilidad de agentes (pedazo 2): conversaciones atendidas en el mes
+   * con respuestas, herramientas, costo en pesos, tiempos y traspaso. Con
+   * esto se lee qué contestó Santiago y cuánto costó sin entrar al journal.
+   */
+  tenantRouter.get("/agentes/conversaciones", async (req, res) => {
+    const mes = typeof req.query.mes === "string" && /^\d{4}-\d{2}$/.test(req.query.mes) ? req.query.mes : new Date().toISOString().slice(0, 7);
+    const tc = opciones.tipoCambio ?? { usdMxn: 18.5, colchon: 1.1 };
+    const [llamadas, conversaciones, instancias] = await Promise.all([
+      repo.listConsumo(req.tenantId!, mes),
+      repo.listConversaciones(req.tenantId!),
+      repo.listInstances(req.tenantId!),
+    ]);
+    res.json(resumirTrazabilidad({ mes, llamadas, conversaciones, instancias, tipoCambio: { usdMxn: tc.usdMxn, colchon: tc.colchon } }));
   });
 
   // ── Cobro (docs/stripe.md) ────────────────────────────────────────────────
