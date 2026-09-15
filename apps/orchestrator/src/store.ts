@@ -1,4 +1,5 @@
 import type {
+  Atribucion,
   Conocimiento,
   Conversacion,
   Instance,
@@ -56,6 +57,8 @@ export interface Repositorio {
   listConsumo(tenantId: TenantId, mes: string): Promise<RegistroConsumo[]>;
   /** El agente traspasó la conversación a una persona. */
   marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void>;
+  /** Atribución de campaña de la conversación; solo se escribe una vez (primer contacto). */
+  marcarAtribucion(tenantId: TenantId, instanceId: InstanceId, telefono: string, atribucion: Atribucion): Promise<void>;
   /** ¿Este número es una línea conectada de ALGÚN tenant? (anti-bucle entre agentes). */
   buscarInstanciaPorNumero(telefono: string): Promise<{ tenantId: TenantId; instanceId: InstanceId } | null>;
   /** Anota una respuesta automática en la conversación (ventana acotada) y devuelve el estado para el cortacircuitos. */
@@ -413,6 +416,10 @@ export class RepositorioEnMemoria implements Repositorio {
 
   async marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void> {
     this.#fusionarConversacion(tenantId, instanceId, telefono, { traspaso });
+  }
+
+  async marcarAtribucion(tenantId: TenantId, instanceId: InstanceId, telefono: string, atribucion: Atribucion): Promise<void> {
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { atribucion });
   }
 
   async buscarInstanciaPorNumero(telefono: string): Promise<{ tenantId: TenantId; instanceId: InstanceId } | null> {

@@ -302,9 +302,10 @@ export class Agente {
       `- Encaje: ${encaje}`,
       ...(t("notas") ? [`- Notas: ${t("notas")}`] : []),
     ];
-    const comentario = lineas.join("\n");
     try {
       let conv = await this.#repo.getConversacion(ctx.tenant.id, ctx.instanceId, ctx.telefono);
+      if (conv?.atribucion) lineas.push(`- Origen de campaña: ${conv.atribucion.estado === "atribuida" ? conv.atribucion.origen ?? "campaña" : "sin atribuir"}`);
+      const comentario = lineas.join("\n");
       let destino: { crm: "bitrix" | "monday"; entidad: string; id: string } | null =
         conv?.bitrixEntidad && ctx.crm === "bitrix" ? { crm: "bitrix", entidad: conv.bitrixEntidad.tipo, id: conv.bitrixEntidad.id }
         : conv?.mondayItemId && ctx.crm === "monday" ? { crm: "monday", entidad: "item", id: conv.mondayItemId }

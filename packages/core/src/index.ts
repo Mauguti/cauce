@@ -280,6 +280,23 @@ export function soloLectura(t: Tenant, ahora: Date = new Date()): boolean {
   return !pruebaVigente(t, ahora);
 }
 
+/**
+ * Atribución de campaña de una conversación. Sobre conexión no oficial no
+ * hay `ctwaClid` confiable: se persiste si viene, pero NO se promete
+ * devolver conversiones a Meta (eso exige API oficial).
+ */
+export interface Atribucion {
+  estado: "atribuida" | "sin_atribuir";
+  /** Resumen legible: "Meta Ads · Campaña Otoño" o la fuente UTM. */
+  origen: string | null;
+  utm: Record<string, string>;
+  /** URL de campaña detectada en el texto, si la hubo. */
+  url: string | null;
+  /** Anuncio click-to-WhatsApp (contextInfo.externalAdReply), tal como llegó. */
+  anuncio: { titulo: string | null; cuerpo: string | null; sourceUrl: string | null; sourceId: string | null; sourceType: string | null; ctwaClid: string | null } | null;
+  capturadaEn: string;
+}
+
 export type EstadoPago = "prueba" | "al_corriente" | "vencido";
 
 /**
@@ -556,6 +573,12 @@ export interface Conversacion {
    * que alguien la marque atendida; mientras, el agente calla.
    */
   traspaso?: { motivo: string; resumen: string; en: string; agente: string; atendidoEn?: string | null } | null;
+  /**
+   * Origen de campaña, capturado al PRIMER mensaje de la conversación y
+   * nunca reconstruido después. `sin_atribuir` es explícito: no se
+   * reparte ni se adivina. Capa base del plan de conexión, no de un agente.
+   */
+  atribucion?: Atribucion | null;
   /**
    * Cortacircuitos de respuestas automáticas: marcas de tiempo de las
    * últimas respuestas de bot/agente (acotado) y el último texto, para

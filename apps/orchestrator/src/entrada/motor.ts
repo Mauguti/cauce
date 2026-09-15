@@ -1,4 +1,4 @@
-import type { InstanceId, Message, MessageOrigen, TenantId } from "@cauce/core";
+import type { Atribucion, InstanceId, Message, MessageOrigen, TenantId } from "@cauce/core";
 import { tieneCapacidad, type Capacidad } from "@cauce/core";
 import { enmascararTelefono, registrar, registrarCadaMs } from "../log.ts";
 import type { ConectorOpenlines } from "../bitrix/openlines/conector.ts";
@@ -113,6 +113,7 @@ export class MotorEntrada {
     instanceId: InstanceId,
     mensaje: Message,
     nombre?: string | null,
+    atribucion?: Atribucion | null,
   ): Promise<void> {
     const telefono = mensaje.telefono.replace(/[^\d]/g, "");
 
@@ -126,6 +127,17 @@ export class MotorEntrada {
       mensaje.timestamp,
       nombre,
     );
+
+    // 1b. Atribución de campaña: SOLO al primer contacto, y explícita aunque
+    //     sea "sin atribuir". No se reconstruye hacia atrás: es capa base
+    //     del plan de conexión, disponible para todos los planes.
+    if (esPrimerContacto && atribucion) {
+      await this.#repo.marcarAtribucion(tenantId, instanceId, telefono, atribucion);
+      registrar("entrada.atribucion", {
+        tenant: tenantId, instancia: instanceId, telefono: enmascararTelefono(mensaje.telefono), estado: atribucion.estado,
+        origen: atribucion.origen, ...(atribucion.anuncio?.ctwaClid ? { ctwaClid: "presente" } : {}), ...(Object.keys(atribucion.utm).length ? { utm: atribucion.utm } : {}),
+      });
+    }
 
     // Capacidades del plan AHORA: los bots y el write-back se pausan si el
     // plan no los incluye o la prueba venció. La configuración se conserva.
@@ -204,6 +216,14 @@ export class MotorEntrada {
     //    la originó (item de monday o timeline de la entidad de Bitrix).
     if (!puede("entrantes")) return;
     const texto = `📥 ${mensaje.cuerpo}`;
+    // Al primer contacto con registro ya vinculado, el origen va al CRM: visible donde trabaja el vendedor.
+    const origenCrm = esPrimerContacto && atribucion ? `📣 Origen: ${atribucion.estado === "atribuida" ? atribucion.origen ?? "campaña" : "sin atribuir"}` : null;
+    if (this.#monday && conversacion.mondayItemId && origenCrm) {
+      await this.#monday.publicarEnItem(tenantId, conversacion.mondayItemId, origenCrm);
+    }
+    if (this.#bitrix && conversacion.bitrixEntidad && origenCrm) {
+      await this.#bitrix.publicarEnItem(tenantId, conversacion.bitrixEntidad.tipo as EntidadBitrix, conversacion.bitrixEntidad.id, origenCrm);
+    }
     if (this.#monday && conversacion.mondayItemId) {
       await this.#monday.publicarEnItem(tenantId, conversacion.mondayItemId, texto);
     }

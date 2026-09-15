@@ -19,7 +19,7 @@ import {
   PLANES, type Capacidad, type TenantPlan,
   estadoPago,
 } from "@cauce/core";
-import { normalizarActualizacion, normalizarEntrante, resumirCrudo } from "./webhook.ts";
+import { extraerAtribucion, normalizarActualizacion, normalizarEntrante, resumirCrudo } from "./webhook.ts";
 import { ErrorConfirmacion, type ConectorOpenlines } from "./bitrix/openlines/conector.ts";
 import { normalizarNombreLinea } from "./bitrix/openlines/tipos.ts";
 import { enmascararTelefono, registrar, registrarCadaMs, registrarError } from "./log.ts";
@@ -318,7 +318,7 @@ export function crearApp(
       }
       if (opciones.motorEntrada) {
         opciones.motorEntrada
-          .procesar(tenantId!, instanceId!, mensaje, nombre)
+          .procesar(tenantId!, instanceId!, mensaje, nombre, extraerAtribucion(req.body))
           .catch((err) =>
             registrarError("entrada.motor", err, { tenant: tenantId, instancia: instanceId, mensaje: mensaje.id }),
           );

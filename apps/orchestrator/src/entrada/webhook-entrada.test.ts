@@ -99,7 +99,11 @@ describe("webhook entrante → motor de entrada", () => {
       ]);
 
       // Write-back a monday con el texto del cliente.
-      expect(updatesMonday).toEqual([{ itemId: "item-5", cuerpo: "📥 hola, ¿qué tal?" }]);
+      expect(updatesMonday).toEqual([
+      // Al primer contacto con registro ya vinculado, el origen de campaña va al CRM antes del write-back.
+      { itemId: "item-5", cuerpo: "📣 Origen: sin atribuir" },
+      { itemId: "item-5", cuerpo: "📥 hola, ¿qué tal?" },
+    ]);
 
       // El entrante y el saliente quedaron en el historial.
       const msgs = await repo.listMessages("demo", "i1");

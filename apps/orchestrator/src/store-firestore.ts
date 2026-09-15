@@ -9,6 +9,7 @@ import {
   type TenantId,
   type Conocimiento,
   type RegistroConsumo,
+  type Atribucion,
 } from "@cauce/core";
 import { variantesNumero, type Repositorio } from "./store.ts";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
@@ -143,6 +144,12 @@ export class RepositorioFirestore implements Repositorio {
     batch.delete(this.#db.doc(rutas.instance(tenantId, instanceId)));
     if (previa?.numero) batch.delete(this.#db.doc(`numeros/${previa.numero.replace(/[^\d]/g, "")}`));
     await batch.commit();
+  }
+
+  async marcarAtribucion(tenantId: TenantId, instanceId: InstanceId, telefono: string, atribucion: Atribucion): Promise<void> {
+    await this.#db
+      .doc(rutas.conversacion(tenantId, instanceId, telefono))
+      .set({ tenantId, instanceId, telefono, atribucion }, { merge: true });
   }
 
   async buscarInstanciaPorNumero(telefono: string): Promise<{ tenantId: TenantId; instanceId: InstanceId } | null> {
