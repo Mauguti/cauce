@@ -11,6 +11,9 @@ import {
   type RegistroConsumo,
   type Atribucion,
   type Pago,
+  type PersonaDirectorio,
+  type ConectorGoogleDoc,
+  type CitaPendiente,
 } from "@cauce/core";
 import { variantesNumero, type Repositorio } from "./store.ts";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
@@ -145,6 +148,51 @@ export class RepositorioFirestore implements Repositorio {
     batch.delete(this.#db.doc(rutas.instance(tenantId, instanceId)));
     if (previa?.numero) batch.delete(this.#db.doc(`numeros/${previa.numero.replace(/[^\d]/g, "")}`));
     await batch.commit();
+  }
+
+  async listDirectorio(tenantId: TenantId): Promise<PersonaDirectorio[]> {
+    const snap = await this.#db.collection(rutas.directorio(tenantId)).get();
+    return snap.docs.map((d) => d.data() as PersonaDirectorio).sort((a, b) => a.nombre.localeCompare(b.nombre));
+  }
+  async getPersonaDirectorio(tenantId: TenantId, telefono: string): Promise<PersonaDirectorio | null> {
+    const doc = await this.#db.doc(rutas.persona(tenantId, telefono.replace(/[^\d]/g, ""))).get();
+    return doc.exists ? (doc.data() as PersonaDirectorio) : null;
+  }
+  async savePersonaDirectorio(tenantId: TenantId, persona: PersonaDirectorio): Promise<void> {
+    await this.#db.doc(rutas.persona(tenantId, persona.telefono)).set(persona);
+  }
+  async deletePersonaDirectorio(tenantId: TenantId, telefono: string): Promise<void> {
+    await this.#db.doc(rutas.persona(tenantId, telefono.replace(/[^\d]/g, ""))).delete();
+  }
+  async getConectorGoogle(tenantId: TenantId): Promise<ConectorGoogleDoc | null> {
+    const doc = await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/google`).get();
+    return doc.exists ? (doc.data() as ConectorGoogleDoc) : null;
+  }
+  async saveConectorGoogle(tenantId: TenantId, config: ConectorGoogleDoc): Promise<void> {
+    await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/google`).set(config);
+  }
+  async deleteConectorGoogle(tenantId: TenantId): Promise<void> {
+    await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/google`).delete();
+  }
+  async marcarCitaPendiente(tenantId: TenantId, instanceId: InstanceId, telefono: string, pendiente: CitaPendiente | null): Promise<void> {
+    await this.#db.doc(rutas.conversacion(tenantId, instanceId, telefono)).set({ tenantId, instanceId, telefono, citaPendiente: pendiente }, { merge: true });
+  }
+  async reservarFranja(tenantId: TenantId, calendarioId: string, inicio: string, duenio: string, hastaIso: string): Promise<boolean> {
+    const ref = this.#db.doc(`${rutas.reservas(tenantId)}/${encodeURIComponent(`${calendarioId}|${inicio}`)}`);
+    return this.#db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      const previa = doc.exists ? (doc.data() as { duenio: string; hasta: string }) : null;
+      if (previa && previa.duenio !== duenio && previa.hasta > new Date().toISOString()) return false;
+      tx.set(ref, { calendarioId, inicio, duenio, hasta: hastaIso });
+      return true;
+    });
+  }
+  async liberarFranja(tenantId: TenantId, calendarioId: string, inicio: string, duenio: string): Promise<void> {
+    const ref = this.#db.doc(`${rutas.reservas(tenantId)}/${encodeURIComponent(`${calendarioId}|${inicio}`)}`);
+    await this.#db.runTransaction(async (tx) => {
+      const doc = await tx.get(ref);
+      if (doc.exists && (doc.data() as { duenio: string }).duenio === duenio) tx.delete(ref);
+    });
   }
 
   async guardarPago(pago: Pago, tenant: Pick<Tenant, "pagadoHasta" | "cicloCorteEn">): Promise<boolean> {

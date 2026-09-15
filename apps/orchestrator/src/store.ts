@@ -1,7 +1,10 @@
 import type {
   Atribucion,
+  CitaPendiente,
+  ConectorGoogleDoc,
   Conocimiento,
   Pago,
+  PersonaDirectorio,
   Conversacion,
   Instance,
   InstanceId,
@@ -58,6 +61,22 @@ export interface Repositorio {
   listConsumo(tenantId: TenantId, mes: string): Promise<RegistroConsumo[]>;
   /** El agente traspasó la conversación a una persona. */
   marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void>;
+  // Citas (Susana): directorio a nivel tenant, conexión de Google, cambio pendiente y candado de franja.
+  listDirectorio(tenantId: TenantId): Promise<PersonaDirectorio[]>;
+  getPersonaDirectorio(tenantId: TenantId, telefono: string): Promise<PersonaDirectorio | null>;
+  savePersonaDirectorio(tenantId: TenantId, persona: PersonaDirectorio): Promise<void>;
+  deletePersonaDirectorio(tenantId: TenantId, telefono: string): Promise<void>;
+  getConectorGoogle(tenantId: TenantId): Promise<ConectorGoogleDoc | null>;
+  saveConectorGoogle(tenantId: TenantId, doc: ConectorGoogleDoc): Promise<void>;
+  deleteConectorGoogle(tenantId: TenantId): Promise<void>;
+  marcarCitaPendiente(tenantId: TenantId, instanceId: InstanceId, telefono: string, pendiente: CitaPendiente | null): Promise<void>;
+  /**
+   * Candado atómico de una franja por calendario: true si la tomó esta
+   * conversación, false si otra la tiene viva. Vence solo (ttl) y se libera
+   * al escribir o descartar.
+   */
+  reservarFranja(tenantId: TenantId, calendarioId: string, inicio: string, duenio: string, hastaIso: string): Promise<boolean>;
+  liberarFranja(tenantId: TenantId, calendarioId: string, inicio: string, duenio: string): Promise<void>;
   // Ledger de pagos. guardarPago es la ÚNICA escritura de pagadoHasta/cicloCorteEn:
   // atómica con la fila del ledger e idempotente por id (fuente + referencia).
   // Devuelve false si la fila ya existía (nada se escribe).
@@ -430,6 +449,45 @@ export class RepositorioEnMemoria implements Repositorio {
   }
 
   #pagos = new Map<TenantId, Map<string, Pago>>();
+  #directorio = new Map<string, PersonaDirectorio>();
+  #google = new Map<TenantId, ConectorGoogleDoc>();
+  #reservas = new Map<string, { duenio: string; hasta: string }>();
+
+  async listDirectorio(tenantId: TenantId): Promise<PersonaDirectorio[]> {
+    return [...this.#directorio.entries()].filter(([k]) => k.startsWith(`${tenantId}/`)).map(([, p]) => p).sort((a, b) => a.nombre.localeCompare(b.nombre));
+  }
+  async getPersonaDirectorio(tenantId: TenantId, telefono: string): Promise<PersonaDirectorio | null> {
+    return this.#directorio.get(`${tenantId}/${telefono.replace(/[^\d]/g, "")}`) ?? null;
+  }
+  async savePersonaDirectorio(tenantId: TenantId, persona: PersonaDirectorio): Promise<void> {
+    this.#directorio.set(`${tenantId}/${persona.telefono}`, persona);
+  }
+  async deletePersonaDirectorio(tenantId: TenantId, telefono: string): Promise<void> {
+    this.#directorio.delete(`${tenantId}/${telefono.replace(/[^\d]/g, "")}`);
+  }
+  async getConectorGoogle(tenantId: TenantId): Promise<ConectorGoogleDoc | null> {
+    return this.#google.get(tenantId) ?? null;
+  }
+  async saveConectorGoogle(tenantId: TenantId, doc: ConectorGoogleDoc): Promise<void> {
+    this.#google.set(tenantId, doc);
+  }
+  async deleteConectorGoogle(tenantId: TenantId): Promise<void> {
+    this.#google.delete(tenantId);
+  }
+  async marcarCitaPendiente(tenantId: TenantId, instanceId: InstanceId, telefono: string, pendiente: CitaPendiente | null): Promise<void> {
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { citaPendiente: pendiente });
+  }
+  async reservarFranja(tenantId: TenantId, calendarioId: string, inicio: string, duenio: string, hastaIso: string): Promise<boolean> {
+    const k = `${tenantId}/${calendarioId}|${inicio}`;
+    const previa = this.#reservas.get(k);
+    if (previa && previa.duenio !== duenio && previa.hasta > new Date().toISOString()) return false;
+    this.#reservas.set(k, { duenio, hasta: hastaIso });
+    return true;
+  }
+  async liberarFranja(tenantId: TenantId, calendarioId: string, inicio: string, duenio: string): Promise<void> {
+    const k = `${tenantId}/${calendarioId}|${inicio}`;
+    if (this.#reservas.get(k)?.duenio === duenio) this.#reservas.delete(k);
+  }
 
   async guardarPago(pago: Pago, tenant: Pick<Tenant, "pagadoHasta" | "cicloCorteEn">): Promise<boolean> {
     const porTenant = this.#pagos.get(pago.tenantId) ?? new Map<string, Pago>();

@@ -1,4 +1,4 @@
-import type { Conversacion, Instance, RegistroConsumo } from "@cauce/core";
+import { idConversacion, type Conversacion, type Instance, type RegistroConsumo } from "@cauce/core";
 import { enmascararTelefono } from "../log.ts";
 
 /**
@@ -6,10 +6,11 @@ import { enmascararTelefono } from "../log.ts";
  * agente en el mes, con cuántas respuestas, qué herramientas, cuánto costó
  * en pesos, cuánto tardó y si terminó en traspaso. Se arma desde el
  * ledger de consumo (una fila por llamada al modelo) y las conversaciones
- * (donde vive el traspaso). El consumo guarda el teléfono enmascarado, así
- * que la unión es por línea + últimos cuatro dígitos; si dos contactos de
- * la misma línea comparten terminación, se toma el que escribió más
- * recientemente y se marca `telefonoAmbiguo`.
+ * (donde vive el traspaso). La unión es exacta por `conversacionId` (hash
+ * opaco de tenant+línea+teléfono, desde el 16-sep-2026). Las filas
+ * anteriores no lo traen: para ellas la unión es por línea + últimos cuatro
+ * dígitos; si dos contactos de la misma línea comparten terminación, se
+ * toma el que escribió más recientemente y se marca `telefonoAmbiguo`.
  */
 export interface ConversacionAgente {
   clave: string;
@@ -55,17 +56,20 @@ export function resumirTrazabilidad(o: {
 
   // Conversaciones por línea + teléfono enmascarado (como lo guarda el consumo).
   const porMascara = new Map<string, Conversacion[]>();
+  const porId = new Map<string, Conversacion>();
   for (const c of o.conversaciones) {
     const k = `${c.instanceId}/${enmascararTelefono(c.telefono)}`;
     porMascara.set(k, [...(porMascara.get(k) ?? []), c]);
+    porId.set(idConversacion(c.tenantId, c.instanceId, c.telefono), c);
   }
 
   const grupos = new Map<string, ConversacionAgente & { _usd: number }>();
   for (const l of [...o.llamadas].sort((a, b) => a.en.localeCompare(b.en))) {
-    const clave = `${l.instanceId}/${l.telefono}`;
+    const clave = l.conversacionId ? `id:${l.conversacionId}` : `${l.instanceId}/${l.telefono}`;
     let g = grupos.get(clave);
     if (!g) {
-      const candidatas = [...(porMascara.get(clave) ?? [])].sort((a, b) => (b.ultimoEntranteEn ?? "").localeCompare(a.ultimoEntranteEn ?? ""));
+      const exacta = l.conversacionId ? porId.get(l.conversacionId) : undefined;
+      const candidatas = exacta ? [exacta] : [...(porMascara.get(`${l.instanceId}/${l.telefono}`) ?? [])].sort((a, b) => (b.ultimoEntranteEn ?? "").localeCompare(a.ultimoEntranteEn ?? ""));
       const conv = candidatas[0];
       g = {
         clave, agente: l.agente, instanceId: l.instanceId,

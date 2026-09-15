@@ -21,6 +21,8 @@ import { Provisioning } from "./provisioning.ts";
 import { Cobrador } from "./cobro/cobrador.ts";
 import { CargadorPrecios } from "./cobro/precios.ts";
 import { ClienteStripeReal } from "./cobro/stripe.ts";
+import { GoogleReal } from "./google/calendario.ts";
+import { Citas } from "./agentes/citas.ts";
 import { ConectorOpenlines } from "./bitrix/openlines/conector.ts";
 
 const puerto = Number(process.env.PORT ?? 3001);
@@ -114,10 +116,20 @@ if (!openlines) {
   console.warn("CAUCE_URL_PUBLICA sin definir: el canal abierto de Bitrix24 queda deshabilitado");
 }
 
+// Google Calendar por tenant (Susana). Credenciales de la app OAuth en
+// /etc/factory.env; el redirect es fijo: <CAUCE_URL_PUBLICA>/google/callback.
+const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+const google = googleClientId && googleClientSecret && urlPublica
+  ? new GoogleReal({ clientId: googleClientId, clientSecret: googleClientSecret, redirectUri: `${urlPublica.replace(/\/+$/, "")}/google/callback`, repo, cripto })
+  : undefined;
+if (!google) console.warn("GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET (o CAUCE_URL_PUBLICA) sin definir: Google Calendar y Susana quedan deshabilitados");
+const citas = google ? new Citas({ repo, calendario: google }) : undefined;
+
 // Agente conversacional: razona en el orquestador con el proveedor del
 // tenant. Hoy un proveedor (Anthropic) con la llave de ANTHROPIC_API_KEY.
 const agente = process.env.ANTHROPIC_API_KEY?.trim()
-  ? new Agente({ repo, proveedores: { anthropic: new ProveedorAnthropic() }, bitrix, monday, cripto, ...(openlines ? { openlines } : {}) })
+  ? new Agente({ repo, proveedores: { anthropic: new ProveedorAnthropic() }, bitrix, monday, cripto, ...(openlines ? { openlines } : {}), ...(citas ? { citas } : {}) })
   : undefined;
 if (!agente) console.warn("ANTHROPIC_API_KEY sin definir: los agentes quedan deshabilitados");
 
@@ -252,6 +264,8 @@ crearApp(repo, gestor, {
   ...(adminKey ? { adminKey } : {}),
   cripto,
   cobrador,
+  ...(google ? { google } : {}),
+  ...(process.env.CAUCE_PLATAFORMA_URL?.trim() ? { plataformaUrl: process.env.CAUCE_PLATAFORMA_URL.trim() } : {}),
   // Consumo en pesos: tipo de cambio con colchón. Se ajusta en /etc/factory.env sin tocar código.
   tipoCambio: {
     // Default revisado 15-sep-2026 (dólar a 17.13); se revisa cada mes, el peso se mueve.

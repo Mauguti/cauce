@@ -44,7 +44,7 @@ describe("orquestador", () => {
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     try {
       const res = await fetch(`${base}/health`);
-      expect(await res.json()).toEqual({ ok: true, version: "abc1234", stripe: null });
+      expect(await res.json()).toEqual({ ok: true, version: "abc1234", stripe: null, google: false });
     } finally {
       server.close();
     }

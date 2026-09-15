@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Conversacion, Instance, RegistroConsumo } from "@cauce/core";
+import { idConversacion } from "@cauce/core";
 import { resumirTrazabilidad } from "./trazabilidad.ts";
 
 const base = { tenantId: "t1", proveedor: "anthropic", modelo: "claude-opus-5", entrada: 100, salida: 50, cacheLectura: 0, cacheEscritura: 0, error: null } as const;
@@ -43,7 +44,22 @@ describe("resumirTrazabilidad", () => {
     expect(r.total).toEqual({ conversaciones: 2, respuestas: 3, llamadas: 4, errores: 1, costoUsd: 0.052, costoMxn: 0.98, traspasos: 1 });
   });
 
-  it("sin conversación conocida deja el teléfono enmascarado; con dos que comparten terminación marca ambigüedad y toma la más reciente", () => {
+  it("con conversacionId la unión es exacta aunque dos contactos compartan terminación", () => {
+    const r = resumirTrazabilidad({
+      mes: "2026-09", instancias, tipoCambio: { usdMxn: 17.15, colchon: 1.1 },
+      conversaciones: [
+        conv("5214420000001", { nombre: "Vieja", ultimoEntranteEn: "2026-09-01T00:00:00Z" }),
+        conv("5215550000001", { nombre: "Reciente", ultimoEntranteEn: "2026-09-13T00:00:00Z" }),
+      ],
+      llamadas: [llamada({ id: "1", en: "2026-09-13T00:00:00Z", conversacionId: idConversacion("t1", "A", "5214420000001") })],
+    });
+    expect(r.conversaciones).toHaveLength(1);
+    expect(r.conversaciones[0]).toMatchObject({ telefono: "5214420000001", contacto: "Vieja", telefonoAmbiguo: false });
+    expect(idConversacion("t1", "A", "+5214420000001")).toBe(idConversacion("t1", "A", "5214420000001"));
+    expect(idConversacion("t1", "A", "5214420000001")).not.toBe(idConversacion("t1", "B", "5214420000001"));
+  });
+
+  it("filas viejas sin conversacionId: sin conversación conocida deja el teléfono enmascarado; con dos que comparten terminación marca ambigüedad y toma la más reciente", () => {
     const r = resumirTrazabilidad({
       mes: "2026-09", instancias, tipoCambio: { usdMxn: 17.15, colchon: 1.1 },
       conversaciones: [

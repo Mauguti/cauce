@@ -15,6 +15,9 @@ import type { VerificadorToken } from "./firebase.ts";
 import type { Provisioning } from "./provisioning.ts";
 import { ErrorCobro, ErrorFirmaStripe, type Cobrador } from "./cobro/cobrador.ts";
 import { resumirTrazabilidad } from "./agentes/trazabilidad.ts";
+import { ErrorGoogle, type GoogleReal } from "./google/calendario.ts";
+import { agendaDe, MODO_CLIENTE_HORAS } from "./agentes/citas.ts";
+import type { PersonaDirectorio } from "@cauce/core";
 import {
   churnReciente, limitesTenant, pruebaVigente, capacidadesTenant, tieneCapacidad,
   mensajeRequierePlan, soloLectura, planDe, normalizarPlan, esPlanConocido, esSubida,
@@ -89,6 +92,10 @@ export interface AppOpciones {
   version?: string;
   /** Cobro con tarjeta (Stripe) y ledger de pagos; sin él, solo transferencia por admin. */
   cobrador?: Cobrador;
+  /** Google Calendar por tenant (OAuth); sin él, Susana no opera y la tarjeta queda "Próximamente". */
+  google?: GoogleReal;
+  /** A dónde vuelve el navegador tras el OAuth de Google (Integraciones de la plataforma). */
+  plataformaUrl?: string;
 }
 
 export function crearApp(
@@ -145,7 +152,31 @@ export function crearApp(
   // desfases consola↔orquestador (ver docs/deploy.md, scripts/deploy.sh).
   const version = opciones.version ?? process.env.CAUCE_VERSION ?? "dev";
   app.get("/health", (_req, res) => {
-    res.json({ ok: true, version, stripe: opciones.cobrador?.stripeModo ?? null });
+    res.json({ ok: true, version, stripe: opciones.cobrador?.stripeModo ?? null, google: Boolean(opciones.google) });
+  });
+
+  /**
+   * Vuelta del OAuth de Google. Público: el tenant viene cifrado en `state`
+   * (15 min). Termina redirigiendo a Integraciones con ?google=ok|error.
+   */
+  app.get("/google/callback", async (req, res) => {
+    const destino = (opciones.plataformaUrl ?? opciones.corsOrigenes?.[0] ?? "/").replace(/\/+$/, "");
+    const volver = (estado: string, detalle?: string) => res.redirect(`${destino}/dashboard/integrations?google=${estado}${detalle ? `&detalle=${encodeURIComponent(detalle)}` : ""}`);
+    if (!opciones.google) { volver("error", "Google no configurado en el orquestador"); return; }
+    const { code, state, error } = req.query;
+    if (typeof error === "string") {
+      registrar("google.oauth_denegado", { error }, "warn");
+      volver("denegado", error);
+      return;
+    }
+    if (typeof code !== "string" || typeof state !== "string") { volver("error", "respuesta incompleta de Google"); return; }
+    try {
+      const r = await opciones.google.completarConexion(code, state);
+      volver("ok", r.email ?? undefined);
+    } catch (err) {
+      if (!(err instanceof ErrorGoogle)) registrarError("google.callback", err, {});
+      volver("error", err instanceof Error ? err.message : "error");
+    }
   });
 
   /**
@@ -911,10 +942,96 @@ export function crearApp(
       activo: cfg.activo,
       // Contesta cuando el plan incluye agentes; si no, está configurado pero en pausa por plan.
       enPausaPorPlan: !tieneCapacidad(tenant, "agentes"),
-      herramientas: ["pasar_a_humano", "buscar_prospecto", "calificar_prospecto", ...(cfg.herramientas ?? []).map((h) => h.nombre)],
+      rol: cfg.rol ?? "ventas",
+      herramientas: (cfg.rol ?? "ventas") === "citas"
+        ? ["pasar_a_humano", "consultar_disponibilidad", "consultar_citas", "proponer_cambio", "confirmar_cambio"]
+        : ["pasar_a_humano", "buscar_prospecto", "calificar_prospecto", ...(cfg.herramientas ?? []).map((h) => h.nombre)],
+      ...((cfg.rol ?? "ventas") === "citas" ? { google: Boolean(await repo.getConectorGoogle(req.tenantId!)) } : {}),
       // Atiende todas las líneas del tenant: cualquier entrante que ningún disparador conteste.
       lineas: instancias.map((i) => ({ instanceId: i.id, nombre: i.nombre ?? null, numero: i.numero, estado: i.estado, viva: gestor ? gestor.obtener(i.id) !== null : false })),
     }]);
+  });
+
+  // ── Citas (Susana): Google Calendar, directorio y agenda ─────────────────
+  tenantRouter.get("/google", async (req, res) => {
+    const doc = await repo.getConectorGoogle(req.tenantId!);
+    res.json({ disponible: Boolean(opciones.google), conectado: Boolean(doc), email: doc?.email ?? null, conectadoEn: doc?.conectadoEn ?? null });
+  });
+  tenantRouter.post("/google/conectar", async (req, res) => {
+    if (!opciones.google) { res.status(503).json({ error: "Google Calendar no está configurado en este orquestador" }); return; }
+    res.json({ url: opciones.google.urlAutorizacion(req.tenantId!) });
+  });
+  tenantRouter.delete("/google", async (req, res) => {
+    if (!opciones.google) { await repo.deleteConectorGoogle(req.tenantId!); res.status(204).end(); return; }
+    await opciones.google.desconectar(req.tenantId!);
+    res.status(204).end();
+  });
+
+  const ROLES = new Set(["dueno", "profesional", "recepcion"]);
+  const publicaPersona = (p: PersonaDirectorio) => ({ ...p, enModoCliente: Boolean(p.modoClienteHasta && Date.parse(p.modoClienteHasta) > Date.now()) });
+  tenantRouter.get("/directorio", async (req, res) => {
+    res.json((await repo.listDirectorio(req.tenantId!)).map(publicaPersona));
+  });
+  tenantRouter.put("/directorio", async (req, res) => {
+    const b = req.body ?? {};
+    const telefono = typeof b.telefono === "string" ? b.telefono.replace(/[^\d]/g, "") : "";
+    if (telefono.length < 10 || telefono.length > 15) { res.status(400).json({ error: "telefono debe tener entre 10 y 15 dígitos, con lada de país" }); return; }
+    if (typeof b.nombre !== "string" || !b.nombre.trim()) { res.status(400).json({ error: "nombre requerido" }); return; }
+    if (!ROLES.has(b.rol)) { res.status(400).json({ error: "rol debe ser dueno, profesional o recepcion" }); return; }
+    const previa = await repo.getPersonaDirectorio(req.tenantId!, telefono);
+    const ahora = new Date().toISOString();
+    const persona: PersonaDirectorio = {
+      telefono, nombre: b.nombre.trim().slice(0, 80), rol: b.rol,
+      calendarioId: typeof b.calendarioId === "string" && b.calendarioId.trim() ? b.calendarioId.trim() : null,
+      modoClienteHasta: previa?.modoClienteHasta ?? null,
+      creadoEn: previa?.creadoEn ?? ahora, actualizadoEn: ahora,
+    };
+    await repo.savePersonaDirectorio(req.tenantId!, persona);
+    registrar("directorio.guardado", { tenant: req.tenantId, quien: persona.nombre, telefono: enmascararTelefono(`+${telefono}`), rol: persona.rol, calendario: persona.calendarioId ?? "default", nuevo: !previa });
+    res.status(previa ? 200 : 201).json(publicaPersona(persona));
+  });
+  tenantRouter.delete("/directorio/:telefono", async (req, res) => {
+    const telefono = String(req.params.telefono).replace(/[^\d]/g, "");
+    const previa = await repo.getPersonaDirectorio(req.tenantId!, telefono);
+    if (!previa) { res.status(404).json({ error: "no está en el directorio" }); return; }
+    await repo.deletePersonaDirectorio(req.tenantId!, telefono);
+    registrar("directorio.baja", { tenant: req.tenantId, quien: previa.nombre, telefono: enmascararTelefono(`+${telefono}`), rol: previa.rol });
+    res.status(204).end();
+  });
+  /** Modo cliente desde la plataforma (el mismo que el comando "modo cliente" por chat). */
+  tenantRouter.post("/directorio/:telefono/modo-cliente", async (req, res) => {
+    const telefono = String(req.params.telefono).replace(/[^\d]/g, "");
+    const previa = await repo.getPersonaDirectorio(req.tenantId!, telefono);
+    if (!previa) { res.status(404).json({ error: "no está en el directorio" }); return; }
+    const activar = req.body?.activar !== false;
+    const hasta = activar ? new Date(Date.now() + MODO_CLIENTE_HORAS * 3_600_000).toISOString() : null;
+    const persona = { ...previa, modoClienteHasta: hasta, actualizadoEn: new Date().toISOString() };
+    await repo.savePersonaDirectorio(req.tenantId!, persona);
+    registrar("directorio.modo_cliente", { tenant: req.tenantId, quien: persona.nombre, telefono: enmascararTelefono(`+${telefono}`), rol: persona.rol, hasta, desde: "plataforma" });
+    res.json(publicaPersona(persona));
+  });
+
+  tenantRouter.get("/agenda", async (req, res) => {
+    const tenant = (await repo.getTenant(req.tenantId!))!;
+    res.json({ ...agendaDe(tenant), configurada: Boolean(tenant.agenda) });
+  });
+  tenantRouter.put("/agenda", async (req, res) => {
+    const tenant = (await repo.getTenant(req.tenantId!))!;
+    const b = req.body ?? {};
+    const previa = agendaDe(tenant);
+    const dias = Array.isArray(b.horario?.dias) ? [...new Set(b.horario.dias.map(Number).filter((d: number) => Number.isInteger(d) && d >= 0 && d <= 6))].sort() as number[] : previa.horario.dias;
+    const hhmm = (v: unknown, def: string) => (typeof v === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : def);
+    const agenda = {
+      calendarioId: typeof b.calendarioId === "string" && b.calendarioId.trim() ? b.calendarioId.trim().slice(0, 200) : previa.calendarioId,
+      duracionMin: Number.isInteger(b.duracionMin) && b.duracionMin >= 10 && b.duracionMin <= 480 ? b.duracionMin : previa.duracionMin,
+      horario: { dias: dias.length ? dias : previa.horario.dias, desde: hhmm(b.horario?.desde, previa.horario.desde), hasta: hhmm(b.horario?.hasta, previa.horario.hasta) },
+      anticipacionMin: Number.isInteger(b.anticipacionMin) && b.anticipacionMin >= 0 ? b.anticipacionMin : previa.anticipacionMin,
+      ventanaDias: Number.isInteger(b.ventanaDias) && b.ventanaDias >= 1 && b.ventanaDias <= 60 ? b.ventanaDias : previa.ventanaDias,
+    };
+    if (agenda.horario.desde >= agenda.horario.hasta) { res.status(400).json({ error: "el horario debe empezar antes de terminar" }); return; }
+    await repo.saveTenant({ ...tenant, agenda });
+    registrar("agenda.configurada", { tenant: tenant.id, calendario: agenda.calendarioId, duracion: agenda.duracionMin, dias: agenda.horario.dias.join(","), desde: agenda.horario.desde, hasta: agenda.horario.hasta });
+    res.json({ ...agenda, configurada: true });
   });
 
   /**
@@ -1454,7 +1571,8 @@ export function crearApp(
         });
       }
     }
-    const agente = { activo: b.activo !== false, nombre, proveedor: "anthropic" as const, modelo, esfuerzo, maxSalida, instrucciones, herramientas };
+    const rol = b.rol === "citas" || b.rol === "ventas" ? b.rol : tenant.agente?.rol ?? "ventas";
+    const agente = { activo: b.activo !== false, nombre, rol, proveedor: "anthropic" as const, modelo, esfuerzo, maxSalida, instrucciones, herramientas };
     await repo.saveTenant({ ...tenant, agente });
     registrar("agente.configurado", { tenant: tenant.id, agente: nombre, modelo, esfuerzo, activo: agente.activo, capacidad: tieneCapacidad(tenant, "agentes") ? "agentes ok" : "el plan NO incluye agentes" });
     res.json({ tenantId: tenant.id, agente, tieneCapacidadAgentes: tieneCapacidad(tenant, "agentes") });

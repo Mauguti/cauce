@@ -120,6 +120,8 @@ export interface Tenant {
   agente?: AgenteConfig | null;
   /** Cobro: método de pago, periodo y contratación. Ausente = transferencia, como hasta ahora. */
   cobro?: CobroConfig | null;
+  /** Agenda de citas (Susana): horario, duración y calendario por defecto. Ausente = defaults. */
+  agenda?: AgendaConfig | null;
   /** @deprecated Migrado a `limitesOverride.lineas`. Se lee solo por compatibilidad. */
   limiteLineas?: number;
   /** @deprecated Migrado a `limitesOverride.conectores`. Se lee solo por compatibilidad. */
@@ -161,6 +163,8 @@ export interface AgenteConfig {
   activo: boolean;
   /** Cómo se presenta: "Santiago". */
   nombre: string;
+  /** Qué hace: ventas (Santiago, default) o citas (Susana: agenda sobre Google Calendar). */
+  rol?: "ventas" | "citas";
   proveedor: "anthropic";
   /** Id exacto del modelo, p. ej. "claude-opus-5". */
   modelo: string;
@@ -240,6 +244,29 @@ export interface RegistroConsumo {
   en: string;
   /** Herramientas invocadas en la respuesta, si hubo. */
   herramientas?: string[];
+  /** Id opaco de la conversación (idConversacion): unión exacta con la conversación sin guardar el teléfono. Ausente en filas anteriores al 16-sep-2026. */
+  conversacionId?: string;
+}
+
+/**
+ * Id opaco y estable de una conversación (tenant + línea + teléfono). Sirve
+ * para unir el ledger de consumo con la conversación sin guardar el
+ * teléfono una segunda vez. Hash, no cifrado: no se puede volver al número.
+ */
+export function idConversacion(tenantId: TenantId, instanceId: InstanceId, telefono: string): string {
+  const digitos = telefono.replace(/[^\d]/g, "");
+  return hashCorto(`${tenantId}/${instanceId}/${digitos}`);
+}
+
+/** FNV-1a de 64 bits en hex (sin dependencias de Node para que el core siga siendo isomorfo). */
+function hashCorto(texto: string): string {
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for (let i = 0; i < texto.length; i++) {
+    const c = texto.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ c, 0x811c9dc5) >>> 0;
+  }
+  return h1.toString(16).padStart(8, "0") + h2.toString(16).padStart(8, "0");
 }
 
 /** Definición efectiva del plan del tenant; tolera ids legado sin migrar. */
@@ -417,6 +444,76 @@ export function sumarMeses(iso: string, meses: number): string {
 }
 
 export type EstadoPago = "prueba" | "al_corriente" | "vencido";
+
+// ── Citas (Susana) ──────────────────────────────────────────────────────────
+
+/**
+ * Directorio del tenant: quién es quién por número. Vive a nivel tenant,
+ * no dentro del ADN de un agente: todos los agentes consumen la misma
+ * lista. Todo número que no está aquí es cliente. `tenants/{t}/directorio/{digitos}`.
+ */
+export interface PersonaDirectorio {
+  /** E.164 sin '+', solo dígitos (doc id). */
+  telefono: string;
+  nombre: string;
+  rol: "dueno" | "profesional" | "recepcion";
+  /** Id del calendario de Google que atiende (profesional). null = el calendario por defecto del tenant. */
+  calendarioId?: string | null;
+  /** Mientras esté en el futuro, este número se trata como CLIENTE (demo desde el celular del dueño). */
+  modoClienteHasta?: string | null;
+  creadoEn: string;
+  actualizadoEn: string;
+}
+
+export interface AgendaConfig {
+  /** Calendario por defecto (id de Google Calendar; "primary" = el principal de la cuenta conectada). */
+  calendarioId: string;
+  duracionMin: number;
+  /** Días que se atienden (0 = domingo … 6 = sábado) y horario local del calendario. */
+  horario: { dias: number[]; desde: string; hasta: string };
+  /** No se ofrecen horas antes de esta anticipación. */
+  anticipacionMin: number;
+  /** Hasta cuántos días adelante se ofrecen horas. */
+  ventanaDias: number;
+}
+
+export const AGENDA_DEFAULT: AgendaConfig = {
+  calendarioId: "primary",
+  duracionMin: 60,
+  horario: { dias: [1, 2, 3, 4, 5], desde: "09:00", hasta: "18:00" },
+  anticipacionMin: 120,
+  ventanaDias: 14,
+};
+
+/** Conexión de Google (OAuth por tenant). El refresh token va cifrado con Cripto; nunca en claro. `tenants/{t}/conectores/google`. */
+export interface ConectorGoogleDoc {
+  email: string | null;
+  refreshTokenCifrado: string;
+  scope: string;
+  conectadoEn: string;
+}
+
+/**
+ * Cambio pendiente de confirmación en una conversación (segundo nivel):
+ * la herramienta `proponer_cambio` lo deja aquí y `confirmar_cambio` solo
+ * lo ejecuta en un mensaje POSTERIOR del cliente. Así la confirmación en
+ * el chat es real y no una palabra que el modelo se dice a sí mismo.
+ */
+export interface CitaPendiente {
+  accion: "agendar" | "cancelar" | "mover";
+  calendarioId: string;
+  /** ISO del inicio propuesto (agendar/mover). */
+  inicio?: string | null;
+  fin?: string | null;
+  /** Evento afectado (cancelar/mover). */
+  eventoId?: string | null;
+  nombre?: string | null;
+  resumen: string;
+  propuestaEn: string;
+  /** Mensaje entrante en el que se propuso; la confirmación debe venir en otro. */
+  mensajeId: string;
+}
+
 
 /**
  * Estado de pago para mostrarlo (banner de activación, Billing). Solo
@@ -698,6 +795,8 @@ export interface Conversacion {
    * reparte ni se adivina. Capa base del plan de conexión, no de un agente.
    */
   atribucion?: Atribucion | null;
+  /** Cambio de cita propuesto y aún sin confirmar (Susana). */
+  citaPendiente?: CitaPendiente | null;
   /**
    * Cortacircuitos de respuestas automáticas: marcas de tiempo de las
    * últimas respuestas de bot/agente (acotado) y el último texto, para
@@ -775,6 +874,10 @@ export const rutas = {
   /** Consumo de agentes por mes (YYYY-MM): agregado en el doc, llamadas en la subcolección. */
   consumoMes: (tenantId: TenantId, mes: string) => `tenants/${tenantId}/consumo/${mes}`,
   consumoLlamadas: (tenantId: TenantId, mes: string) => `tenants/${tenantId}/consumo/${mes}/llamadas`,
+  directorio: (tenantId: TenantId) => `tenants/${tenantId}/directorio`,
+  persona: (tenantId: TenantId, telefono: string) => `tenants/${tenantId}/directorio/${telefono}`,
+  /** Candados de franja (anti-empalme entre conversaciones nuestras): doc id `calendarioId|inicioISO`. */
+  reservas: (tenantId: TenantId) => `tenants/${tenantId}/reservas`,
   /** Ledger de pagos, append-only. */
   pagos: (tenantId: TenantId) => `tenants/${tenantId}/pagos`,
   pago: (tenantId: TenantId, pagoId: string) => `tenants/${tenantId}/pagos/${pagoId}`,

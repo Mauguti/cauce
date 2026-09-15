@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgenteConfig, Conocimiento, Conversacion, HerramientaWebhook, InstanceId, Message, Tenant, TenantId } from "@cauce/core";
+import { idConversacion, type AgenteConfig, type Conocimiento, type Conversacion, type HerramientaWebhook, type InstanceId, type Message, type Tenant, type TenantId } from "@cauce/core";
 import type { Repositorio } from "../store.ts";
 import type { Cripto } from "../cripto.ts";
 import { cronometro, enmascararTelefono, registrar, registrarError } from "../log.ts";
@@ -8,6 +8,7 @@ import type { ConectorBitrix, ProspectoCrm } from "../bitrix/conector.ts";
 import type { ConectorMonday } from "../monday/conector.ts";
 import type { EntidadBitrix } from "../bitrix/cliente.ts";
 import { costoUsd, ErrorProveedor, type HerramientaDef, type ProveedorModelo } from "./proveedor.ts";
+import { HERRAMIENTAS_CITAS, type Citas, type CtxCitas } from "./citas.ts";
 
 /**
  * Agente conversacional del tenant (el primero: Santiago, que contesta
@@ -153,10 +154,13 @@ export class Agente {
   readonly #monday: ConectorMonday | null;
   readonly #cripto: Cripto | null;
   readonly #fetch: typeof fetch;
+  readonly #citas: Citas | null;
 
   constructor(opciones: {
     repo: Repositorio;
     proveedores: Record<string, ProveedorModelo>;
+    /** Agenda de citas (Susana, rol `citas`); sin él, ese rol no contesta y lo dice en bitácora. */
+    citas?: Citas;
     /** Para avisar en el chat de Bitrix al traspasar. */
     openlines?: ConectorOpenlines;
     /** Para dejar el traspaso en el timeline del registro vinculado. */
@@ -173,6 +177,7 @@ export class Agente {
     this.#monday = opciones.monday ?? null;
     this.#cripto = opciones.cripto ?? null;
     this.#fetch = opciones.fetchImpl ?? fetch;
+    this.#citas = opciones.citas ?? null;
   }
 
   /**
@@ -193,8 +198,28 @@ export class Agente {
     const base = { tenant: tenantId, agente: cfg.nombre, instancia: instanceId, telefono: enmascararTelefono(mensaje.telefono), mensaje: mensaje.id };
 
     const conocimiento = (await this.#repo.getConocimiento(tenantId)) ?? {};
-    const { sistema, catalogoRecortado } = armarSistema(cfg, tenant, conocimiento);
-    if (catalogoRecortado) registrar("agente.catalogo_recortado", { ...base, tope: CATALOGO_MAX_CARACTERES }, "warn");
+
+    // Rol citas (Susana): directorio, comando de modo cliente, prompt y herramientas propias.
+    let ctxCitas: CtxCitas | null = null;
+    let sistema: string;
+    if ((cfg.rol ?? "ventas") === "citas") {
+      if (!this.#citas) {
+        registrar("agente.sin_calendario", { ...base, nota: "rol citas sin Google configurado en este orquestador (GOOGLE_CLIENT_ID/SECRET)" }, "warn");
+        return null;
+      }
+      if (!(await this.#repo.getConectorGoogle(tenantId))) {
+        registrar("agente.sin_calendario", { ...base, nota: "el tenant no ha conectado Google Calendar" }, "warn");
+        return null;
+      }
+      const comando = await this.#citas.comando(tenantId, telefono, mensaje.cuerpo);
+      if (comando) return comando;
+      ctxCitas = await this.#citas.contexto(tenant, instanceId, telefono, contacto ?? null, mensaje.id, cfg, base);
+      sistema = await this.#citas.sistema(ctxCitas, conocimiento);
+    } else {
+      const armado = armarSistema(cfg, tenant, conocimiento);
+      sistema = armado.sistema;
+      if (armado.catalogoRecortado) registrar("agente.catalogo_recortado", { ...base, tope: CATALOGO_MAX_CARACTERES }, "warn");
+    }
 
     // Historial de la conversación, sin el mensaje actual (se añade al final).
     const previos = (await this.#repo.listMessagesDeConversacion(tenantId, instanceId, telefono, HISTORIAL_MAX))
@@ -202,10 +227,11 @@ export class Agente {
       .map((m) => ({ rol: m.direccion === "in" ? ("usuario" as const) : ("asistente" as const), texto: m.cuerpo }));
     const historial = [...previos, { rol: "usuario" as const, texto: contacto ? `${contacto}: ${mensaje.cuerpo}` : mensaje.cuerpo }];
 
-    const crm = await this.#crmDe(tenantId);
-    const ctx = { tenant, cfg, instanceId, telefono, contacto: contacto ?? null, base, crm };
+    const crm = ctxCitas ? null : await this.#crmDe(tenantId);
+    const ctx: Ctx = { tenant, cfg, instanceId, telefono, contacto: contacto ?? null, base, crm, citas: ctxCitas };
     const herramientas = [
       HERRAMIENTA_PASAR_A_HUMANO,
+      ...(ctxCitas ? HERRAMIENTAS_CITAS : []),
       ...(crm ? [HERRAMIENTA_BUSCAR_PROSPECTO, HERRAMIENTA_CALIFICAR_PROSPECTO] : []),
       ...(cfg.herramientas ?? []).map(defWebhook),
     ];
@@ -226,7 +252,7 @@ export class Agente {
       const ms = fin();
       const resultado = r.texto ? "ok" : r.parada === "refusal" ? "rechazo" : "sin_texto";
       await this.#repo.registrarConsumo({
-        id, tenantId, agente: cfg.nombre, instanceId, telefono: enmascararTelefono(mensaje.telefono), proveedor: proveedor.nombre,
+        id, tenantId, agente: cfg.nombre, instanceId, telefono: enmascararTelefono(mensaje.telefono), conversacionId: idConversacion(tenantId, instanceId, telefono), proveedor: proveedor.nombre,
         modelo: r.modelo, entrada: r.uso.entrada, salida: r.uso.salida, cacheLectura: r.uso.cacheLectura, cacheEscritura: r.uso.cacheEscritura,
         costoUsd: r.costoUsd, ms, resultado, error: null, en,
         ...(r.herramientasUsadas.length ? { herramientas: r.herramientasUsadas } : {}),
@@ -243,7 +269,7 @@ export class Agente {
       const parcial = err instanceof ErrorProveedor ? err.usoParcial : { entrada: 0, salida: 0, cacheLectura: 0, cacheEscritura: 0 };
       const modelo = err instanceof ErrorProveedor ? err.modelo : cfg.modelo;
       await this.#repo.registrarConsumo({
-        id, tenantId, agente: cfg.nombre, instanceId, telefono: enmascararTelefono(mensaje.telefono), proveedor: proveedor.nombre,
+        id, tenantId, agente: cfg.nombre, instanceId, telefono: enmascararTelefono(mensaje.telefono), conversacionId: idConversacion(tenantId, instanceId, telefono), proveedor: proveedor.nombre,
         modelo, entrada: parcial.entrada, salida: parcial.salida, cacheLectura: parcial.cacheLectura, cacheEscritura: parcial.cacheEscritura,
         costoUsd: costoUsd(modelo, parcial) ?? 0, ms, resultado: "error",
         error: err instanceof Error ? err.message : String(err), en,
@@ -330,6 +356,10 @@ export class Agente {
 
   async #ejecutar(ctx: Ctx, nombre: string, args: Record<string, unknown>): Promise<string> {
     if (nombre === HERRAMIENTA_PASAR_A_HUMANO.nombre) return this.#pasarAHumano(ctx, args);
+    if (ctx.citas && this.#citas) {
+      const r = await this.#citas.ejecutar(ctx.citas, nombre, args);
+      if (r !== null) return r;
+    }
     if (nombre === HERRAMIENTA_BUSCAR_PROSPECTO.nombre && ctx.crm) return this.#herramientaBuscar(ctx);
     if (nombre === HERRAMIENTA_CALIFICAR_PROSPECTO.nombre && ctx.crm) return this.#herramientaCalificar(ctx, args);
     const wh = (ctx.cfg.herramientas ?? []).find((h) => h.nombre === nombre);
@@ -400,6 +430,7 @@ interface Ctx {
   contacto: string | null;
   base: Record<string, unknown>;
   crm: "bitrix" | "monday" | null;
+  citas: CtxCitas | null;
 }
 
 function defWebhook(h: HerramientaWebhook): HerramientaDef {
