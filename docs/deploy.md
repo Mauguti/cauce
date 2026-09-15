@@ -300,6 +300,17 @@ repo ni por chat.
 - Los avisos de cobro agotado o tarjeta inválida salen por
   `CAUCE_AVISOS_WHATSAPP`, desde la primera línea viva del tenant afectado.
 
+### `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `CAUCE_PLATAFORMA_URL` — Google Calendar (Susana)
+
+Ver `docs/susana.md`. Credenciales de la app OAuth de Google (tipo "Web",
+redirect URI exacto `<CAUCE_URL_PUBLICA>/google/callback`, scope
+`calendar.events`), en `/etc/factory.env`. Sin ellas, `/health` dice
+`google: false`, la tarjeta de Google Calendar queda "Próximamente" y los
+agentes con `rol: citas` no contestan (`agente.sin_calendario`).
+`CAUCE_PLATAFORMA_URL` (p. ej. `https://factory.digsol.com.mx`) es a dónde
+vuelve el navegador tras el OAuth; sin ella se usa el primer origen de
+`CAUCE_CORS_ORIGENES`.
+
 ### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)
 
 Dos orquestadores sobre el mismo proyecto Firebase compartirían la base

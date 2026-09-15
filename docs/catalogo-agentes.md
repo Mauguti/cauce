@@ -11,7 +11,7 @@ en la plataforma: `constants.ts` (`AGENTS`); toda pantalla lee de ahí.
 | Mateo | Marketing y campañas | Mapeado, no construido |
 | Elena | Cobranza | Mapeada, no construida |
 | Valeria | Soporte | Mapeada, no construida |
-| Susana | Citas y recepción | Mapeada, no construida |
+| Susana | Citas y recepción | **En operación (v1, 16-sep-2026)**: talleres, estéticas, masaje; no salud |
 | Emilio | Cuentas por pagar | Mapeado, no construido |
 
 Descartado: agente de pedidos para restaurantes. Exige catálogo con
@@ -104,8 +104,10 @@ KPI de venta: tasa de no-show. Cada recorte quita riesgo, no solo tiempo:
   personales sensibles bajo la LFPDPPP. Sectores de entrada: talleres
   mecánicos, estéticas y estudios de masaje. El CV y el material lo dicen.
 
-Pendientes de decisión antes de codear: cómo se conecta Google Calendar y
-cómo se evitan empalmes cuando alguien agenda por fuera.
+Decidido y construido (16-sep-2026): OAuth por tenant con scope
+`calendar.events`; empalmes en tres capas y **Susana cede**. Diseño
+completo en `docs/susana.md`; alta en `docs/alta-cliente-susana.md` (con
+la frase para la pantalla de "app no verificada" de Google).
 
 ### Trazabilidad de campañas: capa base, no agente
 
