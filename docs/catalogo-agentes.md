@@ -76,16 +76,36 @@ encima, se abre el segundo. No antes.
   asesoría fiscal y está prohibido. Avisa el estado ante el SAT y la lista
   69-B; la decisión es del contador.
 
-### Susana
+### Susana v1 (decidido 16-sep-2026: se construye ahora, versión corta)
 
-- Confirma, cancela y reagenda citas; se conecta a Google Calendar.
-- Estratégica: primer agente que no exige CRM. Abre consultorios, talleres
-  y estudios. KPI de venta: tasa de no-show.
-- Alcance pendiente: escritura en calendario, varios profesionales o
-  estaciones por local, política de cancelación.
-- Entrar por mecánicos y estudios de masaje. Salud (dentistas, psicólogos)
-  espera aviso de privacidad y postura de tratamiento de datos: son datos
-  personales sensibles bajo la LFPDPPP.
+Abre el mercado que hoy no se puede vender: WhatsApp y calendario sin CRM.
+KPI de venta: tasa de no-show. Cada recorte quita riesgo, no solo tiempo:
+
+- **Solo Google Calendar.** Outlook, Apple y Calendly cuando un cliente
+  que paga lo pida.
+- **Sin pagos.** Ni cobro, ni ligas, ni anticipos: otra conversación, con
+  implicaciones regulatorias.
+- **Sin acciones masivas.** "Cancela todas mis citas de mañana" no se
+  ejecuta: dispara `pasar_a_humano`. Con eso desaparece el tercer nivel de
+  confirmación, el más peligroso y el más caro.
+- **Privacidad, un solo comportamiento.** Devuelve hora y nombre de pila,
+  nunca el motivo. Sin interruptor: el default seguro es el único modo. Se
+  agrega si un cliente lo pide y queda asentado que lo pidió.
+- **Directorio mínimo, a nivel tenant** (no en el ADN): número → persona →
+  rol (dueño/admin · profesional · recepción) → su calendario. Todo número
+  fuera del directorio es cliente. Comando para que un número del
+  directorio pase a modo cliente temporal (demo desde el celular de Mau).
+- **Dos niveles de confirmación:** consulta → basta reconocer el número;
+  cambio puntual (agendar, cancelar, mover UNA cita) → confirmación en el
+  chat antes de escribir; masivo → no existe, traspaso a humano.
+- **Bitácora con nombre y número** en toda acción sobre el calendario.
+- ⛔ **Nada de salud** (dentistas, psicólogos, consultorios) hasta que
+  exista el aviso de privacidad: los motivos de cita médica son datos
+  personales sensibles bajo la LFPDPPP. Sectores de entrada: talleres
+  mecánicos, estéticas y estudios de masaje. El CV y el material lo dicen.
+
+Pendientes de decisión antes de codear: cómo se conecta Google Calendar y
+cómo se evitan empalmes cuando alguien agenda por fuera.
 
 ### Trazabilidad de campañas: capa base, no agente
 
