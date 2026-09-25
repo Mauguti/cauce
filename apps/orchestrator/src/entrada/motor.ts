@@ -9,6 +9,15 @@ import type { EntidadBitrix } from "../bitrix/cliente.ts";
 import { primeroQueCoincide } from "./disparadores.ts";
 import type { Agente } from "../agentes/agente.ts";
 import { descontarCreditos, evaluarAviso, MENSAJE_ENERGIA_AGOTADA, obtenerEstadoEnergia, type EstadoEnergia } from "../agentes/energia.ts";
+
+/**
+ * Aviso que se envía UNA VEZ por conversación cuando el tenant está
+ * suspendido. Honesto, sin culpar al contacto ni inventar motivos.
+ */
+export const MENSAJE_SUSPENSION =
+  "Hola. Nuestro servicio está pausado temporalmente. " +
+  "Tu mensaje quedó registrado y será atendido cuando el servicio se reanude. " +
+  "Gracias por tu comprensión.";
 import type { FotoLeida } from "../cobro/precios.ts";
 
 /**
@@ -278,6 +287,15 @@ export class MotorEntrada {
           await this.#openlines.reflejarBot(tenantId, instanceId, mensaje.telefono, respuesta).catch(() => {});
         }
         await this.#cortacircuitos(tenantId, instanceId, telefono, respuesta, base);
+      }
+    } else if (tenant && !humana && tenant.estado === "suspendido") {
+      // ── G5: suspendido — aviso automático UNA VEZ por conversación ──
+      if (!conversacion.avisoSuspensionEn) {
+        await this.#enviar(tenantId, instanceId, mensaje.telefono, MENSAJE_SUSPENSION, "sistema");
+        await this.#repo.marcarAvisoSuspension(tenantId, instanceId, telefono, new Date(this.#ahora()).toISOString());
+        registrar("suspension.aviso_enviado", { ...base }, "info");
+      } else {
+        registrar("entrada.respuesta", { ...base, resultado: "ninguna", origen: "cuenta suspendida, aviso ya enviado" }, "warn");
       }
     } else if (tenant && !humana) {
       registrar("entrada.respuesta", { ...base, resultado: "ninguna", origen: `el plan ${tenant.plan} no incluye bots ni agentes, o la cuenta está en solo lectura` }, "warn");

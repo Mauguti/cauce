@@ -160,6 +160,14 @@ export interface Repositorio {
     hasta: string | null,
   ): Promise<void>;
 
+  /** Marca que se envió el aviso de suspensión a esta conversación. */
+  marcarAvisoSuspension(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    en: string,
+  ): Promise<void>;
+
   // Disparadores de entrada por tenant (lista ordenada por prioridad).
   getDisparadores(tenantId: TenantId): Promise<DisparadorEntrada[]>;
   saveDisparadores(
@@ -581,6 +589,15 @@ export class RepositorioEnMemoria implements Repositorio {
     itemId: string,
   ): Promise<void> {
     this.#fusionarConversacion(tenantId, instanceId, telefono, { mondayItemId: itemId });
+  }
+
+  async marcarAvisoSuspension(
+    tenantId: TenantId,
+    instanceId: InstanceId,
+    telefono: string,
+    en: string,
+  ): Promise<void> {
+    this.#fusionarConversacion(tenantId, instanceId, telefono, { avisoSuspensionEn: en });
   }
 
   async getDisparadores(tenantId: TenantId): Promise<DisparadorEntrada[]> {

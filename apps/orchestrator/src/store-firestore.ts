@@ -448,6 +448,12 @@ export class RepositorioFirestore implements Repositorio {
       .set({ tenantId, instanceId, telefono, traspaso }, { merge: true });
   }
 
+  async marcarAvisoSuspension(tenantId: TenantId, instanceId: InstanceId, telefono: string, en: string): Promise<void> {
+    await this.#db
+      .doc(rutas.conversacion(tenantId, instanceId, telefono))
+      .set({ tenantId, instanceId, telefono, avisoSuspensionEn: en }, { merge: true });
+  }
+
   async getConectorBitrix(tenantId: TenantId): Promise<ConectorBitrixDoc | null> {
     const doc = await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/bitrix`).get();
     return doc.exists ? (doc.data() as ConectorBitrixDoc) : null;

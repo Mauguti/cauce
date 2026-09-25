@@ -876,6 +876,11 @@ export interface Conversacion {
    * los bots se pausan solo en esta conversación. Null = sin operador.
    */
   humanaHasta?: string | null;
+  /**
+   * ISO del aviso de suspensión enviado al contacto en esta conversación.
+   * Se envía UNA SOLA VEZ; null/ausente = no se ha avisado.
+   */
+  avisoSuspensionEn?: string | null;
 }
 
 /** Ajustes del canal abierto por tenant; lo ausente toma el default. */
