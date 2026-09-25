@@ -24,7 +24,8 @@ import {
   PLANES, type Capacidad, type TenantPlan,
   estadoPago,
 } from "@cauce/core";
-import { extraerAtribucion, normalizarActualizacion, normalizarEntrante, resumirCrudo } from "./webhook.ts";
+import { extraerAtribucion, extraerAdjuntosEntrantes, normalizarActualizacion, normalizarEntrante, resumirCrudo } from "./webhook.ts";
+import { ADJUNTO_MAX_BYTES } from "@cauce/core";
 import { ErrorConfirmacion, type ConectorOpenlines } from "./bitrix/openlines/conector.ts";
 import { normalizarNombreLinea } from "./bitrix/openlines/tipos.ts";
 import { enmascararTelefono, registrar, registrarCadaMs, registrarError } from "./log.ts";
@@ -35,6 +36,15 @@ declare global {
       tenantId?: TenantId;
     }
   }
+}
+
+function extensionRapida(mime: string): string {
+  const m: Record<string, string> = {
+    "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+    "audio/ogg": ".ogg", "audio/mpeg": ".mp3", "video/mp4": ".mp4",
+    "application/pdf": ".pdf",
+  };
+  return m[mime.split(";")[0].trim()] ?? "";
 }
 
 function tokenValido(recibido: unknown, esperado: string): boolean {
@@ -96,6 +106,8 @@ export interface AppOpciones {
   google?: GoogleReal;
   /** A dónde vuelve el navegador tras el OAuth de Google (Integraciones de la plataforma). */
   plataformaUrl?: string;
+  /** Almacén de adjuntos; sin él, la ruta /adjuntos responde 404. */
+  almacenAdjuntos?: import("./adjuntos/almacen.ts").AlmacenAdjuntos;
 }
 
 export function crearApp(
@@ -153,6 +165,31 @@ export function crearApp(
   const version = opciones.version ?? process.env.CAUCE_VERSION ?? "dev";
   app.get("/health", (_req, res) => {
     res.json({ ok: true, version, stripe: opciones.cobrador?.stripeModo ?? null, google: Boolean(opciones.google) });
+  });
+
+  /**
+   * Adjunto por URL firmada. Público (la firma es el control de acceso).
+   * Formato: /adjuntos/{token} donde el token contiene ruta, expiración y
+   * HMAC-SHA256. El archivo se sirve directamente con su MIME type.
+   */
+  app.get("/adjuntos/:token", async (req, res) => {
+    const almacen = opciones.almacenAdjuntos;
+    if (!almacen) { res.status(404).end(); return; }
+    const ruta = almacen.verificar(req.params.token);
+    if (!ruta) { res.status(403).json({ error: "enlace inválido o expirado" }); return; }
+    const contenido = await almacen.leer(ruta);
+    if (!contenido) { res.status(410).json({ error: "archivo expirado" }); return; }
+    // Inferir MIME de la extensión del archivo.
+    const ext = ruta.split(".").pop()?.toLowerCase() ?? "";
+    const mime: Record<string, string> = {
+      jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+      gif: "image/gif", ogg: "audio/ogg", mp3: "audio/mpeg", m4a: "audio/mp4",
+      mp4: "video/mp4", pdf: "application/pdf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    };
+    res.setHeader("content-type", mime[ext] ?? "application/octet-stream");
+    res.setHeader("cache-control", "private, max-age=3600");
+    res.send(contenido);
   });
 
   /**
@@ -353,14 +390,43 @@ export function crearApp(
     // Responder rápido: normalizar y guardar es barato. El resto
     // (conversación, disparadores, write-back al CRM) lo hace el motor de
     // entrada sin bloquear el 200; un fallo suyo no rompe la recepción.
-    // EXPERIMENTO multimedia (no se construye nada todavía): un entrante que
-    // no es texto deja su forma cruda, sin base64, para decidir qué llega y cómo.
+    // Adjuntos entrantes: extraer metadatos y, si hay almacén, descargar y guardar.
     const tipoEntrante = req.body?.data?.messageType;
     if (typeof tipoEntrante === "string" && !["conversation", "extendedTextMessage"].includes(tipoEntrante)) {
       registrar("entrante.adjunto_crudo", { tenant: tenantId, instancia: instanceId, tipo: tipoEntrante, muestra: resumirCrudo(req.body?.data?.message) });
     }
     const mensaje = normalizarEntrante(tenantId!, instanceId!, req.body);
     if (mensaje) {
+      // Descargar y guardar adjuntos si el almacén está disponible.
+      const adjuntosEntrantes = extraerAdjuntosEntrantes(req.body?.data?.message ?? {});
+      if (adjuntosEntrantes.length > 0 && opciones.almacenAdjuntos && sesion?.transport?.downloadMedia) {
+        const messageKey = req.body?.data?.key;
+        for (const ae of adjuntosEntrantes) {
+          // Si el tamaño reportado excede el tope, no descargar.
+          if (ae.tamano && ae.tamano > ADJUNTO_MAX_BYTES) {
+            registrar("adjuntos.excede_tope_entrante", {
+              tenant: tenantId, instancia: instanceId, mensaje: mensaje.id,
+              nombre: ae.nombre, tamanoMb: Math.round((ae.tamano / (1024 * 1024)) * 10) / 10,
+              topeMb: Math.round(ADJUNTO_MAX_BYTES / (1024 * 1024)),
+            }, "warn");
+            continue;
+          }
+          try {
+            const contenido = await sesion.transport.downloadMedia!(messageKey);
+            if (!contenido) {
+              registrar("adjuntos.descarga_fallida", { tenant: tenantId, instancia: instanceId, tipo: ae.tipoMensaje }, "warn");
+              continue;
+            }
+            const nombre = ae.nombre ?? (ae.esNotaDeVoz ? "nota-de-voz.ogg" : `adjunto${extensionRapida(ae.tipoMime)}`);
+            const adjunto = await opciones.almacenAdjuntos.guardar(tenantId, instanceId, mensaje.id, contenido, { nombre, tipoMime: ae.tipoMime });
+            if (adjunto) {
+              mensaje.adjuntos = [...(mensaje.adjuntos ?? []), adjunto];
+            }
+          } catch (err) {
+            registrarError("adjuntos.error_descarga", err, { tenant: tenantId, instancia: instanceId, tipo: ae.tipoMensaje });
+          }
+        }
+      }
       await repo.saveMessage(mensaje);
       registrar("entrante.guardado", {
         tenant: tenantId, instancia: instanceId, mensaje: mensaje.id,

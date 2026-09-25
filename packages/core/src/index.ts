@@ -737,9 +737,54 @@ export interface Message {
    * transporte" de "entregado de verdad".
    */
   confirmadoEn?: string | null;
+  /** Adjuntos del mensaje (imágenes, audio, documentos). */
+  adjuntos?: Adjunto[];
   /** ISO 8601 */
   timestamp: string;
 }
+
+// ── Adjuntos ────────────────────────────────────────────────────────────
+
+export interface Adjunto {
+  id: string;
+  /** Nombre original del archivo. */
+  nombre: string;
+  /** MIME type (p. ej. "image/jpeg", "audio/ogg; codecs=opus"). */
+  tipoMime: string;
+  /** Tamaño en bytes. */
+  tamano: number;
+  /** Ruta en disco relativa a CAUCE_ADJUNTOS_DIR. */
+  ruta: string;
+  /** ISO 8601 de cuándo se guardó. */
+  guardadoEn: string;
+  /** true cuando el archivo fue borrado por el barrido de retención. */
+  expirado?: boolean;
+}
+
+/**
+ * Retención de adjuntos por plan. Valor en días.
+ * Básico 30 d · Estándar 180 d · Pro 365 d.
+ */
+export const RETENCION_DIAS: Record<TenantPlan, number> = {
+  prueba: 30,
+  basico: 30,
+  estandar: 180,
+  pro: 365,
+};
+
+/**
+ * Tope de almacenamiento por cuenta (bytes). Al llegar se borra lo más
+ * viejo primero; nunca se bloquea la recepción.
+ */
+export const TOPE_BYTES: Record<TenantPlan, number> = {
+  prueba: 2 * 1024 ** 3,
+  basico: 2 * 1024 ** 3,
+  estandar: 10 * 1024 ** 3,
+  pro: 25 * 1024 ** 3,
+};
+
+/** Tamaño máximo por archivo individual (bytes). */
+export const ADJUNTO_MAX_BYTES = 20 * 1024 * 1024; // 20 MB
 
 /**
  * Causas distinguibles de un envío fallido. `reintentable` en la UI se

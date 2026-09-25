@@ -1,9 +1,41 @@
 import type { Atribucion, InstanceId, Message, TenantId } from "@cauce/core";
 
 /**
+ * Metadatos de un adjunto entrante extraídos del payload de Evolution,
+ * antes de descargar el archivo (se necesita una llamada aparte a la API).
+ */
+export interface AdjuntoEntrante {
+  /** Tipo del mensaje en Evolution (imageMessage, audioMessage, etc.). */
+  tipoMensaje: string;
+  /** MIME type reportado por Evolution. */
+  tipoMime: string;
+  /** Tamaño en bytes, si Evolution lo reporta. */
+  tamano: number | null;
+  /** Nombre del archivo, si aplica (documents). */
+  nombre: string | null;
+  /** Texto del caption (imágenes y videos pueden tener uno). */
+  caption: string | null;
+  /** true si es una nota de voz (ptt = push to talk). */
+  esNotaDeVoz: boolean;
+}
+
+/** Tipos de mensaje de Evolution que contienen un archivo adjunto. */
+const TIPOS_MEDIA = [
+  "imageMessage",
+  "audioMessage",
+  "videoMessage",
+  "documentMessage",
+  "documentWithCaptionMessage",
+  "stickerMessage",
+] as const;
+
+/**
  * Normaliza un evento MESSAGES_UPSERT de Evolution a la forma `Message`
- * de core. Devuelve null si el evento no es un mensaje entrante de texto
+ * de core. Devuelve null si el evento no es un mensaje entrante útil
  * (mensajes propios, eventos de otro tipo, payloads incompletos).
+ *
+ * Ahora acepta mensajes con adjuntos (imágenes, audio, documentos,
+ * video, stickers). El texto puede venir como caption del adjunto.
  *
  * Junto con `mapearEstadoEvolution`, es el otro punto único donde el
  * vocabulario de Evolution se traduce; nada de esto sale de aquí.
@@ -24,9 +56,23 @@ export function normalizarEntrante(
   }
   const telefono = `+${remoteJid.split("@")[0]}`;
 
-  const cuerpo: unknown =
-    data?.message?.conversation ?? data?.message?.extendedTextMessage?.text;
-  if (typeof cuerpo !== "string" || cuerpo.length === 0) return null;
+  const msg = data?.message ?? {};
+
+  // Texto: puede venir como conversation, extendedText, o caption de un adjunto.
+  let cuerpo: string =
+    (typeof msg.conversation === "string" ? msg.conversation : "") ||
+    (typeof msg.extendedTextMessage?.text === "string" ? msg.extendedTextMessage.text : "");
+
+  // Detectar adjuntos.
+  const adjuntosEntrantes = extraerAdjuntosEntrantes(msg);
+  if (adjuntosEntrantes.length > 0) {
+    // El caption del adjunto puede servir como cuerpo del mensaje.
+    const caption = adjuntosEntrantes[0].caption;
+    if (!cuerpo && caption) cuerpo = caption;
+  }
+
+  // Sin texto Y sin adjuntos → no es un mensaje útil.
+  if (!cuerpo && adjuntosEntrantes.length === 0) return null;
 
   const marcaSegundos = Number(data?.messageTimestamp);
   return {
@@ -35,13 +81,47 @@ export function normalizarEntrante(
     instanceId,
     direccion: "in",
     telefono,
-    cuerpo,
+    cuerpo: cuerpo || "",
     estado: "recibido",
     externalId: typeof key.id === "string" ? key.id : null,
     timestamp: Number.isFinite(marcaSegundos)
       ? new Date(marcaSegundos * 1000).toISOString()
       : new Date().toISOString(),
   };
+}
+
+/**
+ * Extrae los metadatos de adjuntos del payload de Evolution sin
+ * descargar el archivo. La descarga se hace por separado.
+ */
+export function extraerAdjuntosEntrantes(msg: any): AdjuntoEntrante[] {
+  const resultado: AdjuntoEntrante[] = [];
+
+  for (const tipo of TIPOS_MEDIA) {
+    let bloque = msg?.[tipo];
+
+    // documentWithCaptionMessage envuelve el documentMessage real.
+    if (tipo === "documentWithCaptionMessage" && bloque?.message?.documentMessage) {
+      bloque = bloque.message.documentMessage;
+    }
+
+    if (!bloque || typeof bloque !== "object") continue;
+
+    resultado.push({
+      tipoMensaje: tipo,
+      tipoMime: typeof bloque.mimetype === "string" ? bloque.mimetype : "application/octet-stream",
+      tamano: typeof bloque.fileLength === "number" ? bloque.fileLength
+        : typeof bloque.fileLength === "string" ? parseInt(bloque.fileLength, 10) || null
+        : null,
+      nombre: typeof bloque.fileName === "string" ? bloque.fileName
+        : typeof bloque.title === "string" ? bloque.title
+        : null,
+      caption: typeof bloque.caption === "string" ? bloque.caption : null,
+      esNotaDeVoz: Boolean(bloque.ptt),
+    });
+  }
+
+  return resultado;
 }
 
 /** Resultado de un evento MESSAGES_UPDATE: la entrega real de un saliente. */

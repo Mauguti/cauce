@@ -56,4 +56,10 @@ export interface MessageTransport {
    * no conectada, o el transporte no lo expone).
    */
   numero(): Promise<string | null>;
+  /**
+   * Descarga el archivo multimedia de un mensaje entrante. Devuelve los
+   * bytes del archivo, o null si no se pudo descargar. Opcional: los
+   * transportes sin media devuelven null.
+   */
+  downloadMedia?(messageKey: unknown): Promise<Buffer | null>;
 }

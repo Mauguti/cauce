@@ -241,6 +241,24 @@ export class EvolutionTransport implements MessageTransport {
     return mapearEstadoEvolution(String(estado), false);
   }
 
+  /**
+   * Descarga el archivo multimedia de un mensaje entrante usando la API
+   * de Evolution: POST /chat/getBase64FromMediaMessage/{instanceName}.
+   */
+  async downloadMedia(messageKey: unknown): Promise<Buffer | null> {
+    try {
+      const res = await this.#llamar(
+        "POST",
+        `/chat/getBase64FromMediaMessage/${this.#instanceName}`,
+        { message: { key: messageKey } },
+      );
+      if (res.status >= 400 || !res.json?.base64) return null;
+      return Buffer.from(res.json.base64, "base64");
+    } catch {
+      return null;
+    }
+  }
+
   async numero(): Promise<string | null> {
     // El número de la cuenta conectada sale del ownerJid que reporta
     // fetchInstances (p. ej. "5215512345678@s.whatsapp.net").
