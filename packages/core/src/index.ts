@@ -122,6 +122,11 @@ export interface Tenant {
   cobro?: CobroConfig | null;
   /** Agenda de citas (Susana): horario, duración y calendario por defecto. Ausente = defaults. */
   agenda?: AgendaConfig | null;
+  /**
+   * Créditos de energía comprados (MXN). No expiran. Se consumen después
+   * de la bolsa mensual. Ausente/null/0 = sin créditos.
+   */
+  creditosMxn?: number | null;
   /** @deprecated Migrado a `limitesOverride.lineas`. Se lee solo por compatibilidad. */
   limiteLineas?: number;
   /** @deprecated Migrado a `limitesOverride.conectores`. Se lee solo por compatibilidad. */

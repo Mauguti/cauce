@@ -88,6 +88,11 @@ export class Cobrador {
     return this.#stripe?.modo ?? null;
   }
 
+  /** Foto de precios vigente (para el medidor de energía). */
+  async precios(): Promise<FotoLeida | null> {
+    return this.#precios.obtener();
+  }
+
   // ── Ledger ────────────────────────────────────────────────────────────────
 
   /**

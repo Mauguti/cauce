@@ -8,6 +8,8 @@ import type { ConectorBitrix } from "../bitrix/conector.ts";
 import type { EntidadBitrix } from "../bitrix/cliente.ts";
 import { primeroQueCoincide } from "./disparadores.ts";
 import type { Agente } from "../agentes/agente.ts";
+import { descontarCreditos, evaluarAviso, MENSAJE_ENERGIA_AGOTADA, obtenerEstadoEnergia, type EstadoEnergia } from "../agentes/energia.ts";
+import type { FotoLeida } from "../cobro/precios.ts";
 
 /**
  * Cortacircuitos de respuestas automáticas por conversación. Un bucle entre
@@ -45,6 +47,8 @@ export class MotorEntrada {
   readonly #agente: Agente | null;
   readonly #avisosWhatsApp: string | null;
   readonly #ahora: () => number;
+  readonly #precios: (() => Promise<FotoLeida | null>) | null;
+  readonly #tipoCambio: { usdMxn: number; colchon: number };
 
   constructor(opciones: {
     repo: Repositorio;
@@ -57,6 +61,10 @@ export class MotorEntrada {
     /** Número (E.164) al que se avisa por WhatsApp cuando salta el cortacircuitos; sin él, solo bitácora. */
     avisosWhatsApp?: string;
     ahora?: () => number;
+    /** Cargador de precios (para calcular la bolsa mensual). */
+    precios?: () => Promise<FotoLeida | null>;
+    /** Tipo de cambio para convertir el gasto a pesos. */
+    tipoCambio?: { usdMxn: number; colchon: number };
   }) {
     this.#repo = opciones.repo;
     this.#enviar = opciones.enviarInmediato;
@@ -66,6 +74,8 @@ export class MotorEntrada {
     this.#agente = opciones.agente ?? null;
     this.#avisosWhatsApp = opciones.avisosWhatsApp?.trim() || null;
     this.#ahora = opciones.ahora ?? (() => Date.now());
+    this.#precios = opciones.precios ?? null;
+    this.#tipoCambio = opciones.tipoCambio ?? { usdMxn: 18.5, colchon: 1.1 };
   }
 
   /** ¿El remitente es una línea conectada nuestra? Del mismo tenant o de cualquiera. */
@@ -106,6 +116,24 @@ export class MotorEntrada {
         registrar("cortacircuitos.aviso_fallido", { ...base, error: err instanceof Error ? err.message : String(err) }, "warn");
       }
     }
+  }
+
+  /**
+   * Estado de energía del tenant (bolsa + créditos vs gasto del mes).
+   * Null si no hay precios cargados (no se puede calcular → el agente
+   * responde sin restricción, como hoy).
+   */
+  async #energiaDe(tenant: import("@cauce/core").Tenant): Promise<EstadoEnergia | null> {
+    if (!this.#precios) return null;
+    const foto = await this.#precios();
+    if (!foto) return null;
+    return obtenerEstadoEnergia(
+      this.#repo,
+      tenant,
+      foto.precios,
+      this.#tipoCambio,
+      new Date(this.#ahora()),
+    );
   }
 
   async procesar(
@@ -186,10 +214,44 @@ export class MotorEntrada {
         origen = "plan sin bots";
       }
       if (respuesta === null && puede("agentes")) {
-        if (this.#agente) {
+        // ── Medidor de energía: comprueba ANTES de gastar ──
+        const energia = await this.#energiaDe(tenant!);
+        if (energia?.agotada) {
+          // Energía agotada: degradar a bot (si el plan los tiene) o traspaso.
+          registrar("energia.agotada", { ...base, bolsa: energia.bolsaTotal, gasto: energia.gastoMes, creditos: energia.creditosRestantes }, "warn");
+          if (!respuesta && puede("bots")) {
+            // Ya se intentaron disparadores arriba y no coincidieron; no hay
+            // respuesta de bot. Se manda el mensaje de traspaso.
+            respuesta = MENSAJE_ENERGIA_AGOTADA;
+            origen += "; agente degradado: energía agotada, sin bot coincidente";
+            origenSaliente = "sistema";
+          } else if (!respuesta) {
+            // Sin bots ni agente: mensaje de traspaso para que el contacto
+            // NUNCA quede hablándole al vacío.
+            respuesta = MENSAJE_ENERGIA_AGOTADA;
+            origen += "; agente degradado: energía agotada, plan sin bots";
+            origenSaliente = "sistema";
+          }
+        } else if (this.#agente) {
+          const bolsaRestanteAntes = energia?.bolsaRestante ?? 0;
           respuesta = await this.#agente.responder(tenantId, instanceId, mensaje, conversacion.nombre ?? nombre ?? null);
           origen += respuesta ? "; agente respondió" : "; agente sin respuesta";
-          if (respuesta) origenSaliente = "agente";
+          if (respuesta) {
+            origenSaliente = "agente";
+            // Post-respuesta: descontar créditos si la bolsa se excedió,
+            // evaluar si hay que avisar al 80 %.
+            if (energia) {
+              const energiaPost = await this.#energiaDe(tenant!);
+              if (energiaPost) {
+                if (energiaPost.excesoCreditos > 0) {
+                  await descontarCreditos(this.#repo, tenantId, energiaPost.excesoCreditos - (energia.excesoCreditos ?? 0), 0);
+                }
+                evaluarAviso(energiaPost, tenantId, this.#avisosWhatsApp, (tel, cuerpo) =>
+                  this.#enviar(tenantId, instanceId, tel, cuerpo, "sistema"),
+                );
+              }
+            }
+          }
         } else {
           origen += "; agente no disponible en este orquestador";
         }

@@ -15,6 +15,7 @@ import type { VerificadorToken } from "./firebase.ts";
 import type { Provisioning } from "./provisioning.ts";
 import { ErrorCobro, ErrorFirmaStripe, type Cobrador } from "./cobro/cobrador.ts";
 import { resumirTrazabilidad } from "./agentes/trazabilidad.ts";
+import { calcularBolsa, estadoEnergia, gastoMesMxn } from "./agentes/energia.ts";
 import { ErrorGoogle, type GoogleReal } from "./google/calendario.ts";
 import { agendaDe, MODO_CLIENTE_HORAS } from "./agentes/citas.ts";
 import type { PersonaDirectorio } from "@cauce/core";
@@ -1224,11 +1225,24 @@ export function crearApp(
       costoMxn: Math.round(x.costoUsd * efectivo * 100) / 100,
       conversaciones: x.convs.size, herramientas: x.herramientas, ultimaEn: x.ultimaEn,
     });
+    // Estado de energía: bolsa + créditos, si el tenant es Pro con agentes.
+    const tenantConsumo = await repo.getTenant(req.tenantId!);
+    let energia: ReturnType<typeof estadoEnergia> | null = null;
+    if (tenantConsumo && tieneCapacidad(tenantConsumo, "agentes")) {
+      const foto = opciones.cobrador ? await opciones.cobrador.precios() : null;
+      if (foto) {
+        const agentesC = tenantConsumo.cobro?.agentesContratados ?? 1;
+        const bolsa = calcularBolsa(foto.precios, agentesC);
+        const gasto = gastoMesMxn(llamadas, tc);
+        energia = estadoEnergia(bolsa, tenantConsumo.creditosMxn ?? 0, gasto);
+      }
+    }
     res.json({
       mes,
       tipoCambio: { usdMxn: tc.usdMxn, colchon: tc.colchon, efectivo },
       total: cerrar(total),
       porAgente: [...porAgente.values()].map((a) => ({ agente: a.agente, modelos: [...a.modelos], ...cerrar(a) })),
+      ...(energia ? { energia } : {}),
     });
   });
 
