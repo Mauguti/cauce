@@ -39,10 +39,10 @@ afterEach(() => { bitacora.length = 0; });
 
 function levantar(opciones: { conCobrador?: boolean } = {}) {
   const repo = new RepositorioEnMemoria({
-    tenants: [{ id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2026-09-05T00:00:00Z", pagadoHasta: "2026-09-20T00:00:00.000Z", cicloCorteEn: "2026-09-20T00:00:00.000Z" }],
+    tenants: [{ id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: hashApiKey(KEY), creadoEn: "2028-09-05T00:00:00Z", pagadoHasta: "2028-09-20T00:00:00.000Z", cicloCorteEn: "2028-09-20T00:00:00.000Z" }],
   });
   const stripe = new StripeFalso();
-  const cobrador = new Cobrador({ repo, stripe, precios: new CargadorPrecios({ url: null, inicial: FOTO }), ahora: () => Date.parse("2026-09-15T12:00:00Z") });
+  const cobrador = new Cobrador({ repo, stripe, precios: new CargadorPrecios({ url: null, inicial: FOTO }), ahora: () => Date.parse("2028-09-15T12:00:00Z") });
   const server = crearApp(repo, undefined, { adminKey: "admin-secreta", ...(opciones.conCobrador === false ? {} : { cobrador }) }).listen(0);
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return { base, repo, stripe, cerrar: () => server.close() };
@@ -65,7 +65,7 @@ describe("rutas de cobro", () => {
       const ok = await fetch(`${base}/webhooks/stripe`, { method: "POST", headers: { "content-type": "application/json", "stripe-signature": "firma-ok" }, body: cuerpo });
       expect(ok.status).toBe(200);
       expect(await ok.json()).toEqual({ recibido: true, tipo: "payment_intent.succeeded", accion: "pago_registrado" });
-      expect((await repo.getTenant("a"))!.pagadoHasta).toBe("2026-10-20T00:00:00.000Z");
+      expect((await repo.getTenant("a"))!.pagadoHasta).toBe("2028-10-20T00:00:00.000Z");
     } finally {
       cerrar();
     }
@@ -119,21 +119,21 @@ describe("rutas de cobro", () => {
     const admin = { headers: { "x-admin-key": "admin-secreta", "content-type": "application/json" } };
     try {
       expect((await fetch(`${base}/api/admin/tenants/a/pago`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status).toBe(401);
-      const viejo = await fetch(`${base}/api/admin/tenants/a/pago`, { ...admin, method: "POST", body: JSON.stringify({ pagadoHasta: "2027-01-01T00:00:00Z" }) });
+      const viejo = await fetch(`${base}/api/admin/tenants/a/pago`, { ...admin, method: "POST", body: JSON.stringify({ pagadoHasta: "2029-01-01T00:00:00Z" }) });
       expect(viejo.status).toBe(400);
       const r = await fetch(`${base}/api/admin/tenants/a/pago`, { ...admin, method: "POST", body: JSON.stringify({ folio: "BBVA-123", montoMxn: 1390.84, periodo: "mensual", registradoPor: "mau" }) });
       expect(r.status).toBe(201);
       const cuerpo = await r.json();
-      expect(cuerpo.pagadoHasta).toBe("2026-10-20T00:00:00.000Z");
+      expect(cuerpo.pagadoHasta).toBe("2028-10-20T00:00:00.000Z");
       expect(cuerpo.pago).toMatchObject({ fuente: "transferencia", referencia: "BBVA-123", registradoPor: "admin:mau", cfdi: { estado: "pendiente" } });
       const otraVez = await fetch(`${base}/api/admin/tenants/a/pago`, { ...admin, method: "POST", body: JSON.stringify({ folio: "BBVA-123", montoMxn: 1390.84, periodo: "mensual" }) });
       expect(otraVez.status).toBe(200);
       expect((await otraVez.json()).nuevo).toBe(false);
-      expect((await repo.getTenant("a"))!.pagadoHasta).toBe("2026-10-20T00:00:00.000Z");
+      expect((await repo.getTenant("a"))!.pagadoHasta).toBe("2028-10-20T00:00:00.000Z");
 
       const re = await fetch(`${base}/api/admin/tenants/a/reembolso`, { ...admin, method: "POST", body: JSON.stringify({ referencia: "DEV-1", referenciaPago: "BBVA-123", montoMxn: 1390.84, fuente: "transferencia", registradoPor: "mau" }) });
       expect(re.status).toBe(201);
-      expect((await re.json()).pagadoHasta).toBe("2026-09-20T00:00:00.000Z");
+      expect((await re.json()).pagadoHasta).toBe("2028-09-20T00:00:00.000Z");
       const ledger = await fetch(`${base}/api/tenants/a/pagos`, conKey).then((x) => x.json());
       expect(ledger.map((p: any) => p.montoMxn).sort((x: number, y: number) => x - y)).toEqual([-1390.84, 1390.84]);
     } finally {
