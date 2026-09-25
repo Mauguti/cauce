@@ -306,11 +306,12 @@ export function pruebaVigente(t: Tenant, ahora: Date = new Date()): boolean {
 }
 
 /**
- * ¿El tenant está en solo lectura? Prueba vencida: la bandeja y el
- * historial se ven, el envío se apaga y los bots se pausan. La
- * configuración no se borra.
+ * ¿El tenant está en solo lectura? Prueba vencida o cuenta suspendida:
+ * la bandeja y el historial se ven, el envío se apaga y los bots se
+ * pausan. La configuración no se borra.
  */
 export function soloLectura(t: Tenant, ahora: Date = new Date()): boolean {
+  if (t.estado === "suspendido") return true;
   return !pruebaVigente(t, ahora);
 }
 
@@ -534,8 +535,9 @@ export function estadoPago(t: Tenant, ahora: Date = new Date()): EstadoPago {
 
 /**
  * Capacidades activas del tenant AHORA: las del plan, salvo que esté en
- * solo lectura (prueba vencida), en cuyo caso ninguna. Bajar de plan no
- * borra configuración: lo que el plan nuevo no incluye queda en pausa.
+ * solo lectura (prueba vencida o cuenta suspendida), en cuyo caso
+ * ninguna. Bajar de plan no borra configuración: lo que el plan nuevo
+ * no incluye queda en pausa.
  */
 export function capacidadesTenant(t: Tenant, ahora: Date = new Date()): Capacidad[] {
   if (soloLectura(t, ahora)) return [];

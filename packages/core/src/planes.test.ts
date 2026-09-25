@@ -66,6 +66,14 @@ describe("modelo de planes", () => {
     expect(mensajeRequierePlan("agentes")).toBe("Los agentes de IA vienen en el plan Pro.");
   });
 
+  it("un tenant suspendido queda en solo lectura sin capacidades, independiente del plan", () => {
+    const suspendido = t({ plan: "pro", estado: "suspendido" });
+    expect(soloLectura(suspendido)).toBe(true);
+    expect(capacidadesTenant(suspendido)).toEqual([]);
+    expect(tieneCapacidad(suspendido, "agentes")).toBe(false);
+    expect(tieneCapacidad(suspendido, "salientes")).toBe(false);
+  });
+
   it("distingue subida de bajada", () => {
     expect(esSubida("basico", "estandar")).toBe(true);
     expect(esSubida("pro", "estandar")).toBe(false);

@@ -498,6 +498,7 @@ export function crearApp(
       // Lo que el tenant puede hacer AHORA; el servidor es quien lo aplica.
       capacidades: capacidadesTenant(tenant),
       soloLectura: soloLectura(tenant),
+      suspendido: tenant.estado === "suspendido",
       planPendiente: tenant.planPendiente ?? null,
       cicloCorteEn: tenant.cicloCorteEn ?? null,
       // Solo para mostrar: el paso 3 de activación y Billing. No apaga nada.
@@ -537,7 +538,9 @@ export function crearApp(
         next();
         return;
       }
-      const motivo = soloLectura(tenant)
+      const motivo = tenant.estado === "suspendido"
+        ? "Tu cuenta está suspendida. Contacta a soporte para reactivarla."
+        : soloLectura(tenant)
         ? "Tu prueba terminó y la cuenta está en solo lectura. Contrata un plan para volver a enviar."
         : mensajeRequierePlan(capacidad);
       registrar("plan.rechazado", { tenant: tenant.id, capacidad, plan: normalizarPlan(tenant.plan), ruta: `${req.method} ${req.originalUrl.split("?")[0]}` }, "warn");
