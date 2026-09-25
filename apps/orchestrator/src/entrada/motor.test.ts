@@ -103,3 +103,151 @@ describe("MotorEntrada por plan", () => {
     expect(enviados).toHaveLength(1);
   });
 });
+
+/**
+ * G2 — Fail-open: si la lectura de energía falla, el agente responde de
+ * todos modos y el fallo se registra en bitácora en nivel warn.
+ */
+describe("MotorEntrada fail-open de energía (G2)", () => {
+  it("si la lectura de energía lanza, el agente responde y se registra warn en bitácora", async () => {
+    const { usarSalida } = await import("../log.ts");
+    const logs: string[] = [];
+    usarSalida((_nivel, linea) => logs.push(linea));
+
+    const repo = new RepositorioEnMemoria({
+      tenants: [{
+        id: "demo", nombre: "Demo", plan: "pro", estado: "activo",
+        apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
+        agente: { activo: true, nombre: "Santiago", proveedor: "anthropic", modelo: "claude-opus-5" },
+      }],
+    });
+    const enviados: { telefono: string; cuerpo: string }[] = [];
+    const motor = new MotorEntrada({
+      repo,
+      enviarInmediato: async (_t, _i, telefono, cuerpo) => {
+        enviados.push({ telefono, cuerpo });
+      },
+      // Agente que siempre responde.
+      agente: { responder: async () => ({ texto: "Hola, ¿en qué puedo ayudarte?", costoUsd: 0.01 }) } as any,
+      // precios() que lanza: simula un fallo de Firestore.
+      precios: async () => { throw new Error("Firestore timeout"); },
+      tipoCambio: { usdMxn: 20, colchon: 1.1 },
+    });
+
+    await motor.procesar("demo", "i1", entrante("hola"));
+
+    // El agente respondió a pesar del error de energía.
+    expect(enviados).toHaveLength(1);
+    expect(enviados[0]!.cuerpo).toBe("Hola, ¿en qué puedo ayudarte?");
+
+    // El error quedó registrado en nivel warn.
+    const warnLog = logs.find((l) => l.includes("energia.error_lectura"));
+    expect(warnLog).toBeDefined();
+    expect(warnLog).toContain("warn");
+    expect(warnLog).toContain("Firestore timeout");
+
+    usarSalida(null);
+  });
+});
+
+/**
+ * G5 — Suspensión: un tenant suspendido recibe mensajes y envía un aviso
+ * automático UNA SOLA VEZ por conversación. No responde bots ni agentes.
+ */
+describe("MotorEntrada con tenant suspendido (G5)", () => {
+  it("envía aviso de suspensión una sola vez por conversación, no repite", async () => {
+    const { usarSalida } = await import("../log.ts");
+    usarSalida(() => {});
+
+    const repo = new RepositorioEnMemoria({
+      tenants: [{
+        id: "demo", nombre: "Demo", plan: "pro", estado: "suspendido" as any,
+        apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
+      }],
+    });
+    void repo.saveDisparadores("demo", [
+      { id: "d1", prioridad: 10, tipo: "cualquiera", activo: true, respuesta: "Hola" },
+    ]);
+    const enviados: { telefono: string; cuerpo: string }[] = [];
+    const motor = new MotorEntrada({
+      repo,
+      enviarInmediato: async (_t, _i, telefono, cuerpo) => {
+        enviados.push({ telefono, cuerpo });
+      },
+    });
+
+    // Primer mensaje: aviso enviado.
+    await motor.procesar("demo", "i1", entrante("hola"));
+    expect(enviados).toHaveLength(1);
+    expect(enviados[0]!.cuerpo).toContain("pausado");
+
+    // Segundo mensaje del mismo contacto: sin aviso repetido.
+    await motor.procesar("demo", "i1", entrante("¿hay alguien?"));
+    expect(enviados).toHaveLength(1); // no cambió
+
+    // Otro contacto SÍ recibe su propio aviso.
+    await motor.procesar("demo", "i1", entrante("buenas", "+525599998888"));
+    expect(enviados).toHaveLength(2);
+
+    usarSalida(null);
+  });
+
+  it("no responde bots ni agentes cuando está suspendido", async () => {
+    const { usarSalida } = await import("../log.ts");
+    usarSalida(() => {});
+
+    const repo = new RepositorioEnMemoria({
+      tenants: [{
+        id: "demo", nombre: "Demo", plan: "pro", estado: "suspendido" as any,
+        apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
+        agente: { activo: true, nombre: "Santiago", proveedor: "anthropic", modelo: "claude-opus-5" },
+      }],
+    });
+    void repo.saveDisparadores("demo", [
+      { id: "d1", prioridad: 10, tipo: "cualquiera", activo: true, respuesta: "Hola del bot" },
+    ]);
+    const enviados: { telefono: string; cuerpo: string }[] = [];
+    const motor = new MotorEntrada({
+      repo,
+      enviarInmediato: async (_t, _i, telefono, cuerpo) => {
+        enviados.push({ telefono, cuerpo });
+      },
+      agente: { responder: async () => ({ texto: "Hola del agente", costoUsd: 0 }) } as any,
+    });
+
+    await motor.procesar("demo", "i1", entrante("hola"));
+
+    // Solo se envió el aviso de suspensión, no el bot ni el agente.
+    expect(enviados).toHaveLength(1);
+    expect(enviados[0]!.cuerpo).not.toContain("bot");
+    expect(enviados[0]!.cuerpo).not.toContain("agente");
+    expect(enviados[0]!.cuerpo).toContain("pausado");
+
+    usarSalida(null);
+  });
+
+  it("el mensaje entrante se registra en la conversación aunque esté suspendido", async () => {
+    const { usarSalida } = await import("../log.ts");
+    usarSalida(() => {});
+
+    const repo = new RepositorioEnMemoria({
+      tenants: [{
+        id: "demo", nombre: "Demo", plan: "pro", estado: "suspendido" as any,
+        apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
+      }],
+    });
+    const motor = new MotorEntrada({
+      repo,
+      enviarInmediato: async () => {},
+    });
+
+    await motor.procesar("demo", "i1", entrante("hola"));
+
+    const conv = await repo.getConversacion("demo", "i1", "525512345678");
+    expect(conv).not.toBeNull();
+    expect(conv!.primerContactoEn).not.toBeNull();
+    expect(conv!.ultimoEntranteEn).not.toBeNull();
+
+    usarSalida(null);
+  });
+});

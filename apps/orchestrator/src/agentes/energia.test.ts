@@ -150,6 +150,105 @@ describe("descontarCreditos", () => {
   });
 });
 
+/**
+ * G1 — Flujo completo del cálculo de créditos.
+ *
+ * Demuestra las cuatro reglas que rigen el camino de cobro:
+ * 1. Dentro de la bolsa → créditos intactos.
+ * 2. Exceso → descuenta créditos exactamente una vez, por la cantidad justa.
+ * 3. Varias respuestas seguidas → la suma es correcta, sin duplicar ni perder.
+ * 4. Créditos en cero y bolsa agotada → se degrada, nunca negativo.
+ */
+describe("flujo completo de créditos (G1)", () => {
+  it("un consumo dentro de la bolsa NO toca los créditos", async () => {
+    usarSalida(() => {});
+    const t = tenant({ creditosMxn: 100 });
+    const repo = new RepositorioEnMemoria({ tenants: [t] });
+
+    // Estado de energía: bolsa $200, gastado $50, créditos $100.
+    const estado = estadoEnergia(200, 100, 50);
+    expect(estado.excesoCreditos).toBe(0);
+    expect(estado.creditosRestantes).toBe(100);
+    expect(estado.agotada).toBe(false);
+
+    // El motor llama descontarCreditos con bolsaRestante = 150 (200 − 50)
+    // y costoMxn = 30 (una sola respuesta). Cabe en la bolsa.
+    const restante = await descontarCreditos(repo, "t1", 30, 150);
+    expect(restante).toBe(-1); // sentinel: no se tocaron créditos
+    const actualizado = await repo.getTenant("t1");
+    expect(actualizado!.creditosMxn).toBe(100); // intactos
+    usarSalida(null);
+  });
+
+  it("un consumo que excede la bolsa descuenta créditos exactamente una vez, por la cantidad correcta", async () => {
+    usarSalida(() => {});
+    const t = tenant({ creditosMxn: 100 });
+    const repo = new RepositorioEnMemoria({ tenants: [t] });
+
+    // Bolsa $200, gastado $190, nueva respuesta cuesta $30.
+    // bolsaRestanteAntes = 200 − 190 = 10.
+    // Exceso que sale de créditos = max(0, 30 − 10) = 20.
+    const restante = await descontarCreditos(repo, "t1", 30, 10);
+    expect(restante).toBe(80); // 100 − 20
+    const actualizado = await repo.getTenant("t1");
+    expect(actualizado!.creditosMxn).toBe(80);
+    usarSalida(null);
+  });
+
+  it("varias respuestas seguidas descuentan la suma correcta, sin duplicar ni perder", async () => {
+    usarSalida(() => {});
+    const t = tenant({ creditosMxn: 100 });
+    const repo = new RepositorioEnMemoria({ tenants: [t] });
+
+    // Bolsa completamente agotada (bolsaRestante = 0).
+    // Respuesta 1: $15 → créditos 100 − 15 = 85
+    await descontarCreditos(repo, "t1", 15, 0);
+    expect((await repo.getTenant("t1"))!.creditosMxn).toBe(85);
+
+    // Respuesta 2: $25 → créditos 85 − 25 = 60
+    await descontarCreditos(repo, "t1", 25, 0);
+    expect((await repo.getTenant("t1"))!.creditosMxn).toBe(60);
+
+    // Respuesta 3: $10 → créditos 60 − 10 = 50
+    await descontarCreditos(repo, "t1", 10, 0);
+    expect((await repo.getTenant("t1"))!.creditosMxn).toBe(50);
+
+    // Total descontado: 15 + 25 + 10 = 50. Restante: 100 − 50 = 50 ✓
+    usarSalida(null);
+  });
+
+  it("con créditos en cero y bolsa agotada, se degrada sin descuento negativo", async () => {
+    usarSalida(() => {});
+    const t = tenant({ creditosMxn: 0 });
+    const repo = new RepositorioEnMemoria({ tenants: [t] });
+
+    // Estado de energía: bolsa $200 agotada, cero créditos.
+    const estado = estadoEnergia(200, 0, 250);
+    expect(estado.agotada).toBe(true);
+    expect(estado.disponible).toBe(0);
+
+    // Aunque se intente descontar, no baja de cero.
+    const restante = await descontarCreditos(repo, "t1", 50, 0);
+    expect(restante).toBe(0);
+    const actualizado = await repo.getTenant("t1");
+    expect(actualizado!.creditosMxn).toBe(0); // no negativo
+    usarSalida(null);
+  });
+
+  it("la transición bolsa→créditos ocurre en una sola respuesta que cruza el límite", async () => {
+    usarSalida(() => {});
+    const t = tenant({ creditosMxn: 50 });
+    const repo = new RepositorioEnMemoria({ tenants: [t] });
+
+    // Bolsa restante = 5 MXN, respuesta cuesta 20 MXN.
+    // Bolsa absorbe 5, exceso = 15 → créditos: 50 − 15 = 35.
+    const restante = await descontarCreditos(repo, "t1", 20, 5);
+    expect(restante).toBe(35);
+    expect((await repo.getTenant("t1"))!.creditosMxn).toBe(35);
+    usarSalida(null);
+  });
+});
+
 describe("mensaje de degradación", () => {
   it("no deja al contacto en el vacío", () => {
     expect(MENSAJE_ENERGIA_AGOTADA).toContain("equipo");
