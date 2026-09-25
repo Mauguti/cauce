@@ -226,6 +226,43 @@ export class ConectorOpenlines {
     registrar("openlines.baja", { tenant: tenantId });
   }
 
+  /**
+   * ONAPPUNINSTALL: el cliente (o un admin) quitó la app del portal.
+   * Limpia los tokens OAuth (ya son inválidos), desactiva los conectors
+   * en las líneas asignadas y borra las asignaciones. El doc se conserva
+   * (client_id/secret y dominio) para que una reinstalación no exija
+   * rellenar el alta.
+   */
+  async desinstalar(tenantId: TenantId, auth: unknown): Promise<void> {
+    const doc = await this.#doc(tenantId);
+    if (!doc) return;
+    // Validar que el evento viene del portal instalado.
+    if (doc.tokensCifrados) {
+      const tokens = this.#tokens(doc);
+      const recibido = tokensDesdeAuth(auth);
+      if (recibido.memberId && recibido.memberId !== tokens.memberId) {
+        registrar("openlines.desinstalacion_rechazada", {
+          tenant: tenantId, motivo: "member_id distinto al instalado",
+        }, "warn");
+        return;
+      }
+    }
+    // Limpiar tokens y asignaciones; conservar app y dominio.
+    const limpio: OpenlinesBitrixDoc = {
+      ...doc,
+      tokensCifrados: "",
+      asignaciones: {},
+      botId: null,
+      actualizadoEn: new Date().toISOString(),
+    };
+    await this.#repo.saveOpenlinesBitrix(tenantId, limpio);
+    registrar("openlines.desinstalada", {
+      tenant: tenantId,
+      dominio: doc.dominio,
+      asignacionesLimpiadas: Object.keys(doc.asignaciones).length,
+    });
+  }
+
   // ── Credenciales y cliente ───────────────────────────────────────────────
 
   #credenciales(doc: OpenlinesBitrixDoc): CredencialesApp {

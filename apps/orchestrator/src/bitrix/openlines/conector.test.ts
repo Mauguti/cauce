@@ -551,6 +551,55 @@ describe("eco del reflejo", () => {
   });
 });
 
+describe("ConectorOpenlines · desinstalación (ONAPPUNINSTALL)", () => {
+  it("desinstalar limpia tokens y asignaciones pero conserva la app y el dominio", async () => {
+    const c = armar();
+    capturarBitacora();
+    await instalarYAsignar(c);
+    const antes = (await c.repo.getOpenlinesBitrix("t1"))!;
+    expect(antes.tokensCifrados).not.toBe("");
+    expect(Object.keys(antes.asignaciones)).toHaveLength(1);
+    await c.conector.desinstalar("t1", AUTH);
+    const despues = (await c.repo.getOpenlinesBitrix("t1"))!;
+    expect(despues.tokensCifrados).toBe("");
+    expect(despues.asignaciones).toEqual({});
+    expect(despues.botId).toBeNull();
+    // La app cifrada y el dominio se conservan para reinstalar sin rellenar el alta.
+    expect(despues.appCifrada).toBe(antes.appCifrada);
+    expect(despues.dominio).toBe(antes.dominio);
+  });
+
+  it("desinstalar desde portal distinto se rechaza silenciosamente", async () => {
+    const c = armar();
+    capturarBitacora();
+    await instalarYAsignar(c);
+    await c.conector.desinstalar("t1", { ...AUTH, member_id: "otro" });
+    const doc = (await c.repo.getOpenlinesBitrix("t1"))!;
+    // Tokens y asignaciones intactos.
+    expect(doc.tokensCifrados).not.toBe("");
+    expect(Object.keys(doc.asignaciones)).toHaveLength(1);
+  });
+
+  it("desinstalar en tenant sin doc no lanza", async () => {
+    const c = armar();
+    await c.conector.desinstalar("t1", AUTH); // sin alta, sin error
+  });
+
+  it("tras desinstalar, reinstalar funciona y genera tokens nuevos", async () => {
+    const c = armar();
+    capturarBitacora();
+    await instalarYAsignar(c);
+    await c.conector.desinstalar("t1", AUTH);
+    const desinstalado = (await c.repo.getOpenlinesBitrix("t1"))!;
+    expect(desinstalado.tokensCifrados).toBe("");
+    // Reinstalar: nuevos tokens, sin asignaciones previas.
+    await c.conector.instalar("t1", { ...AUTH, access_token: "acc3", refresh_token: "ref3" });
+    const reinstalado = (await c.repo.getOpenlinesBitrix("t1"))!;
+    expect(reinstalado.tokensCifrados).not.toBe("");
+    expect(reinstalado.asignaciones).toEqual({});
+  });
+});
+
 describe("formatearNumero", () => {
   it("agrupa a la mexicana con o sin el 1 de WhatsApp", () => {
     expect(formatearNumero("+5214428575347")).toBe("+521 442 857 5347");

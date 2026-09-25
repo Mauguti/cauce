@@ -570,6 +570,11 @@ export function crearApp(
         res.status(200).send("<!doctype html><meta charset=utf-8><p>Digsol Factory instalado. Ahora activa el conector en tu línea abierta (Contact Center → Canales).</p>");
         return;
       }
+      if (evento === "ONAPPUNINSTALL") {
+        await ol.desinstalar(tenantId, b.auth);
+        res.status(200).json({ ok: true });
+        return;
+      }
       if (b.accion === "asignar" && typeof b.token === "string") {
         // POST de vuelta desde nuestra página del placement: el cliente eligió
         // el número. El token cifrado (tenant, línea, member_id, vigencia) es
