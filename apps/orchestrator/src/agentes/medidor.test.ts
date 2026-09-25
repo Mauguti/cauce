@@ -88,7 +88,7 @@ describe("contabilidad · rondas de herramientas", () => {
     const agente = new Agente({ repo, proveedores: { anthropic: p } });
     usarSalida(() => {});
     const m: Message = { id: "x", tenantId: "t1", instanceId: "i1", direccion: "in", telefono: "+5214428575347", cuerpo: "hola", estado: "recibido", externalId: null, timestamp: new Date().toISOString() };
-    expect(await agente.responder("t1", "i1", m)).toBeNull();
+    expect((await agente.responder("t1", "i1", m)).texto).toBeNull();
     const [c] = repo.listConsumos("t1");
     expect(c).toMatchObject({ resultado: "error", error: "529 overloaded", entrada: 2500, salida: 60, cacheLectura: 2000 });
     // 2500×5 + 2000×0.5 + 60×25 = 12500 + 1000 + 1500 = 15000 / 1e6

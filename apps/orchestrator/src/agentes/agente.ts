@@ -182,17 +182,20 @@ export class Agente {
 
   /**
    * Responde al entrante si el tenant tiene agente activo. Devuelve el texto
-   * o null (sin agente, sin proveedor, rechazo o error). Nunca lanza: el
-   * fallo queda en bitácora y en el registro de consumo.
+   * y el costo en USD de esta llamada. `texto` es null cuando no hay agente,
+   * el proveedor falla, o el modelo rechaza. `costoUsd` refleja lo consumido
+   * aunque no haya texto (rondas parciales). Nunca lanza: el fallo queda en
+   * bitácora y en el registro de consumo.
    */
-  async responder(tenantId: TenantId, instanceId: InstanceId, mensaje: Message, contacto?: string | null): Promise<string | null> {
+  async responder(tenantId: TenantId, instanceId: InstanceId, mensaje: Message, contacto?: string | null): Promise<{ texto: string | null; costoUsd: number }> {
+    const SIN_RESPUESTA = { texto: null, costoUsd: 0 };
     const tenant = await this.#repo.getTenant(tenantId);
     const cfg = tenant?.agente;
-    if (!tenant || !cfg?.activo) return null;
+    if (!tenant || !cfg?.activo) return SIN_RESPUESTA;
     const proveedor = this.#proveedores[cfg.proveedor];
     if (!proveedor) {
       registrar("agente.sin_proveedor", { tenant: tenantId, agente: cfg.nombre, proveedor: cfg.proveedor }, "warn");
-      return null;
+      return SIN_RESPUESTA;
     }
     const telefono = mensaje.telefono.replace(/[^\d]/g, "");
     const base = { tenant: tenantId, agente: cfg.nombre, instancia: instanceId, telefono: enmascararTelefono(mensaje.telefono), mensaje: mensaje.id };
@@ -205,14 +208,14 @@ export class Agente {
     if ((cfg.rol ?? "ventas") === "citas") {
       if (!this.#citas) {
         registrar("agente.sin_calendario", { ...base, nota: "rol citas sin Google configurado en este orquestador (GOOGLE_CLIENT_ID/SECRET)" }, "warn");
-        return null;
+        return SIN_RESPUESTA;
       }
       if (!(await this.#repo.getConectorGoogle(tenantId))) {
         registrar("agente.sin_calendario", { ...base, nota: "el tenant no ha conectado Google Calendar" }, "warn");
-        return null;
+        return SIN_RESPUESTA;
       }
       const comando = await this.#citas.comando(tenantId, telefono, mensaje.cuerpo);
-      if (comando) return comando;
+      if (comando) return { texto: comando, costoUsd: 0 };
       ctxCitas = await this.#citas.contexto(tenant, instanceId, telefono, contacto ?? null, mensaje.id, cfg, base);
       sistema = await this.#citas.sistema(ctxCitas, conocimiento);
     } else {
@@ -262,7 +265,7 @@ export class Agente {
         cacheLectura: r.uso.cacheLectura, cacheEscritura: r.uso.cacheEscritura, costoUsd: r.costoUsd, ms, resultado,
         ...(r.herramientasUsadas.length ? { herramientas: r.herramientasUsadas.join(",") } : {}),
       }, resultado === "ok" ? "info" : "warn");
-      return r.texto;
+      return { texto: r.texto, costoUsd: r.costoUsd };
     } catch (err) {
       const ms = fin();
       // Lo ya gastado en rondas anteriores se registra igual: la factura de Anthropic lo cobra.
@@ -275,7 +278,7 @@ export class Agente {
         error: err instanceof Error ? err.message : String(err), en,
       }).catch(() => {});
       registrarError("agente.consumo", err, { ...base, proveedor: proveedor.nombre, modelo, ms, resultado: "error", ...(err instanceof ErrorProveedor ? { rondaFallida: err.ronda, entrada: parcial.entrada, salida: parcial.salida } : {}) });
-      return null;
+      return { texto: null, costoUsd: costoUsd(modelo, parcial) ?? 0 };
     }
   }
 

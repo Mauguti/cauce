@@ -110,7 +110,7 @@ describe("Agente", () => {
     const actual = entrante("¿qué es Digsol Factory?", "m3", "2026-09-14T10:01:00Z");
     await c.repo.saveMessage(actual);
 
-    const texto = await c.agente.responder("t1", "i1", actual, "Mau");
+    const { texto } = await c.agente.responder("t1", "i1", actual, "Mau");
     expect(texto).toContain("Digsol Factory conecta");
     const pet = c.peticiones[0]!;
     expect(pet.modelo).toBe("claude-opus-5");
@@ -131,20 +131,22 @@ describe("Agente", () => {
 
   it("sin agente activo no llama al modelo; con proveedor desconocido tampoco y lo dice", async () => {
     const inactivo = armar({ ...TENANT, agente: { ...TENANT.agente!, activo: false } });
-    expect(await inactivo.agente.responder("t1", "i1", entrante("hola"))).toBeNull();
+    expect((await inactivo.agente.responder("t1", "i1", entrante("hola"))).texto).toBeNull();
     expect(inactivo.peticiones).toHaveLength(0);
     const bitacora = capturarBitacora();
     const otro = armar({ ...TENANT, agente: { ...TENANT.agente!, proveedor: "otro" as any } });
-    expect(await otro.agente.responder("t1", "i1", entrante("hola"))).toBeNull();
+    expect((await otro.agente.responder("t1", "i1", entrante("hola"))).texto).toBeNull();
     expect(bitacora.at(-1)).toMatch(/agente\.sin_proveedor/);
   });
 
   it("un rechazo del modelo no manda nada y queda registrado; un error del proveedor tampoco lanza y se registra con costo 0", async () => {
     const rechazo = armar(TENANT, proveedorFalso(null, { rechazo: true }));
-    expect(await rechazo.agente.responder("t1", "i1", entrante("hola"))).toBeNull();
+    expect((await rechazo.agente.responder("t1", "i1", entrante("hola"))).texto).toBeNull();
     expect(rechazo.repo.listConsumos("t1")[0]!.resultado).toBe("rechazo");
     const falla = armar(TENANT, proveedorFalso("x", { falla: true }));
-    expect(await falla.agente.responder("t1", "i1", entrante("hola"))).toBeNull();
+    const fallaRes = await falla.agente.responder("t1", "i1", entrante("hola"));
+    expect(fallaRes.texto).toBeNull();
+    expect(fallaRes.costoUsd).toBe(0); // error sin rondas previas → costo 0
     expect(falla.repo.listConsumos("t1")[0]).toMatchObject({ resultado: "error", error: "529 overloaded", costoUsd: 0 });
   });
 });
@@ -153,7 +155,7 @@ describe("herramientas del agente", () => {
   it("pasar_a_humano siempre está: marca el traspaso, calla al agente 12 h y lo deja en bitácora; sin dónde avisar, lo dice", async () => {
     const c = armar(TENANT, proveedorFalso("Listo, alguien del equipo te escribe por aquí.", { usar: { nombre: "pasar_a_humano", argumentos: { motivo: "intencion_de_compra", resumen: "Quiere el plan Estándar para 7 líneas." } } }));
     const bitacora = capturarBitacora();
-    const texto = await c.agente.responder("t1", "i1", entrante("¿cómo lo contrato?"), "Aurelio");
+    const { texto } = await c.agente.responder("t1", "i1", entrante("¿cómo lo contrato?"), "Aurelio");
     expect(texto).toContain("alguien del equipo");
     expect(c.peticiones[0]!.herramientas!.map((h) => h.nombre)).toEqual([HERRAMIENTA_PASAR_A_HUMANO.nombre]);
     expect(c.resultadosHerramienta[0]).toMatch(/una persona del equipo seguirá/);
@@ -182,7 +184,7 @@ describe("herramientas del agente", () => {
     const tenant: Tenant = { ...TENANT, agente: { ...TENANT.agente!, herramientas: [{ nombre: "consultar_agenda", descripcion: "Devuelve el próximo hueco libre", url: "https://n8n.digsol.com.mx/webhook/agenda", parametros: { properties: { dia: { type: "string" } }, required: ["dia"], additionalProperties: false }, tokenCifrado: cripto.cifrar("s3cr3t") }] } };
     const c = armar(tenant, proveedorFalso("Hay hueco el martes a las 10.", { usar: { nombre: "consultar_agenda", argumentos: { dia: "martes" } } }), fetchImpl);
     // El agente descifra con SU Cripto; usa la misma llave de desarrollo que la del test.
-    const texto = await c.agente.responder("t1", "i1", entrante("¿tienen hueco el martes?"), "Mau");
+    const { texto } = await c.agente.responder("t1", "i1", entrante("¿tienen hueco el martes?"), "Mau");
     expect(texto).toContain("martes");
     expect(c.peticiones[0]!.herramientas!.map((h) => h.nombre)).toEqual(["pasar_a_humano", "consultar_agenda"]);
     expect(llamadas[0]!.url).toBe("https://n8n.digsol.com.mx/webhook/agenda");

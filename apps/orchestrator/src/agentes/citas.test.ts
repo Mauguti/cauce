@@ -266,7 +266,7 @@ describe("Susana · masivo, modo cliente y sin calendario", () => {
   it("'modo cliente' cambia el trato del número del directorio sin pasar por el modelo, y 'salir de modo cliente' lo regresa", async () => {
     const c = armar();
     const r1 = await c.agente.responder("t1", "A", entrante(DUENO.telefono, "Modo cliente"), "Raúl");
-    expect(r1).toContain(`durante ${MODO_CLIENTE_HORAS} horas te atiendo como cliente`);
+    expect(r1.texto).toContain(`durante ${MODO_CLIENTE_HORAS} horas te atiendo como cliente`);
     expect(c.sistemas).toHaveLength(0);
     c.guion.push({ texto: "." });
     await c.agente.responder("t1", "A", entrante(DUENO.telefono, "quiero una cita"), "Raúl");
@@ -275,14 +275,14 @@ describe("Susana · masivo, modo cliente y sin calendario", () => {
     c.guion.push({ texto: "." });
     await c.agente.responder("t1", "A", entrante(DUENO.telefono, "qué tengo hoy"), "Raúl");
     expect(c.sistemas[1]).toContain("Raúl, dueño/admin");
-    expect(await c.agente.responder("t1", "A", entrante(DUENO.telefono, "salir de modo cliente"), "Raúl")).toContain("vuelves a ser dueño/admin");
-    expect(await c.agente.responder("t1", "A", entrante(CLIENTE, "modo cliente"), "Laura")).toBe("ok"); // no está en el directorio: no es comando
+    expect((await c.agente.responder("t1", "A", entrante(DUENO.telefono, "salir de modo cliente"), "Raúl")).texto).toContain("vuelves a ser dueño/admin");
+    expect((await c.agente.responder("t1", "A", entrante(CLIENTE, "modo cliente"), "Laura")).texto).toBe("ok"); // no está en el directorio: no es comando
   });
 
   it("sin Google conectado no contesta y lo dice en bitácora", async () => {
     const c = armar();
     await c.repo.deleteConectorGoogle("t1");
-    expect(await c.agente.responder("t1", "A", entrante(CLIENTE, "hola"), "Laura")).toBeNull();
+    expect((await c.agente.responder("t1", "A", entrante(CLIENTE, "hola"), "Laura")).texto).toBeNull();
     expect(c.bitacora.some((l) => l.includes("agente.sin_calendario") && l.includes("no ha conectado"))).toBe(true);
   });
 });

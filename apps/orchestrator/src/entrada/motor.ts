@@ -215,7 +215,13 @@ export class MotorEntrada {
       }
       if (respuesta === null && puede("agentes")) {
         // ── Medidor de energía: comprueba ANTES de gastar ──
-        const energia = await this.#energiaDe(tenant!);
+        // F2: fail-open — si no se puede calcular, el agente responde igual.
+        let energia: EstadoEnergia | null = null;
+        try {
+          energia = await this.#energiaDe(tenant!);
+        } catch (err) {
+          registrar("energia.error_lectura", { ...base, error: err instanceof Error ? err.message : String(err) }, "warn");
+        }
         if (energia?.agotada) {
           // Energía agotada: degradar a bot (si el plan los tiene) o traspaso.
           registrar("energia.agotada", { ...base, bolsa: energia.bolsaTotal, gasto: energia.gastoMes, creditos: energia.creditosRestantes }, "warn");
@@ -234,21 +240,29 @@ export class MotorEntrada {
           }
         } else if (this.#agente) {
           const bolsaRestanteAntes = energia?.bolsaRestante ?? 0;
-          respuesta = await this.#agente.responder(tenantId, instanceId, mensaje, conversacion.nombre ?? nombre ?? null);
+          const resultado = await this.#agente.responder(tenantId, instanceId, mensaje, conversacion.nombre ?? nombre ?? null);
+          respuesta = resultado.texto;
           origen += respuesta ? "; agente respondió" : "; agente sin respuesta";
           if (respuesta) {
             origenSaliente = "agente";
-            // Post-respuesta: descontar créditos si la bolsa se excedió,
-            // evaluar si hay que avisar al 80 %.
+            // Post-respuesta: calcula el impacto en créditos a partir del
+            // costoUsd devuelto por el agente (sin re-leer consumo).
             if (energia) {
-              const energiaPost = await this.#energiaDe(tenant!);
-              if (energiaPost) {
-                if (energiaPost.excesoCreditos > 0) {
-                  await descontarCreditos(this.#repo, tenantId, energiaPost.excesoCreditos - (energia.excesoCreditos ?? 0), 0);
-                }
+              const costoMxn = Math.round(resultado.costoUsd * this.#tipoCambio.usdMxn * this.#tipoCambio.colchon * 100) / 100;
+              const nuevaBolsaRestante = Math.max(0, bolsaRestanteAntes - costoMxn);
+              const exceso = Math.max(0, costoMxn - bolsaRestanteAntes);
+              if (exceso > 0) {
+                await descontarCreditos(this.#repo, tenantId, exceso, 0);
+              }
+              // Evaluar aviso al 80 % con el estado actualizado.
+              const gastoPost = energia.gastoMes + costoMxn;
+              const energiaPost = { ...energia, gastoMes: gastoPost, bolsaUsada: Math.min(gastoPost, energia.bolsaTotal), bolsaRestante: nuevaBolsaRestante, excesoCreditos: energia.excesoCreditos + exceso, porcentajeBolsa: energia.bolsaTotal > 0 ? Math.min(gastoPost, energia.bolsaTotal) / energia.bolsaTotal : 0 };
+              try {
                 evaluarAviso(energiaPost, tenantId, this.#avisosWhatsApp, (tel, cuerpo) =>
                   this.#enviar(tenantId, instanceId, tel, cuerpo, "sistema"),
                 );
+              } catch (err) {
+                registrar("energia.aviso_error", { ...base, error: err instanceof Error ? err.message : String(err) }, "warn");
               }
             }
           }
