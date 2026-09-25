@@ -8,3 +8,6 @@ data/
 firestore-debug.log
 firebase-debug.log
 .firebase/
+Claude outputs/
+.claude/
+sprint-factory/

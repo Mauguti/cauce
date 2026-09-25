@@ -1,3 +1,22 @@
+> # ⛔ ESTE PLAN QUEDÓ SIN EFECTO — 9 sep 2026
+>
+> **No re-skinees la consola de Cauce. No sigas ninguno de los pasos de
+> este documento.** Se conserva solo como registro de lo que se hizo
+> hasta el commit `bf6501e`.
+>
+> **Giro de rumbo:** Cauce se congela y se queda como está, operando en
+> su EC2 con los clientes que ya tiene. El front del producto pasa a ser
+> la plataforma de Digsol Factory (repo `Mauguti/digsol-factory`), que
+> se conecta al orquestador de Cauce como motor.
+>
+> Cauce ya no recibe trabajo de producto. Solo se le atienden bugs de
+> producción — como el de los salientes en "sin confirmar".
+>
+> El plan vigente vive en el tablero de Notion
+> *"Digsol Factory · Lanzamiento"* y en el proyecto de Claude.
+
+---
+
 # Plan de migración visual — Digsol Factory → consola
 
 Adoptar la identidad visual de Digsol Factory (paquete en `design-export/`)
