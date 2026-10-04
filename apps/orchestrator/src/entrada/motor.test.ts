@@ -161,7 +161,7 @@ describe("MotorEntrada con tenant suspendido (G5)", () => {
 
     const repo = new RepositorioEnMemoria({
       tenants: [{
-        id: "demo", nombre: "Demo", plan: "pro", estado: "suspendido" as any,
+        id: "demo", nombre: "Demo", plan: "pro", estado: "suspendido",
         apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
       }],
     });
@@ -198,7 +198,7 @@ describe("MotorEntrada con tenant suspendido (G5)", () => {
 
     const repo = new RepositorioEnMemoria({
       tenants: [{
-        id: "demo", nombre: "Demo", plan: "pro", estado: "suspendido" as any,
+        id: "demo", nombre: "Demo", plan: "pro", estado: "suspendido",
         apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
         agente: { activo: true, nombre: "Santiago", proveedor: "anthropic", modelo: "claude-opus-5" },
       }],
@@ -232,7 +232,7 @@ describe("MotorEntrada con tenant suspendido (G5)", () => {
 
     const repo = new RepositorioEnMemoria({
       tenants: [{
-        id: "demo", nombre: "Demo", plan: "pro", estado: "suspendido" as any,
+        id: "demo", nombre: "Demo", plan: "pro", estado: "suspendido",
         apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z",
       }],
     });
