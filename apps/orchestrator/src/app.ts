@@ -1167,6 +1167,7 @@ export function crearApp(
       pagadoHasta: tenant.pagadoHasta ?? null,
       estadoPago: estadoPago(tenant),
       stripe: cobrador.stripeModo,
+      suscripcion: cobro?.stripeSubscriptionId ? { id: cobro.stripeSubscriptionId, status: cobro.stripeSubscriptionStatus ?? null } : null,
       proximoCobro: proximo,
     });
   });
@@ -1196,6 +1197,36 @@ export function crearApp(
       res.json(await cobrador.crearSetupIntent(req.tenantId!));
     } catch (err) {
       responderErrorCobro(res, err, { tenant: req.tenantId, ruta: "POST /cobro/setup-intent" });
+    }
+  });
+
+  /** Checkout Session de Stripe para suscripción. Devuelve la URL a la que redirigir. */
+  tenantRouter.post("/cobro/checkout", async (req, res) => {
+    const cobrador = conCobrador(res);
+    if (!cobrador) return;
+    try {
+      const { plan, periodo, successUrl, cancelUrl } = req.body ?? {};
+      if (!plan || !periodo || !successUrl || !cancelUrl) {
+        res.status(400).json({ error: "plan, periodo, successUrl y cancelUrl requeridos" });
+        return;
+      }
+      const r = await cobrador.iniciarSuscripcion(req.tenantId!, plan, periodo, { success: successUrl, cancel: cancelUrl });
+      res.json(r);
+    } catch (err) {
+      responderErrorCobro(res, err, { tenant: req.tenantId, ruta: "POST /cobro/checkout" });
+    }
+  });
+
+  /** Customer Portal de Stripe: cambiar tarjeta, ver recibos, cancelar. */
+  tenantRouter.get("/cobro/portal", async (req, res) => {
+    const cobrador = conCobrador(res);
+    if (!cobrador) return;
+    try {
+      const returnUrl = typeof req.query.returnUrl === "string" ? req.query.returnUrl : req.headers.referer ?? "/";
+      const r = await cobrador.portalCliente(req.tenantId!, returnUrl);
+      res.json(r);
+    } catch (err) {
+      responderErrorCobro(res, err, { tenant: req.tenantId, ruta: "GET /cobro/portal" });
     }
   });
 

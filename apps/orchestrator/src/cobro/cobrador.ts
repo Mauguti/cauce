@@ -12,14 +12,33 @@ import type { Repositorio } from "../store.ts";
 import { registrar, registrarError } from "../log.ts";
 import type { CargadorPrecios, FotoLeida } from "./precios.ts";
 import type { ClienteStripe, EventoStripe } from "./stripe.ts";
+import type { ConfigPrecios, PlanCobrable } from "./config-precios.ts";
+import { obtenerPriceId } from "./config-precios.ts";
 
 /** Meses por periodo: definición del producto, no un precio. */
 export const MESES_PERIODO: Record<PeriodoCobro, number> = { mensual: 1, semestral: 6, anual: 12 };
 
-/** Días de gracia (docs/vencido-y-suspension.md, default 10). */
-export const GRACIA_DIAS = 10;
+/**
+ * Días de gracia antes de que un impago lleve a suspensión. UNA sola
+ * constante para todos los caminos (Decisión 2 del sprint). Antes era 10;
+ * como ningún cliente ha sido cobrado aún, no hay promesa previa que romper.
+ */
+export const GRACIA_DIAS = 5;
 
-/** Calendario de reintentos en días desde el corte: 0, +3, +7; después, agotado. */
+/**
+ * Bandera de suspensión automática (Decisión 3 del sprint). APAGADA por
+ * defecto: el webhook registra todo en bitácora y avisa, pero NO cambia el
+ * estado del tenant. Con Procesa, GeoSpectral y We Build operando, eso no
+ * se enciende el día de la fusión.
+ *
+ * Para encender: variable de entorno SUSPENSION_AUTOMATICA=true, o pasar
+ * `true` en las opciones del Cobrador.
+ */
+export const SUSPENSION_AUTOMATICA = (process.env.SUSPENSION_AUTOMATICA ?? "").toLowerCase() === "true";
+
+/** Calendario de reintentos en días desde el corte: 0, +3, +7; después, agotado.
+ * @deprecated Obsoleto con Subscriptions: Stripe maneja los reintentos. Se conserva
+ * para tenants que todavía usen cobrarCortes() con PaymentIntent directo. */
 export const REINTENTOS_DIAS = [0, 3, 7] as const;
 
 export class ErrorFirmaStripe extends Error {
@@ -66,22 +85,30 @@ export class Cobrador {
   readonly #repo: Repositorio;
   readonly #stripe: ClienteStripe | null;
   readonly #precios: CargadorPrecios;
+  readonly #configPrecios: ConfigPrecios | null;
   readonly #avisar: ((tenantId: TenantId, texto: string) => Promise<unknown>) | null;
   readonly #ahora: () => number;
+  readonly #suspensionAutomatica: boolean;
 
   constructor(opciones: {
     repo: Repositorio;
     stripe?: ClienteStripe | null;
     precios: CargadorPrecios;
+    /** Configuración de price IDs de Stripe para Checkout. */
+    configPrecios?: ConfigPrecios | null;
     /** Aviso por WhatsApp a Mau (CAUCE_AVISOS_WHATSAPP); sin él, solo bitácora. */
     avisar?: (tenantId: TenantId, texto: string) => Promise<unknown>;
     ahora?: () => number;
+    /** Override para la bandera SUSPENSION_AUTOMATICA. */
+    suspensionAutomatica?: boolean;
   }) {
     this.#repo = opciones.repo;
     this.#stripe = opciones.stripe ?? null;
     this.#precios = opciones.precios;
+    this.#configPrecios = opciones.configPrecios ?? null;
     this.#avisar = opciones.avisar ?? null;
     this.#ahora = opciones.ahora ?? (() => Date.now());
+    this.#suspensionAutomatica = opciones.suspensionAutomatica ?? SUSPENSION_AUTOMATICA;
   }
 
   get stripeModo(): "test" | "live" | null {
@@ -262,14 +289,64 @@ export class Cobrador {
     registrar("cobro.metodo_guardado", { tenant: tenantId, marca: metodo.marca, ultimos4: metodo.ultimos4, vence: metodo.vence });
   }
 
+  // ── Suscripción (Stripe Checkout + Customer Portal) ──────────────────────
+
+  /**
+   * Crea una sesión de Checkout hospedada para suscribir al tenant.
+   * Stripe maneja la captura de tarjeta, el trial y el cobro recurrente.
+   * 14 días de prueba con funciones del Estándar sin agentes.
+   */
+  async iniciarSuscripcion(tenantId: TenantId, plan: PlanCobrable, periodo: PeriodoCobro, urls: { success: string; cancel: string }): Promise<{ url: string; modo: "test" | "live" }> {
+    if (!this.#stripe) throw new ErrorCobro(503, "cobro con tarjeta no disponible: Stripe sin configurar");
+    if (!this.#configPrecios?.completa) throw new ErrorCobro(503, "precios de Stripe no configurados: faltan price IDs");
+    const priceId = obtenerPriceId(this.#configPrecios, plan, periodo);
+    if (!priceId) throw new ErrorCobro(400, `no hay precio configurado para ${plan}/${periodo}`);
+    const tenant = await this.#repo.getTenant(tenantId);
+    if (!tenant) throw new ErrorCobro(404, "tenant no encontrado");
+    const cobro = tenant.cobro ?? cobroDefault();
+    let customerId = cobro.stripeCustomerId ?? null;
+    if (!customerId) {
+      customerId = await this.#stripe.asegurarCliente(tenantId, tenant.nombre);
+      await this.#repo.saveTenant({ ...tenant, cobro: { ...cobro, stripeCustomerId: customerId, actualizadoEn: new Date(this.#ahora()).toISOString() } });
+      registrar("cobro.cliente_stripe", { tenant: tenantId, customer: customerId, modo: this.#stripe.modo });
+    }
+    const session = await this.#stripe.crearCheckoutSession({
+      customerId,
+      priceId,
+      tenantId,
+      trialDias: 14,
+      successUrl: urls.success,
+      cancelUrl: urls.cancel,
+    });
+    registrar("cobro.checkout_creado", { tenant: tenantId, session: session.id, plan, periodo, priceId, modo: this.#stripe.modo });
+    return { url: session.url, modo: this.#stripe.modo };
+  }
+
+  /** Genera un enlace al Customer Portal de Stripe para gestionar la suscripción. */
+  async portalCliente(tenantId: TenantId, returnUrl: string): Promise<{ url: string }> {
+    if (!this.#stripe) throw new ErrorCobro(503, "Stripe sin configurar");
+    const tenant = await this.#repo.getTenant(tenantId);
+    if (!tenant) throw new ErrorCobro(404, "tenant no encontrado");
+    const customerId = tenant.cobro?.stripeCustomerId;
+    if (!customerId) throw new ErrorCobro(409, "el tenant no tiene un cliente de Stripe asociado");
+    const session = await this.#stripe.crearPortalSession(customerId, returnUrl);
+    registrar("cobro.portal_creado", { tenant: tenantId, modo: this.#stripe.modo });
+    return { url: session.url };
+  }
+
   // ── Job diario ────────────────────────────────────────────────────────────
 
-  /** Cobra los cortes vencidos de los tenants con tarjeta. Idempotente; devuelve cuántos cobros intentó. */
+  /**
+   * Cobra los cortes vencidos de los tenants con tarjeta. Idempotente; devuelve cuántos cobros intentó.
+   * @deprecated Obsoleto para tenants con suscripción de Stripe. cobrarCortes() SALTA
+   * tenants con stripeSubscriptionId (Stripe los cobra solo).
+   */
   async cobrarCortes(): Promise<number> {
     if (!this.#stripe) return 0;
     const ahora = this.#ahora();
     const ahoraIso = new Date(ahora).toISOString();
-    const tenants = (await this.#repo.listTenants()).filter((t) => t.cobro?.modo === "tarjeta" && t.cobro.metodo && t.cicloCorteEn && t.cicloCorteEn <= ahoraIso && t.estado === "activo");
+    // Salta tenants con suscripción de Stripe (Stripe los cobra solo).
+    const tenants = (await this.#repo.listTenants()).filter((t) => t.cobro?.modo === "tarjeta" && t.cobro.metodo && !t.cobro.stripeSubscriptionId && t.cicloCorteEn && t.cicloCorteEn <= ahoraIso && t.estado === "activo");
     if (tenants.length === 0) return 0;
     const foto = await this.#precios.obtener();
     if (!foto) {
@@ -440,6 +517,115 @@ export class Cobrador {
         let hecho = "ignorado";
         for (const re of lista) hecho = await this.#reembolsoStripe({ ...re, payment_intent: re.payment_intent ?? o.payment_intent });
         accion = hecho;
+        break;
+      }
+      case "checkout.session.completed": {
+        const tid: string | undefined = o.metadata?.tenantId ?? o.subscription_data?.metadata?.tenantId;
+        if (!tid || typeof o.subscription !== "string") break;
+        const t = await this.#repo.getTenant(tid);
+        if (!t) { registrar("cobro.checkout_tenant_desconocido", { ...base, tenant: tid }, "warn"); break; }
+        const cobro = t.cobro ?? cobroDefault();
+        const customer = typeof o.customer === "string" ? o.customer : cobro.stripeCustomerId ?? null;
+        await this.#repo.saveTenant({
+          ...t,
+          cobro: { ...cobro, stripeCustomerId: customer, stripeSubscriptionId: o.subscription, stripeSubscriptionStatus: "active", actualizadoEn: new Date(this.#ahora()).toISOString() },
+        });
+        registrar("cobro.suscripcion_vinculada", { tenant: tid, subscription: o.subscription, customer });
+        accion = "suscripcion_vinculada";
+        break;
+      }
+      case "invoice.paid": {
+        const subId = typeof o.subscription === "string" ? o.subscription : null;
+        const tid = o.subscription_details?.metadata?.tenantId ?? o.lines?.data?.[0]?.metadata?.tenantId ?? null;
+        if (!tid || !subId) {
+          // Puede ser una factura sin suscripción; se ignora.
+          break;
+        }
+        const montoMxn = Number(o.amount_paid ?? 0) / 100;
+        const periodo = (o.lines?.data?.[0]?.metadata?.periodo as PeriodoCobro | undefined) ?? null;
+        const meses = Number(o.lines?.data?.[0]?.metadata?.meses ?? (periodo ? MESES_PERIODO[periodo] : 1));
+        if (montoMxn > 0 && meses > 0) {
+          const r = await this.registrarPago(tid, {
+            fuente: "stripe", tipo: "pago", referencia: String(o.id), montoMxn, periodo, meses,
+            registradoPor: "stripe:subscription",
+          });
+          accion = r.nuevo ? "pago_registrado" : "pago_ya_registrado";
+        } else {
+          // Factura de $0 (trial); solo sincroniza el estado.
+          accion = "factura_trial";
+        }
+        // Sincronizar estado de suscripción.
+        const t = await this.#repo.getTenant(tid);
+        if (t) {
+          const cobro = t.cobro ?? cobroDefault();
+          await this.#repo.saveTenant({
+            ...t,
+            ...(t.estado === "suspendido" && this.#suspensionAutomatica ? { estado: "activo" as const } : {}),
+            cobro: { ...cobro, stripeSubscriptionId: subId, stripeSubscriptionStatus: "active", intentos: null, actualizadoEn: new Date(this.#ahora()).toISOString() },
+          });
+          if (t.estado === "suspendido" && this.#suspensionAutomatica) {
+            registrar("cobro.reactivado", { tenant: tid, subscription: subId, evento: ev.id });
+          }
+        }
+        break;
+      }
+      case "invoice.payment_failed": {
+        const subId = typeof o.subscription === "string" ? o.subscription : null;
+        const tid = o.subscription_details?.metadata?.tenantId ?? o.lines?.data?.[0]?.metadata?.tenantId ?? null;
+        if (!tid || !subId) break;
+        const t = await this.#repo.getTenant(tid);
+        if (!t) break;
+        const cobro = t.cobro ?? cobroDefault();
+        // Arranca la gracia de GRACIA_DIAS días.
+        const ahora = new Date(this.#ahora());
+        const graciaHasta = new Date(ahora.getTime() + GRACIA_DIAS * 86_400_000).toISOString();
+        await this.#repo.saveTenant({
+          ...t,
+          cobro: { ...cobro, stripeSubscriptionId: subId, stripeSubscriptionStatus: "past_due", actualizadoEn: ahora.toISOString() },
+        });
+        registrar("cobro.pago_fallido_suscripcion", { tenant: tid, subscription: subId, evento: ev.id, graciaHasta, suspensionAutomatica: this.#suspensionAutomatica }, "warn");
+        await this.#aviso(tid, `⚠️ Digsol Factory · pago fallido\nTenant ${t.nombre} (${tid}), suscripción ${subId}.\nGracia hasta ${graciaHasta.slice(0, 10)}. Suspensión automática: ${this.#suspensionAutomatica ? "SÍ" : "NO (a mano)"}.`);
+        accion = "pago_fallido_suscripcion";
+        break;
+      }
+      case "customer.subscription.updated": {
+        const tid: string | undefined = o.metadata?.tenantId;
+        if (!tid) break;
+        const t = await this.#repo.getTenant(tid);
+        if (!t) break;
+        const cobro = t.cobro ?? cobroDefault();
+        const status = String(o.status ?? "active") as NonNullable<CobroConfig["stripeSubscriptionStatus"]>;
+        await this.#repo.saveTenant({
+          ...t,
+          cobro: { ...cobro, stripeSubscriptionId: String(o.id), stripeSubscriptionStatus: status, actualizadoEn: new Date(this.#ahora()).toISOString() },
+        });
+        registrar("cobro.suscripcion_actualizada", { tenant: tid, subscription: o.id, status, evento: ev.id });
+        accion = "suscripcion_actualizada";
+        break;
+      }
+      case "customer.subscription.deleted": {
+        const tid: string | undefined = o.metadata?.tenantId;
+        if (!tid) break;
+        const t = await this.#repo.getTenant(tid);
+        if (!t) break;
+        const cobro = t.cobro ?? cobroDefault();
+        if (this.#suspensionAutomatica) {
+          await this.#repo.saveTenant({
+            ...t,
+            estado: "suspendido",
+            cobro: { ...cobro, stripeSubscriptionId: String(o.id), stripeSubscriptionStatus: "canceled", actualizadoEn: new Date(this.#ahora()).toISOString() },
+          });
+          registrar("cobro.suspendido_automatico", { tenant: tid, subscription: o.id, evento: ev.id }, "warn");
+          await this.#aviso(tid, `🔴 Digsol Factory · suspensión automática\nTenant ${t.nombre} (${tid}) suspendido: suscripción ${o.id} cancelada/eliminada.`);
+        } else {
+          await this.#repo.saveTenant({
+            ...t,
+            cobro: { ...cobro, stripeSubscriptionId: String(o.id), stripeSubscriptionStatus: "canceled", actualizadoEn: new Date(this.#ahora()).toISOString() },
+          });
+          registrar("cobro.suscripcion_cancelada_sin_suspension", { tenant: tid, subscription: o.id, evento: ev.id, nota: "SUSPENSION_AUTOMATICA=false, no se suspende" }, "warn");
+          await this.#aviso(tid, `⚠️ Digsol Factory · suscripción cancelada\nTenant ${t.nombre} (${tid}), suscripción ${o.id}. SUSPENSION_AUTOMATICA=false: el tenant sigue activo. Suspender a mano si procede.`);
+        }
+        accion = this.#suspensionAutomatica ? "suspendido" : "suscripcion_cancelada";
         break;
       }
       default:
