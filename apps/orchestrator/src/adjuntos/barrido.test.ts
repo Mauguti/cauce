@@ -20,10 +20,10 @@ afterEach(async () => {
 
 function crearTenant(overrides: Partial<Tenant> = {}): Tenant {
   return {
-    id: "t1", nombre: "Test", plan: "estandar", estado: "activo",
+    id: "t1", nombre: "Test", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64),
     creadoEn: "2028-01-01T00:00:00Z",
     ...overrides,
-  };
+  } as Tenant;
 }
 
 function crearMensaje(id: string, adjuntos: Adjunto[], timestamp?: string): Message {
@@ -60,7 +60,7 @@ describe("barrerAdjuntos", () => {
     expect(resultado.bytesLiberados).toBe(contenido.length);
 
     const msg = await repo.getMessage("t1", "m1");
-    expect(msg!.adjuntos![0].expirado).toBe(true);
+    expect(msg!.adjuntos![0]!.expirado).toBe(true);
     // El mensaje sigue en pie.
     expect(msg!.cuerpo).toBe("");
 

@@ -265,7 +265,7 @@ export class Agente {
         cacheLectura: r.uso.cacheLectura, cacheEscritura: r.uso.cacheEscritura, costoUsd: r.costoUsd, ms, resultado,
         ...(r.herramientasUsadas.length ? { herramientas: r.herramientasUsadas.join(",") } : {}),
       }, resultado === "ok" ? "info" : "warn");
-      return { texto: r.texto, costoUsd: r.costoUsd };
+      return { texto: r.texto, costoUsd: r.costoUsd ?? 0 };
     } catch (err) {
       const ms = fin();
       // Lo ya gastado en rondas anteriores se registra igual: la factura de Anthropic lo cobra.

@@ -67,7 +67,7 @@ export function normalizarEntrante(
   const adjuntosEntrantes = extraerAdjuntosEntrantes(msg);
   if (adjuntosEntrantes.length > 0) {
     // El caption del adjunto puede servir como cuerpo del mensaje.
-    const caption = adjuntosEntrantes[0].caption;
+    const caption = adjuntosEntrantes[0]?.caption;
     if (!cuerpo && caption) cuerpo = caption;
   }
 

@@ -46,7 +46,7 @@ export async function barrerAdjuntos(
 
       for (let i = 0; i < adjuntosActualizados.length; i++) {
         const a = adjuntosActualizados[i];
-        if (a.expirado) continue;
+        if (!a || a.expirado) continue;
 
         const edadMs = ahora.getTime() - new Date(a.guardadoEn).getTime();
         if (edadMs > limiteMs) {
@@ -109,7 +109,7 @@ async function liberarHastaTope(
   for (const msg of mensajes) {
     for (let i = 0; i < (msg.adjuntos?.length ?? 0); i++) {
       const a = msg.adjuntos![i];
-      if (!a.expirado) {
+      if (a && !a.expirado) {
         candidatos.push({ msg, idx: i, adjunto: a });
       }
     }

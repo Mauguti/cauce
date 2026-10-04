@@ -45,7 +45,7 @@ function extensionRapida(mime: string): string {
     "audio/ogg": ".ogg", "audio/mpeg": ".mp3", "video/mp4": ".mp4",
     "application/pdf": ".pdf",
   };
-  return m[mime.split(";")[0].trim()] ?? "";
+  return m[(mime.split(";")[0] ?? "").trim()] ?? "";
 }
 
 function tokenValido(recibido: unknown, esperado: string): boolean {

@@ -161,7 +161,7 @@ export class AlmacenAdjuntos {
 // ── Utilidades ──────────────────────────────────────────────────────────
 
 function extensionDeMime(mime: string): string {
-  const base = mime.split(";")[0].trim();
+  const base = (mime.split(";")[0] ?? "").trim();
   const mapa: Record<string, string> = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
