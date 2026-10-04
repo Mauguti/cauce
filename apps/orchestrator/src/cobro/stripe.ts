@@ -45,6 +45,19 @@ export interface ClienteStripe {
     idempotencia: string;
     metadata: Record<string, string>;
   }): Promise<ResultadoCobro>;
+  /** Crea una sesión de Checkout para suscripción. */
+  crearCheckoutSession(o: {
+    customerId: string;
+    priceId: string;
+    tenantId: string;
+    trialDias: number;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{ id: string; url: string }>;
+  /** Crea una sesión del Customer Portal de Stripe. */
+  crearPortalSession(customerId: string, returnUrl: string): Promise<{ url: string }>;
+  /** Obtiene el estado de una suscripción. */
+  obtenerSuscripcion(subscriptionId: string): Promise<{ status: string; cancelAtPeriodEnd: boolean; trialEnd: number | null }>;
   /** Verifica la firma y devuelve el evento; lanza si la firma no es válida. */
   construirEvento(cuerpoCrudo: Buffer | string, firma: string): EventoStripe;
 }
@@ -123,6 +136,50 @@ export class ClienteStripeReal implements ClienteStripe {
       }
       throw err;
     }
+  }
+
+  async crearCheckoutSession(o: {
+    customerId: string;
+    priceId: string;
+    tenantId: string;
+    trialDias: number;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<{ id: string; url: string }> {
+    const subscriptionData: Stripe.Checkout.SessionCreateParams.SubscriptionData = {
+      metadata: { tenantId: o.tenantId },
+    };
+    if (o.trialDias > 0) subscriptionData.trial_period_days = o.trialDias;
+    const session = await this.#stripe.checkout.sessions.create({
+      customer: o.customerId,
+      mode: "subscription",
+      payment_method_types: ["card"],
+      line_items: [{ price: o.priceId, quantity: 1 }],
+      subscription_data: subscriptionData,
+      currency: "mxn",
+      success_url: o.successUrl,
+      cancel_url: o.cancelUrl,
+      metadata: { tenantId: o.tenantId },
+    });
+    if (!session.url) throw new Error("Stripe no devolvió URL del Checkout Session");
+    return { id: session.id, url: session.url };
+  }
+
+  async crearPortalSession(customerId: string, returnUrl: string): Promise<{ url: string }> {
+    const session = await this.#stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: returnUrl,
+    });
+    return { url: session.url };
+  }
+
+  async obtenerSuscripcion(subscriptionId: string): Promise<{ status: string; cancelAtPeriodEnd: boolean; trialEnd: number | null }> {
+    const sub = await this.#stripe.subscriptions.retrieve(subscriptionId) as Stripe.Subscription;
+    return {
+      status: sub.status,
+      cancelAtPeriodEnd: sub.cancel_at_period_end,
+      trialEnd: sub.trial_end,
+    };
   }
 
   construirEvento(cuerpoCrudo: Buffer | string, firma: string): EventoStripe {

@@ -43,6 +43,9 @@ class StripeFalso implements ClienteStripe {
     this.cobros.push(o);
     return this.respuestas.shift() ?? { id: `pi_${this.cobros.length}`, estado: "succeeded", codigoError: null, mensajeError: null, clientSecret: null };
   }
+  async crearCheckoutSession(): Promise<{ id: string; url: string }> { return { id: "cs_test_1", url: "https://checkout.stripe.com/test" }; }
+  async crearPortalSession(): Promise<{ url: string }> { return { url: "https://billing.stripe.com/test" }; }
+  async obtenerSuscripcion(): Promise<{ status: string; cancelAtPeriodEnd: boolean; trialEnd: number | null }> { return { status: "active", cancelAtPeriodEnd: false, trialEnd: null }; }
   construirEvento(cuerpo: Buffer | string, firma: string): EventoStripe {
     if (firma !== this.firmaValida) throw new Error("No signatures found matching the expected signature for payload");
     const ev = this.eventos.get(String(cuerpo));

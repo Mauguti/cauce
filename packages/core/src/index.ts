@@ -354,6 +354,10 @@ export interface CobroConfig {
     requiereAccion?: string | null;
     agotado?: boolean;
   } | null;
+  /** ID de la suscripción de Stripe (sub_…). Si existe, Stripe cobra solo y cobrarCortes() salta este tenant. */
+  stripeSubscriptionId?: string | null;
+  /** Estado de la suscripción sincronizado desde webhooks. */
+  stripeSubscriptionStatus?: "active" | "past_due" | "canceled" | "trialing" | "incomplete" | "unpaid" | null;
   actualizadoEn: string;
 }
 
