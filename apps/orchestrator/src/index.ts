@@ -21,6 +21,7 @@ import { Provisioning } from "./provisioning.ts";
 import { Cobrador } from "./cobro/cobrador.ts";
 import { CargadorPrecios } from "./cobro/precios.ts";
 import { ClienteStripeReal } from "./cobro/stripe.ts";
+import { cargarConfigPrecios } from "./cobro/config-precios.ts";
 import { GoogleReal } from "./google/calendario.ts";
 import { Citas } from "./agentes/citas.ts";
 import { ConectorOpenlines } from "./bitrix/openlines/conector.ts";
@@ -151,12 +152,14 @@ const stripeKey = process.env.STRIPE_SECRET_KEY?.trim();
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
 const stripe = stripeKey && stripeWebhookSecret ? new ClienteStripeReal({ secretKey: stripeKey, webhookSecret: stripeWebhookSecret }) : null;
 if (!stripe) console.warn("STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET sin definir: el cobro con tarjeta queda deshabilitado (solo transferencia por admin)");
+const configPrecios = stripe ? cargarConfigPrecios() : null;
 const preciosUrl = process.env.CAUCE_PRECIOS_URL?.trim();
 if (!preciosUrl) console.warn("CAUCE_PRECIOS_URL sin definir: no se cotiza ni se cobra ningún corte");
 const avisosWhatsApp = process.env.CAUCE_AVISOS_WHATSAPP?.trim();
 const cobrador = new Cobrador({
   repo,
   stripe,
+  configPrecios,
   precios: new CargadorPrecios({ url: preciosUrl }),
   // Aviso a Mau desde la primera línea viva del tenant afectado (mismo canal que el cortacircuitos); sin línea viva, solo bitácora.
   ...(avisosWhatsApp
