@@ -750,11 +750,34 @@ export interface Message {
   confirmadoEn?: string | null;
   /** Adjuntos del mensaje (imágenes, audio, documentos). */
   adjuntos?: Adjunto[];
+  /**
+   * Tipos de adjunto que traía el entrante (aunque el archivo no se guarde).
+   * Con `cuerpo` vacío, el mensaje es un "adjunto sin texto": no dispara
+   * bots ni agente, no cuenta como primer contacto y se espeja como tal.
+   */
+  tiposAdjunto?: TipoAdjunto[];
   /** ISO 8601 */
   timestamp: string;
 }
 
 // ── Adjuntos ────────────────────────────────────────────────────────────
+
+export type TipoAdjunto = "imagen" | "audio" | "nota de voz" | "video" | "documento" | "sticker";
+
+/** Entrante con adjunto y sin texto: se trata distinto a un mensaje de cuerpo vacío. */
+export function esAdjuntoSinTexto(m: Pick<Message, "cuerpo" | "tiposAdjunto">): boolean {
+  return !m.cuerpo.trim() && (m.tiposAdjunto?.length ?? 0) > 0;
+}
+
+/** "imagen", "imagen/audio"… para espejos y bitácora. */
+export function etiquetaAdjuntos(m: Pick<Message, "tiposAdjunto">): string {
+  return [...new Set(m.tiposAdjunto ?? [])].join("/") || "archivo";
+}
+
+/** Lo que se escribe en el CRM y en el canal abierto cuando llega un adjunto sin texto. */
+export function textoAdjuntoSinTexto(m: Pick<Message, "tiposAdjunto">): string {
+  return `📎 Adjunto (${etiquetaAdjuntos(m)}) sin texto`;
+}
 
 export interface Adjunto {
   id: string;

@@ -7,6 +7,7 @@ import {
   type Message,
   type MessageOrigen,
   type TenantId,
+  textoAdjuntoSinTexto,
 } from "@cauce/core";
 import type { Repositorio } from "../../store.ts";
 import type { ColaEnvios } from "../../cola.ts";
@@ -692,7 +693,8 @@ export class ConectorOpenlines {
         line: lineId,
         chatId,
         usuario: { id: telefono, nombre: nombre ?? null, telefono: `+${telefono}` },
-        mensaje: { id: mensaje.id, fecha: new Date(mensaje.timestamp), texto: mensaje.cuerpo },
+        // Nunca texto vacío al Contact Center: un adjunto sin texto se anuncia como tal.
+        mensaje: { id: mensaje.id, fecha: new Date(mensaje.timestamp), texto: mensaje.cuerpo.trim() ? mensaje.cuerpo : textoAdjuntoSinTexto(mensaje) },
       });
       await this.#repo.vincularOpenLine(tenantId, instanceId, telefono, {
         lineId,

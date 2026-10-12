@@ -1,5 +1,5 @@
 import type { Atribucion, InstanceId, Message, MessageOrigen, TenantId } from "@cauce/core";
-import { tieneCapacidad, type Capacidad } from "@cauce/core";
+import { tieneCapacidad, type Capacidad, esAdjuntoSinTexto, etiquetaAdjuntos, textoAdjuntoSinTexto } from "@cauce/core";
 import { enmascararTelefono, registrar, registrarCadaMs } from "../log.ts";
 import type { ConectorOpenlines } from "../bitrix/openlines/conector.ts";
 import type { Repositorio } from "../store.ts";
@@ -153,6 +153,11 @@ export class MotorEntrada {
     atribucion?: Atribucion | null,
   ): Promise<void> {
     const telefono = mensaje.telefono.replace(/[^\d]/g, "");
+    // Adjunto sin texto (foto, audio, sticker…): es tráfico real y se
+    // registra, pero NO es una pregunta: no dispara bots ni agente, no
+    // consume el primer contacto (un sticker no puede provocar una
+    // bienvenida) y se espeja como adjunto, nunca como texto vacío.
+    const sinTexto = esAdjuntoSinTexto(mensaje);
 
     // 1. Conversación: registro atómico; decide primer contacto sin carrera.
     //    Guarda el nombre del contacto (pushName) para dar contexto al
@@ -163,6 +168,7 @@ export class MotorEntrada {
       telefono,
       mensaje.timestamp,
       nombre,
+      { cuentaPrimerContacto: !sinTexto },
     );
 
     // 1b. Atribución de campaña: SOLO al primer contacto, y explícita aunque
@@ -202,7 +208,9 @@ export class MotorEntrada {
     const propia = await this.#lineaPropia(tenantId, telefono);
     // Anti-bucle 2: cortacircuitos activo en esta conversación.
     const pausada = Boolean(conversacion.autoPausadaHasta && new Date(conversacion.autoPausadaHasta).getTime() > this.#ahora());
-    if (propia) {
+    if (sinTexto) {
+      registrar("entrada.respuesta", { ...base, resultado: "ninguna", origen: `adjunto sin texto (${etiquetaAdjuntos(mensaje)}): no dispara bots ni agente ni cuenta como primer contacto` });
+    } else if (propia) {
       registrar("entrada.respuesta", { ...base, resultado: "ninguna", origen: `remitente es línea propia (${propia.alcance}: ${propia.instanceId})` }, "warn");
     } else if (pausada) {
       registrar("entrada.respuesta", { ...base, resultado: "ninguna", origen: `cortacircuitos activo hasta ${conversacion.autoPausadaHasta}: ${conversacion.cortacircuitos?.motivo ?? ""}` }, "warn");
@@ -309,7 +317,7 @@ export class MotorEntrada {
     // 3. Write-back al CRM: la respuesta del cliente vuelve al registro que
     //    la originó (item de monday o timeline de la entidad de Bitrix).
     if (!puede("entrantes")) return;
-    const texto = `📥 ${mensaje.cuerpo}`;
+    const texto = sinTexto ? textoAdjuntoSinTexto(mensaje) : `📥 ${mensaje.cuerpo}`;
     // Al primer contacto con registro ya vinculado, el origen va al CRM: visible donde trabaja el vendedor.
     const origenCrm = esPrimerContacto && atribucion ? `📣 Origen: ${atribucion.estado === "atribuida" ? atribucion.origen ?? "campaña" : "sin atribuir"}` : null;
     if (this.#monday && conversacion.mondayItemId && origenCrm) {

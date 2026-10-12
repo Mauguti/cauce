@@ -1,4 +1,4 @@
-import type { Atribucion, InstanceId, Message, TenantId } from "@cauce/core";
+import type { Atribucion, InstanceId, Message, TenantId, TipoAdjunto } from "@cauce/core";
 
 /**
  * Metadatos de un adjunto entrante extraídos del payload de Evolution,
@@ -82,12 +82,25 @@ export function normalizarEntrante(
     direccion: "in",
     telefono,
     cuerpo: cuerpo || "",
+    ...(adjuntosEntrantes.length ? { tiposAdjunto: adjuntosEntrantes.map(tipoAdjuntoDe) } : {}),
     estado: "recibido",
     externalId: typeof key.id === "string" ? key.id : null,
     timestamp: Number.isFinite(marcaSegundos)
       ? new Date(marcaSegundos * 1000).toISOString()
       : new Date().toISOString(),
   };
+}
+
+/** Tipo legible del adjunto para el espejo y la bitácora. */
+export function tipoAdjuntoDe(a: AdjuntoEntrante): TipoAdjunto {
+  if (a.esNotaDeVoz) return "nota de voz";
+  switch (a.tipoMensaje) {
+    case "imageMessage": return "imagen";
+    case "audioMessage": return "audio";
+    case "videoMessage": return "video";
+    case "stickerMessage": return "sticker";
+    default: return "documento";
+  }
 }
 
 /**

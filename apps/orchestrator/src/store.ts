@@ -130,6 +130,8 @@ export interface Repositorio {
     telefono: string,
     timestamp: string,
     nombre?: string | null,
+    /** `cuentaPrimerContacto: false` (adjunto sin texto): se registra el tráfico pero no se consume el primer contacto. */
+    opciones?: { cuentaPrimerContacto?: boolean },
   ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }>;
   /** Todas las conversaciones del tenant (para dar contexto al registro). */
   listConversaciones(tenantId: TenantId): Promise<Conversacion[]>;
@@ -558,18 +560,20 @@ export class RepositorioEnMemoria implements Repositorio {
     telefono: string,
     timestamp: string,
     nombre?: string | null,
+    opciones: { cuentaPrimerContacto?: boolean } = {},
   ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }> {
     // Sin `await` entre lectura y escritura: en el modelo de un solo hilo
     // de JS esto es atómico frente a otras llamadas concurrentes.
     const clave = this.#claveConv(tenantId, instanceId, telefono);
     const previa = this.#conversaciones.get(clave);
-    const esPrimerContacto = !previa || previa.primerContactoEn === null;
+    const cuenta = opciones.cuentaPrimerContacto !== false;
+    const esPrimerContacto = cuenta && (!previa || previa.primerContactoEn === null);
     // ÚNICO camino de escritura: fusionar. Dos bugs de la misma familia
     // salieron de reconstruir el documento a mano (se perdían humanaHasta,
     // bitrixOpenLine, traspaso); ya no hay segundo camino.
     this.#fusionarConversacion(tenantId, instanceId, telefono, {
       nombre: nombre?.trim() || previa?.nombre || null,
-      primerContactoEn: previa?.primerContactoEn ?? timestamp,
+      primerContactoEn: previa?.primerContactoEn ?? (cuenta ? timestamp : null),
       ultimoEntranteEn: timestamp,
     });
     const conversacion = this.#conversaciones.get(clave)!;

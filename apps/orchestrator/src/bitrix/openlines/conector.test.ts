@@ -353,6 +353,18 @@ describe("ConectorOpenlines · placement", () => {
 });
 
 describe("ConectorOpenlines · mensajes", () => {
+  it("4 · entrante con adjunto y sin texto: al Contact Center nunca va texto vacío, va '📎 Adjunto (…) sin texto'", async () => {
+    const c = armar();
+    await instalarYAsignar(c);
+    const foto: Message = { ...entrante("i1", "foto1"), cuerpo: "", tiposAdjunto: ["imagen"] };
+    expect(await c.conector.entrante("t1", "i1", foto, "Mau")).toBe(true);
+    const envio = c.llamadas.filter((l) => l.metodo === "imconnector.send.messages").at(-1)!;
+    expect(envio.body.MESSAGES[0].message.text).toBe("📎 Adjunto (imagen) sin texto");
+    const conTexto: Message = { ...entrante("i1", "foto2"), cuerpo: "mi comprobante", tiposAdjunto: ["imagen"] };
+    await c.conector.entrante("t1", "i1", conTexto, "Mau");
+    expect(c.llamadas.filter((l) => l.metodo === "imconnector.send.messages").at(-1)!.body.MESSAGES[0].message.text).toBe("mi comprobante");
+  });
+
   it("entrante: va a la línea abierta que atiende el número, con chat.id instancia:teléfono, y guarda lo que Bitrix devolvió", async () => {
     const c = armar();
     await instalarYAsignar(c);

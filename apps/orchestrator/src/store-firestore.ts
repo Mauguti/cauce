@@ -513,17 +513,19 @@ export class RepositorioFirestore implements Repositorio {
     telefono: string,
     timestamp: string,
     nombre?: string | null,
+    opciones: { cuentaPrimerContacto?: boolean } = {},
   ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }> {
     const ref = this.#db.doc(
       rutas.conversacion(tenantId, instanceId, telefono),
     );
+    const cuenta = opciones.cuentaPrimerContacto !== false;
     // Transacción: dos entrantes casi simultáneos del mismo número se
     // serializan y Firestore reintenta el perdedor, así exactamente uno
     // ve primerContactoEn ausente y recibe esPrimerContacto=true.
     return this.#db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const previa = snap.exists ? (snap.data() as Conversacion) : null;
-      const esPrimerContacto = !previa || previa.primerContactoEn === null;
+      const esPrimerContacto = cuenta && (!previa || previa.primerContactoEn === null);
       // Se conserva TODO lo previo (ventana humana, vínculo con el chat de
       // Bitrix, lo que se agregue después) y solo se actualiza lo del
       // entrante. Antes se reconstruía el doc a mano y cada mensaje borraba
@@ -535,7 +537,7 @@ export class RepositorioFirestore implements Repositorio {
         instanceId,
         telefono,
         nombre: nombre?.trim() || previa?.nombre || null,
-        primerContactoEn: previa?.primerContactoEn ?? timestamp,
+        primerContactoEn: previa?.primerContactoEn ?? (cuenta ? timestamp : null),
         ultimoEntranteEn: timestamp,
         mondayItemId: previa?.mondayItemId ?? null,
         bitrixEntidad: previa?.bitrixEntidad ?? null,
