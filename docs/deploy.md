@@ -311,6 +311,17 @@ agentes con `rol: citas` no contestan (`agente.sin_calendario`).
 vuelve el navegador tras el OAuth; sin ella se usa el primer origen de
 `CAUCE_CORS_ORIGENES`.
 
+### `GA4_MEASUREMENT_ID`, `GA4_API_SECRET` — conversiones a GA4 (opcional)
+
+El orquestador manda `checkout_iniciado`, `prueba_iniciada` y
+`suscripcion_activa` (con `plan` y `periodicidad`) al Protocolo de
+Medición de GA4 desde el Checkout y los webhooks de Stripe, con el
+`client_id` que el front captura de la cookie `_ga` al crear la sesión.
+Sin las dos variables, apagado y lo dice en el arranque. El `api_secret`
+se crea en GA4 → Administración → Flujos de datos → Secretos del
+Protocolo de Medición. La plataforma necesita `VITE_GA4_MEASUREMENT_ID`
+para cargar gtag y que exista la cookie.
+
 ### `CAUCE_FIRESTORE_DB` — base de datos con nombre (opcional)
 
 Dos orquestadores sobre el mismo proyecto Firebase compartirían la base

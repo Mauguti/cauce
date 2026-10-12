@@ -13,6 +13,7 @@ import { registrar, registrarError } from "../log.ts";
 import type { CargadorPrecios, FotoLeida } from "./precios.ts";
 import type { ClienteStripe, EventoStripe } from "./stripe.ts";
 import type { ConfigPrecios, PlanCobrable } from "./config-precios.ts";
+import { ANALITICA_APAGADA, clientIdDeCookie, type Analitica } from "../analitica/ga4.ts";
 import { obtenerPriceId } from "./config-precios.ts";
 
 /** Meses por periodo: definición del producto, no un precio. */
@@ -101,7 +102,10 @@ export class Cobrador {
     ahora?: () => number;
     /** Override para la bandera SUSPENSION_AUTOMATICA. */
     suspensionAutomatica?: boolean;
+    /** Conversiones a GA4 (Protocolo de Medición). Ausente = apagada. */
+    analitica?: Analitica;
   }) {
+    this.#analitica = opciones.analitica ?? ANALITICA_APAGADA;
     this.#repo = opciones.repo;
     this.#stripe = opciones.stripe ?? null;
     this.#precios = opciones.precios;
@@ -110,6 +114,7 @@ export class Cobrador {
     this.#ahora = opciones.ahora ?? (() => Date.now());
     this.#suspensionAutomatica = opciones.suspensionAutomatica ?? SUSPENSION_AUTOMATICA;
   }
+  readonly #analitica: Analitica;
 
   get stripeModo(): "test" | "live" | null {
     return this.#stripe?.modo ?? null;
@@ -296,7 +301,7 @@ export class Cobrador {
    * Stripe maneja la captura de tarjeta, el trial y el cobro recurrente.
    * 14 días de prueba con funciones del Estándar sin agentes.
    */
-  async iniciarSuscripcion(tenantId: TenantId, plan: PlanCobrable, periodo: PeriodoCobro, urls: { success: string; cancel: string }): Promise<{ url: string; modo: "test" | "live" }> {
+  async iniciarSuscripcion(tenantId: TenantId, plan: PlanCobrable, periodo: PeriodoCobro, urls: { success: string; cancel: string }, extra: { ga4ClientId?: string | null } = {}): Promise<{ url: string; modo: "test" | "live" }> {
     if (!this.#stripe) throw new ErrorCobro(503, "cobro con tarjeta no disponible: Stripe sin configurar");
     if (!this.#configPrecios?.completa) throw new ErrorCobro(503, "precios de Stripe no configurados: faltan price IDs");
     const priceId = obtenerPriceId(this.#configPrecios, plan, periodo);
@@ -310,6 +315,9 @@ export class Cobrador {
       await this.#repo.saveTenant({ ...tenant, cobro: { ...cobro, stripeCustomerId: customerId, actualizadoEn: new Date(this.#ahora()).toISOString() } });
       registrar("cobro.cliente_stripe", { tenant: tenantId, customer: customerId, modo: this.#stripe.modo });
     }
+    // plan y periodo van en la metadata para que invoice.paid sepa cuántos meses
+    // cubre la factura; ga4ClientId solo existe ahora (cookie _ga del navegador).
+    const ga4ClientId = clientIdDeCookie(extra.ga4ClientId);
     const session = await this.#stripe.crearCheckoutSession({
       customerId,
       priceId,
@@ -317,8 +325,10 @@ export class Cobrador {
       trialDias: 14,
       successUrl: urls.success,
       cancelUrl: urls.cancel,
+      metadata: { plan, periodo, meses: String(MESES_PERIODO[periodo]), ...(ga4ClientId ? { ga4ClientId } : {}) },
     });
-    registrar("cobro.checkout_creado", { tenant: tenantId, session: session.id, plan, periodo, priceId, modo: this.#stripe.modo });
+    registrar("cobro.checkout_creado", { tenant: tenantId, session: session.id, plan, periodo, priceId, modo: this.#stripe.modo, ga4: Boolean(ga4ClientId) });
+    if (this.#analitica.activa) await this.#analitica.evento(ga4ClientId, "checkout_iniciado", { plan, periodicidad: periodo, modo: this.#stripe.modo });
     return { url: session.url, modo: this.#stripe.modo };
   }
 
@@ -531,6 +541,8 @@ export class Cobrador {
           cobro: { ...cobro, stripeCustomerId: customer, stripeSubscriptionId: o.subscription, stripeSubscriptionStatus: "active", actualizadoEn: new Date(this.#ahora()).toISOString() },
         });
         registrar("cobro.suscripcion_vinculada", { tenant: tid, subscription: o.subscription, customer });
+        // La prueba de 14 días arranca aquí: Checkout completado con trial, sin cargo.
+        if (this.#analitica.activa) await this.#analitica.evento(o.metadata?.ga4ClientId, "prueba_iniciada", { plan: String(o.metadata?.plan ?? ""), periodicidad: String(o.metadata?.periodo ?? "") });
         accion = "suscripcion_vinculada";
         break;
       }
@@ -542,14 +554,18 @@ export class Cobrador {
           break;
         }
         const montoMxn = Number(o.amount_paid ?? 0) / 100;
-        const periodo = (o.lines?.data?.[0]?.metadata?.periodo as PeriodoCobro | undefined) ?? null;
-        const meses = Number(o.lines?.data?.[0]?.metadata?.meses ?? (periodo ? MESES_PERIODO[periodo] : 1));
+        // La metadata de la suscripción (plan, periodo, meses, ga4ClientId) viene
+        // en subscription_details.metadata; las líneas la repiten.
+        const meta = { ...(o.lines?.data?.[0]?.metadata ?? {}), ...(o.subscription_details?.metadata ?? {}) } as Record<string, string | undefined>;
+        const periodo = (meta.periodo && meta.periodo in MESES_PERIODO ? meta.periodo : null) as PeriodoCobro | null;
+        const meses = Number(meta.meses ?? (periodo ? MESES_PERIODO[periodo] : 1));
         if (montoMxn > 0 && meses > 0) {
           const r = await this.registrarPago(tid, {
             fuente: "stripe", tipo: "pago", referencia: String(o.id), montoMxn, periodo, meses,
             registradoPor: "stripe:subscription",
           });
           accion = r.nuevo ? "pago_registrado" : "pago_ya_registrado";
+          if (r.nuevo && this.#analitica.activa) await this.#analitica.evento(meta.ga4ClientId, "suscripcion_activa", { plan: String(meta.plan ?? ""), periodicidad: String(periodo ?? ""), value: montoMxn, currency: "MXN", transaction_id: String(o.id) });
         } else {
           // Factura de $0 (trial); solo sincroniza el estado.
           accion = "factura_trial";

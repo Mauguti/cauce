@@ -1205,12 +1205,12 @@ export function crearApp(
     const cobrador = conCobrador(res);
     if (!cobrador) return;
     try {
-      const { plan, periodo, successUrl, cancelUrl } = req.body ?? {};
+      const { plan, periodo, successUrl, cancelUrl, ga4ClientId } = req.body ?? {};
       if (!plan || !periodo || !successUrl || !cancelUrl) {
         res.status(400).json({ error: "plan, periodo, successUrl y cancelUrl requeridos" });
         return;
       }
-      const r = await cobrador.iniciarSuscripcion(req.tenantId!, plan, periodo, { success: successUrl, cancel: cancelUrl });
+      const r = await cobrador.iniciarSuscripcion(req.tenantId!, plan, periodo, { success: successUrl, cancel: cancelUrl }, { ga4ClientId: typeof ga4ClientId === "string" ? ga4ClientId : null });
       res.json(r);
     } catch (err) {
       responderErrorCobro(res, err, { tenant: req.tenantId, ruta: "POST /cobro/checkout" });

@@ -53,6 +53,8 @@ export interface ClienteStripe {
     trialDias: number;
     successUrl: string;
     cancelUrl: string;
+    /** Va en la metadata de la sesión Y de la suscripción (plan, periodo, ga4ClientId): los webhooks la leen de ahí. */
+    metadata?: Record<string, string>;
   }): Promise<{ id: string; url: string }>;
   /** Crea una sesión del Customer Portal de Stripe. */
   crearPortalSession(customerId: string, returnUrl: string): Promise<{ url: string }>;
@@ -145,10 +147,10 @@ export class ClienteStripeReal implements ClienteStripe {
     trialDias: number;
     successUrl: string;
     cancelUrl: string;
+    metadata?: Record<string, string>;
   }): Promise<{ id: string; url: string }> {
-    const subscriptionData: Stripe.Checkout.SessionCreateParams.SubscriptionData = {
-      metadata: { tenantId: o.tenantId },
-    };
+    const metadata = { tenantId: o.tenantId, ...(o.metadata ?? {}) };
+    const subscriptionData: Stripe.Checkout.SessionCreateParams.SubscriptionData = { metadata };
     if (o.trialDias > 0) subscriptionData.trial_period_days = o.trialDias;
     const session = await this.#stripe.checkout.sessions.create({
       customer: o.customerId,
@@ -159,7 +161,7 @@ export class ClienteStripeReal implements ClienteStripe {
       currency: "mxn",
       success_url: o.successUrl,
       cancel_url: o.cancelUrl,
-      metadata: { tenantId: o.tenantId },
+      metadata,
     });
     if (!session.url) throw new Error("Stripe no devolvió URL del Checkout Session");
     return { id: session.id, url: session.url };

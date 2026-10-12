@@ -19,6 +19,7 @@ import { Cripto } from "./cripto.ts";
 import { crearVerificadorToken } from "./firebase.ts";
 import { Provisioning } from "./provisioning.ts";
 import { Cobrador } from "./cobro/cobrador.ts";
+import { GA4Real } from "./analitica/ga4.ts";
 import { CargadorPrecios } from "./cobro/precios.ts";
 import { ClienteStripeReal } from "./cobro/stripe.ts";
 import { cargarConfigPrecios } from "./cobro/config-precios.ts";
@@ -156,10 +157,16 @@ const configPrecios = stripe ? cargarConfigPrecios() : null;
 const preciosUrl = process.env.CAUCE_PRECIOS_URL?.trim();
 if (!preciosUrl) console.warn("CAUCE_PRECIOS_URL sin definir: no se cotiza ni se cobra ningún corte");
 const avisosWhatsApp = process.env.CAUCE_AVISOS_WHATSAPP?.trim();
+// Conversiones a GA4 desde el webhook de Stripe (Protocolo de Medición). Bandera: sin las dos, apagado.
+const ga4Id = process.env.GA4_MEASUREMENT_ID?.trim();
+const ga4Secret = process.env.GA4_API_SECRET?.trim();
+const analitica = ga4Id && ga4Secret ? new GA4Real({ measurementId: ga4Id, apiSecret: ga4Secret }) : undefined;
+if (!analitica) console.warn("GA4_MEASUREMENT_ID/GA4_API_SECRET sin definir: la medición de conversiones queda apagada");
 const cobrador = new Cobrador({
   repo,
   stripe,
   configPrecios,
+  ...(analitica ? { analitica } : {}),
   precios: new CargadorPrecios({ url: preciosUrl }),
   // Aviso a Mau desde la primera línea viva del tenant afectado (mismo canal que el cortacircuitos); sin línea viva, solo bitácora.
   ...(avisosWhatsApp
