@@ -1,37 +1,40 @@
 # Despliegue de octubre 2026: cuatro semanas de ramas a producción
 
-Preparado el 12-oct-2026 y **rehecho el mismo día sobre las puntas
-reales** (v2). **No ejecutado.** Lo ejecuta Mau con autorización
+Preparado el 12-oct-2026, rehecho el mismo día sobre las puntas reales
+(v2) y actualizado tras el arreglo de adjuntos sin texto (v3). **No
+ejecutado.** Lo ejecuta Mau con autorización
 explícita, paso por paso, con la reversa leída antes.
 
 ## 0. Qué cambia respecto del plan anterior (v1, contra `*stripe-fase-2`)
 
 | | v1 | v2 (este) |
 |---|---|---|
-| Punta del orquestador | `fae69dd` (`feature/stripe-fase-2`) | **`89c740a`** (`feature/monday-webhook-endurecido`), 29 commits sobre producción |
+| Punta del orquestador | `fae69dd` (`feature/stripe-fase-2`) | **`d82e39c`** (`feature/adjuntos-sin-texto`), 32 commits sobre producción; contiene `feature/monday-webhook-endurecido` |
 | Punta de la plataforma | `fb3d415` (`trabajo/stripe-fase-2`) | **`ce883cb`** (`trabajo/monday-webhook-endurecido`) |
 | Piezas nuevas que entran | — | Selector de tableros de monday (buscador, subelementos anidados, ID directo, carga por páginas); **webhook de monday endurecido**: item solo del tablero configurado, deduplicación de 10 min por item y plantilla, rechazos en bitácora con IP; campo de firma renombrado; sonda `scripts/monday-sonda.mjs` |
 | Variables nuevas | `GA4_*` ya estaban listadas | Ninguna más. `STRIPE_*`, `GOOGLE_*`, `CAUCE_PRECIOS_URL`, `GA4_*` siguen fuera de este corte |
 | Rutas nuevas desde v1 | — | `POST /conectores/monday/boards`, `POST /conectores/monday/board` (ambas con auth de tenant) |
-| **Regresión principal, SIGUE VIGENTE: entrantes con adjunto** | Identificada en v1 | **No se ha corregido en ningún commit.** Entró en `3285319` (24-sep) y llega igual a `89c740a`: una foto, audio, documento o sticker sin texto entra como mensaje con cuerpo vacío, se espeja al timeline de Bitrix como `📥 ` vacío, llega al Contact Center sin texto y puede disparar un mensaje de primer contacto. **Afecta a los clientes de Bitrix: Procesa y GeoSpectral, que se instala esta semana.** Peso completo en §1b y verificación propia en Paso 2 · 11. |
+| **Regresión de entrantes con adjunto: RESUELTA en `d82e39c`** | Identificada en v1; vigente en v2 | Entró en `3285319` (24-sep). Desde `d82e39c` un adjunto sin texto no dispara bots ni agente, no consume el primer contacto (un sticker no provoca bienvenida), se espeja como `📎 Adjunto (imagen/audio/documento) sin texto` y al Contact Center nunca va texto vacío. Un adjunto con caption sigue igual. Ocho pruebas. Queda la verificación en producción, Paso 2 · 11. |
 | **Comportamiento que cambia para un cliente con monday ya conectado** | — | (1) Un item de un tablero distinto al configurado **ya no dispara**: queda `monday.rechazado motivo=item_fuera_del_tablero` y el fallo se ve en Salientes. (2) El mismo item no vuelve a disparar la misma plantilla dentro de 10 min (`motivo=duplicado`, solo bitácora). (3) `getItem` pide además `board { id }`: una llamada igual, un campo más. Ver §1b. |
 | Verificación añadida | — | Paso 2 · 9 y 10 (monday) y Paso 3 · 7 |
 | Reversa | igual | igual: `ee67555` sigue siendo el punto de vuelta; las ramas intermedias no se despliegan |
 
-Las cuatro ramas de cada repo son una sola línea: `main` → `*stripe-fase-2`
-→ `*monday-selector-tableros` → `*monday-webhook-endurecido`, cada una
-ancestro de la siguiente (verificado con `merge-base`). Fusionar la punta
+Las ramas de cada repo son una sola línea: `main` → `*stripe-fase-2`
+→ `*monday-selector-tableros` → `*monday-webhook-endurecido` (→
+`feature/adjuntos-sin-texto` solo en Utopia), cada una ancestro de la
+siguiente (verificado con `merge-base`). Fusionar la punta
 trae todo; no hay nada que elegir ni conflictos posibles.
 
 ## Qué hay y qué va
 
 | | Producción hoy | Va a producción |
 |---|---|---|
-| Orquestador (México, `api.factory.digsol.com.mx`, systemd `factory`) | `ee67555` (14-sep) | **`89c740a`** (`feature/monday-webhook-endurecido`) |
+| Orquestador (México, `api.factory.digsol.com.mx`, systemd `factory`) | `ee67555` (14-sep) | **`d82e39c`** (`feature/adjuntos-sin-texto`) |
 | Plataforma (Firebase Hosting `digsol-fabrica-de-empleados`, hoy en `digsol-fabrica-de-empleados.web.app`) | build sin `precios.json` (anterior al 14-sep) | **`ce883cb`** (`trabajo/monday-webhook-endurecido`) |
 
-Las ramas `*monday-webhook-endurecido` son las puntas reales y contienen
-por completo a `*monday-selector-tableros`, `*stripe-fase-2`,
+Las puntas reales son `feature/adjuntos-sin-texto` (Utopia) y
+`trabajo/monday-webhook-endurecido` (plataforma); contienen por completo a
+`*monday-webhook-endurecido`, `*monday-selector-tableros`, `*stripe-fase-2`,
 `feature/bitrix-canal-abierto` y `trabajo/plataforma-sep2026`. Todas
 empujadas a origin (12-oct), local igual a remoto. `main` de cada repo es
 ancestro de su punta: la fusión es **fast-forward, sin conflictos
@@ -82,7 +85,7 @@ mensaje entrante y saliente; lo demás es ruta nueva que nadie llama.
 
 | Pieza | Qué cambia en su camino | Qué puede romperse | Cómo se nota |
 |---|---|---|---|
-| **Entrantes con adjunto** (`webhook.ts`, desde `3285319`; vigente en `89c740a`) — **la regresión principal de este despliegue, y es de los clientes de Bitrix** | Antes un audio, imagen, documento o sticker se descartaba. Ahora entra como mensaje con cuerpo vacío o con el caption. | (1) En el timeline de Bitrix aparece una línea `📥 ` vacía por cada foto, audio o sticker sin texto: en una cuenta que recibe comprobantes y fotos todo el día (Procesa, GeoSpectral) es ruido constante donde trabaja el vendedor. (2) Un disparador de primer contacto puede contestar a un sticker o a una foto con el mensaje de bienvenida. (3) En el canal abierto, el mensaje llega al Contact Center con texto vacío; qué hace Bitrix con un mensaje vacío **no está verificado** (puede mostrarlo vacío o rechazarlo con error en bitácora). El archivo **no** se guarda: el almacén de adjuntos no está conectado en `index.ts`, y aunque lo estuviera, la descarga va en `try/catch`. | Bitácora `entrante.guardado` con cuerpo vacío; líneas `📥 ` en Bitrix; `openlines.adjunto_no_soportado` o un error de `openlines.entrante`. Riesgo **medio-alto de ruido en GeoSpectral la semana de su alta**, no de caída. Corrección pequeña (no construida, por instrucción): tratar el cuerpo vacío como "adjunto sin texto" en `motor.ts`: no disparar bots ni agente, espejar `📎 Adjunto (imagen/audio/documento) sin texto` en vez de `📥 ` vacío, y no mandar texto vacío al canal abierto. Medio día con pruebas. Decisión de Mau: entra antes del despliegue o se observa en producción con el Paso 2 · 11. |
+| **Entrantes con adjunto** (`webhook.ts`, desde `3285319`; **corregido en `d82e39c`**) | Antes un audio, imagen, documento o sticker se descartaba. Ahora entra como mensaje: con caption, igual que un texto; sin texto, como "adjunto sin texto": no dispara bots ni agente, no consume el primer contacto, se espeja como `📎 Adjunto (imagen/audio/documento) sin texto` y al Contact Center va ese texto, nunca vacío. El archivo **no** se guarda (almacén sin conectar). | Lo que queda es nuevo, no regresión: cada foto o audio deja una línea `📎 Adjunto (…) sin texto` en el timeline y en el Contact Center, donde antes no había nada. Es información para el operador (algo llegó), no ruido vacío. | `entrada.respuesta … origen="adjunto sin texto (imagen)…"`, líneas `📎` en Bitrix. Lo no verificado: cómo pinta el Contact Center ese texto. Paso 2 · 11. |
 | **Cortacircuitos y filtro de línea propia** | Ya están en `ee67555`. No cambian. | Nada nuevo. | — |
 | **Ventana humana** | Sin cambio funcional desde `ee67555`. | Nada nuevo. | — |
 | **Suspensión** (`motor.ts`, `core`) | Rama nueva solo si `estado === "suspendido"`. | Si (a) está limpio, no se ejecuta. | `entrada.respuesta … suspendido` nunca debe aparecer para Procesa ni GeoSpectral. |
@@ -144,16 +147,16 @@ producción las haya corrido al menos un día sin incidente. Así `main`
 sigue siendo "lo que está en producción" y la reversa es un checkout.
 
 ```bash
-# Utopia (trae stripe-fase-2 y selector por ser ancestros)
-git checkout main && git merge --ff-only feature/monday-webhook-endurecido && git push origin main
+# Utopia (trae stripe-fase-2, selector y webhook endurecido por ser ancestros)
+git checkout main && git merge --ff-only feature/adjuntos-sin-texto && git push origin main
 # digsol-factory
 git checkout main && git merge --ff-only trabajo/monday-webhook-endurecido && git push origin main
 ```
 
 Después de fusionar, las ramas intermedias (`*stripe-fase-2`,
-`*monday-selector-tableros`, `feature/bitrix-canal-abierto`,
-`trabajo/plataforma-sep2026`) quedan contenidas en `main` y se pueden
-borrar; no antes.
+`*monday-selector-tableros`, `feature/monday-webhook-endurecido`,
+`feature/bitrix-canal-abierto`, `trabajo/plataforma-sep2026`) quedan
+contenidas en `main` y se pueden borrar; no antes.
 
 Si `--ff-only` falla, alguien tocó `main` después del 12-oct: parar y revisar.
 
@@ -166,14 +169,14 @@ orquestador nuevo funciona sin problema.
 
 ### Paso 1 · Comprobaciones (§1a y §1c). Sin verde, no se sigue.
 
-### Paso 2 · Orquestador → `89c740a`
+### Paso 2 · Orquestador → `d82e39c`
 
 `scripts/deploy.sh` es de la consola de Cauce (servicio `cauce`, proyecto
 `cauce-consola`): **no se usa**. En la EC2 de México, con el commit
 exacto (no la rama):
 
 ```bash
-cd /opt/factory && git fetch --quiet origin && git checkout --quiet 89c740a && npm ci && sudo systemctl restart factory
+cd /opt/factory && git fetch --quiet origin && git checkout --quiet d82e39c && npm ci && sudo systemctl restart factory
 ```
 
 Confirmar el directorio y el servicio antes con `systemctl cat factory | grep -E 'WorkingDirectory|ExecStart|EnvironmentFile'`; `docs/deploy.md` todavía dice `/opt/cauce` en partes viejas.
@@ -183,7 +186,7 @@ Verificación, en orden, cada una con su evidencia:
 | # | Qué | Evidencia |
 |---|---|---|
 | 1 | Servicio arriba | `systemctl is-active factory` → `active` |
-| 2 | Versión | `curl -s https://api.factory.digsol.com.mx/health` → `{"ok":true,"version":"89c740a","stripe":null,"google":false}` |
+| 2 | Versión | `curl -s https://api.factory.digsol.com.mx/health` → `{"ok":true,"version":"d82e39c","stripe":null,"google":false}` |
 | 3 | Repositorio correcto | `journalctl -u factory --since "5 min ago" -o cat \| grep repositorio` → base `factory` |
 | 4 | Lo apagado es lo esperado | mismo journal, `grep -E "sin definir\|deshabilitad"`: Stripe, precios, Google. **Nada más.** |
 | 5 | Sesiones rehidratadas | `webhook.alcance resultado=ok` y las líneas de Procesa, GeoSpectral y Digsol en `connected` en Sesiones de la plataforma |
@@ -192,12 +195,11 @@ Verificación, en orden, cada una con su evidencia:
 | 8 | Trazabilidad | `GET /api/tenants/<digsol>/agentes/conversaciones` responde 200 (con token) |
 | 9 | Webhook de monday sigue vivo | Si hay un tenant con monday: disparar una automatización real sobre un item del tablero configurado → `entrada.monday` y `envio.enviado`; **sin** líneas `monday.rechazado` para ese item |
 | 10 | Endurecimiento | POST a `/webhooks/monday/<tenant>/<plantilla>` con `{"event":{"pulseId":"<item>","boardId":"999"}}` → 200 a monday y `monday.rechazado motivo=item_fuera_del_tablero ip=<tu ip>` en el journal; repetir el disparo legítimo del punto 9 dentro de 10 min → `motivo=duplicado` |
-| 11 | **Adjunto sin texto en una línea de Bitrix** | Mau manda una foto sin caption a una línea de Procesa (o a la de Digsol si tiene canal abierto). Observar: journal `entrante.guardado` con cuerpo vacío y qué sale de `openlines.*`; en Bitrix, qué aparece en el timeline y en el Contact Center. Si es ruido inaceptable, decidir ahí mismo: hotfix de medio día o reversa. |
+| 11 | **Adjunto sin texto en una línea de Bitrix** (verifica `d82e39c`) | Mau manda una foto sin caption a una línea con canal abierto (Digsol o Procesa) desde un número con historial. Esperado: journal `entrada.respuesta … resultado=ninguna origen="adjunto sin texto (imagen)…"`, **ninguna** respuesta automática, línea `📎 Adjunto (imagen) sin texto` en el Contact Center y en el timeline si hay registro vinculado. Después un texto: contesta como siempre. Si el Contact Center pinta mal ese texto, se ajusta el texto, no hay reversa. |
 
-Si 1–5 fallan: reversa del orquestador (§4) de inmediato. Si 6–10 fallan:
-diagnosticar con el journal antes de revertir; nada de eso afecta a
-Procesa ni GeoSpectral. **El 11 sí afecta a los clientes de Bitrix**: es
-la decisión de ruido vs. hotfix que hay que tomar con la evidencia enfrente.
+Si 1–5 fallan: reversa del orquestador (§4) de inmediato. Si 6–11 fallan:
+diagnosticar con el journal antes de revertir; ninguno de ellos tumba a
+Procesa ni a GeoSpectral.
 
 ### Paso 3 · Plataforma → `ce883cb`
 
