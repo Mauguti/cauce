@@ -612,7 +612,12 @@ versiones distintas, la consola llama rutas que el orquestador aún no
 tiene (o al revés) y aparecen bugs fantasma. Para evitarlo:
 
 - El orquestador expone su versión en `GET /health`
-  (`{"ok":true,"version":"<commit corto>"}`), tomada de `CAUCE_VERSION`.
+  (`{"ok":true,"version":"<commit corto>"}`), tomada del **HEAD de git del
+  directorio del código**, no de `CAUCE_VERSION`: esa variable solo cuenta
+  sin repositorio y, si existe y no coincide, se ignora con aviso
+  `version.env_ignorada`. **Bórrala de `/etc/factory.env`** si quedó de la
+  época en que se ponía a mano (el 12-oct hizo que /health dijera
+  `ee67555` con `d82e39c` corriendo).
 - La consola se compila con `VITE_CAUCE_VERSION` (mismo commit) y, al
   arrancar, compara contra `/health`. Si difieren, muestra un aviso
   visible: «Hay una versión más reciente disponible, recarga». No es una
