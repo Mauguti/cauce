@@ -1,5 +1,14 @@
 # Deploy de Digsol Factory
 
+> **México (producción de Factory), valores confirmados el 12-oct-2026:**
+> EC2 en `mx-central-1`, código en **`/opt/factory`** (clon de git),
+> servicio **`factory.service`**, variables en **`/etc/factory.env`**,
+> API pública `https://api.factory.digsol.com.mx`. Todo lo que abajo diga
+> `/opt/cauce`, `/etc/cauce.env` o `cauce.service` es la instalación
+> vieja de Ohio (congelada): no la uses para México. Para desplegar
+> México, el procedimiento vigente es `docs/despliegue-2026-10.md`.
+
+
 Dos piezas independientes: la **consola** (estática, Firebase Hosting)
 y el **orquestador** (Node en el host de una EC2, detrás de Caddy).
 
@@ -96,7 +105,7 @@ sudo apt-get install -y nodejs
 ```
 
 ```bash
-git clone <repo> /opt/cauce && cd /opt/cauce && npm ci
+git clone <repo> /opt/factory && cd /opt/factory && npm ci
 ```
 
 Pre-descarga las imágenes fijadas (evita timeout en la primera sesión):
@@ -129,16 +138,16 @@ Los secretos van en el entorno del servicio, **nunca en el repo**.
 El `EnvironmentFile` lo lee root; permisos `600`.
 
 ```bash
-sudo install -m 600 /dev/null /etc/cauce.env
+sudo install -m 600 /dev/null /etc/factory.env
 ```
 
-Edítalo (`sudo nano /etc/cauce.env`) con:
+Edítalo (`sudo nano /etc/factory.env`) con:
 
 ```
 CAUCE_API_KEY=<genera: openssl rand -hex 24>
 CAUCE_CRYPTO_KEY=<genera: openssl rand -hex 32>
 CAUCE_ADMIN_KEY=<genera: openssl rand -hex 24>
-CAUCE_CORS_ORIGENES=https://cauce-consola.web.app
+CAUCE_CORS_ORIGENES=https://digsol-fabrica-de-empleados.web.app
 CAUCE_URL_WEBHOOKS=http://host.docker.internal:3001
 CAUCE_DATA_DIR=/var/lib/cauce
 GOOGLE_APPLICATION_CREDENTIALS=/etc/cauce-firestore.json
@@ -339,7 +348,7 @@ CAUCE_FIRESTORE_DB=factory
   `(default)` no aplican a las bases con nombre.
 - Al arrancar, el log dice `repositorio: Firestore (base: <id>)`; ahí se
   confirma a cuál apunta. Cambiarla exige reiniciar el servicio
-  (`sudo systemctl restart cauce`).
+  (`sudo systemctl restart factory`).
 
 Variables nuevas del bloque 8:
 
@@ -413,7 +422,7 @@ tokens que protege.**
 sudo mkdir -p /var/lib/cauce && sudo chown ubuntu:ubuntu /var/lib/cauce
 ```
 
-Unit de systemd con restart automático — `/etc/systemd/system/cauce.service`:
+Unit de systemd con restart automático — `/etc/systemd/system/factory.service`:
 
 ```ini
 [Unit]
@@ -424,8 +433,8 @@ Requires=docker.service
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/opt/cauce
-EnvironmentFile=/etc/cauce.env
+WorkingDirectory=/opt/factory
+EnvironmentFile=/etc/factory.env
 ExecStart=/usr/bin/npx tsx apps/orchestrator/src/index.ts
 Restart=always
 RestartSec=5
@@ -439,7 +448,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now cauce
 ```
 
 ```bash
-sudo systemctl status cauce && journalctl -u cauce -n 30 --no-pager
+sudo systemctl status factory && journalctl -u factory -n 30 --no-pager
 ```
 
 En el log de arranque deben verse `sesiones rehidratadas desde
@@ -480,7 +489,7 @@ Debe responder `{"ok":true}`.
 1. Pon `VITE_CAUCE_API=https://api.tudominio.mx` en
    `apps/console/.env.production`, recompila y redeploya la consola
    (paso 1).
-2. Confirma que `CAUCE_CORS_ORIGENES` en `/etc/cauce.env` es
+2. Confirma que `CAUCE_CORS_ORIGENES` en `/etc/factory.env` es
    exactamente la Hosting URL (sin barra final).
 3. Abre la consola, entra con tu cuenta y crea una sesión.
 
@@ -594,6 +603,10 @@ Luego, desde la plataforma:
 
 ## 3. Despliegue sin desfase — `scripts/deploy.sh`
 
+> `scripts/deploy.sh` está escrito para la instalación vieja (servicio
+> `cauce`, Hosting `cauce-consola`). **No sirve para México** mientras no
+> se adapte: ahí el despliegue es manual (`docs/despliegue-2026-10.md`).
+
 Consola y orquestador se despliegan por separado; si quedan en
 versiones distintas, la consola llama rutas que el orquestador aún no
 tiene (o al revés) y aparecen bugs fantasma. Para evitarlo:
@@ -614,7 +627,7 @@ CAUCE_SSH=ubuntu@<ip-ec2> CAUCE_API_URL=https://cauce.digsol.com.mx \
 ```
 
 El script exige el árbol limpio, hace `git checkout` del commit en la
-EC2, fija `CAUCE_VERSION` en `/etc/cauce.env`, reinicia el servicio,
+EC2, fija `CAUCE_VERSION` en `/etc/factory.env`, reinicia el servicio,
 compila la consola con esa versión y `VITE_CAUCE_API`, la publica en
 Hosting, y al cierre confirma que `/health` reporta el commit desplegado.
 Flags: `--solo-consola`, `--solo-orquestador`.
@@ -632,7 +645,7 @@ Flags: `--solo-consola`, `--solo-orquestador`.
   `/var/lib/cauce` (cola) y Firestore. Inclúyelos en el snapshot del EBS.
   Respalda `CAUCE_CRYPTO_KEY` por separado: sin ella, las credenciales
   cifradas en Firestore son irrecuperables (ver arriba).
-- **Rotar la API key**: cambia `CAUCE_API_KEY` en `/etc/cauce.env` y
-  `sudo systemctl restart cauce`. (Rotación con solapamiento: TODO,
+- **Rotar la API key**: cambia `CAUCE_API_KEY` en `/etc/factory.env` y
+  `sudo systemctl restart factory`. (Rotación con solapamiento: TODO,
   junto con Secret Manager.) Para `CAUCE_CRYPTO_KEY` la rotación exige
   recapturar los tokens de cada cliente — no la cambies a la ligera.
