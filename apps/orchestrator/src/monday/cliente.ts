@@ -22,7 +22,27 @@ export interface ItemMonday {
 export interface BoardMonday {
   id: string;
   name: string;
+  /** `type` de la API (BoardObjectType): board · sub_items_board · document · custom_object. */
+  tipo: "board" | "sub_items_board" | "document" | "custom_object";
+  /** `board_kind` de la API: private · public · share. */
+  kind: "private" | "public" | "share";
+  workspace: string | null;
+  /**
+   * Ids de los tableros de subelementos de este tablero, leídos de los
+   * settings de sus columnas `subtasks` (clave `boardIds`). Vacío si no
+   * tiene o si la API no entrega esa clave: entonces el de subelementos
+   * se muestra suelto, nunca se oculta.
+   */
+  subitemsBoardIds: string[];
 }
+
+export interface PaginaBoards {
+  boards: BoardMonday[];
+  pagina: number;
+  hayMas: boolean;
+}
+
+export const BOARDS_POR_PAGINA = 100;
 
 export interface ColumnaBoard {
   id: string;
@@ -80,16 +100,44 @@ export class ClienteMonday {
     return { id: String(item.id), name: item.name, columnas };
   }
 
-  /** Lista los boards de la cuenta (para elegir de una lista, no IDs). */
-  async listarBoards(): Promise<BoardMonday[]> {
-    const data = await this.#graphql(
-      `query { boards (limit: 100, state: active) { id name } }`,
-      {},
-    );
-    return (data?.boards ?? []).map((b: any) => ({
-      id: String(b.id),
-      name: b.name,
-    }));
+  /**
+   * Una página de los boards de la cuenta (para elegir de una lista). Trae
+   * tipo, kind y los ids de sus tableros de subelementos. `order_by:
+   * used_at` para que los recientes salgan primero; el orden alfabético lo
+   * pone la plataforma.
+   */
+  async listarBoards(pagina = 1, limite = BOARDS_POR_PAGINA): Promise<PaginaBoards> {
+    const data = await this.#consultaBoards(`limit: $limit, page: $page, state: active, order_by: used_at`, { limit: limite, page: pagina });
+    const boards = (data?.boards ?? []).map(normalizarBoard);
+    return { boards, pagina, hayMas: boards.length >= limite };
+  }
+
+  /**
+   * Un board por id. `null` si la API no lo devuelve: no existe o el usuario
+   * del token no es miembro (los privados no se ven ni por id). El id no
+   * salta permisos.
+   */
+  async obtenerBoard(boardId: string): Promise<BoardMonday | null> {
+    const data = await this.#consultaBoards(`ids: $ids`, { ids: [boardId] });
+    const b = data?.boards?.[0];
+    return b ? normalizarBoard(b) : null;
+  }
+
+  /**
+   * Los settings de la columna de subelementos traen el id del tablero
+   * hijo. El campo se llama `settings_str` en versiones anteriores de la
+   * API y `settings` (JSON) en las recientes; se pide el primero y, si la
+   * versión en uso ya no lo conoce, el segundo.
+   */
+  async #consultaBoards(args: string, variables: Record<string, unknown>): Promise<any> {
+    const campos = (settings: string) => `id name type board_kind workspace { name } columns (types: [subtasks]) { id type ${settings} }`;
+    const vars = Object.keys(variables).map((k) => (k === "ids" ? "$ids: [ID!]" : `$${k}: Int!`)).join(", ");
+    try {
+      return await this.#graphql(`query (${vars}) { boards (${args}) { ${campos("settings_str")} } }`, variables);
+    } catch (err) {
+      if (!/settings_str/i.test(err instanceof Error ? err.message : String(err))) throw err;
+      return await this.#graphql(`query (${vars}) { boards (${args}) { ${campos("settings")} } }`, variables);
+    }
   }
 
   /** Lista las columnas de un board (para mapear teléfono y variables). */
@@ -128,4 +176,29 @@ export class ClienteMonday {
     );
     return String(data.create_update.id);
   }
+}
+
+const TIPOS_BOARD = new Set(["board", "sub_items_board", "document", "custom_object"]);
+const KINDS = new Set(["private", "public", "share"]);
+
+function normalizarBoard(b: any): BoardMonday {
+  const subitemsBoardIds: string[] = [];
+  for (const c of b.columns ?? []) {
+    if (c?.type !== "subtasks") continue;
+    let settings: any = c.settings ?? null;
+    if (typeof c.settings_str === "string" && c.settings_str) {
+      try { settings = JSON.parse(c.settings_str); } catch { settings = null; }
+    }
+    for (const id of Array.isArray(settings?.boardIds) ? settings.boardIds : []) {
+      if (id !== null && id !== undefined && !subitemsBoardIds.includes(String(id))) subitemsBoardIds.push(String(id));
+    }
+  }
+  return {
+    id: String(b.id),
+    name: String(b.name ?? ""),
+    tipo: TIPOS_BOARD.has(b.type) ? b.type : "board",
+    kind: KINDS.has(b.board_kind) ? b.board_kind : "public",
+    workspace: b.workspace?.name ? String(b.workspace.name) : null,
+    subitemsBoardIds,
+  };
 }

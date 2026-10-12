@@ -14,7 +14,7 @@ import {
   type RegistroConector,
   type ResultadoPlantilla,
 } from "../conectores/plantillas.ts";
-import { ClienteMonday, type BoardMonday, type ColumnaBoard, type ItemMonday } from "./cliente.ts";
+import { ClienteMonday, type BoardMonday, type ColumnaBoard, type ItemMonday, type PaginaBoards } from "./cliente.ts";
 import { variantesTelefono } from "../bitrix/cliente.ts";
 import type { ProspectoCrm } from "../bitrix/conector.ts";
 
@@ -185,9 +185,14 @@ export class ConectorMonday {
     await this.#repo.deleteConectorMonday(tenantId);
   }
 
-  /** Lista los boards reales de la cuenta con el token dado (setup). */
-  async listarBoards(apiToken: string): Promise<BoardMonday[]> {
-    return this.#clienteFactory(apiToken).listarBoards();
+  /** Una página de los boards reales de la cuenta con el token dado (setup). */
+  async listarBoards(apiToken: string, pagina = 1): Promise<PaginaBoards> {
+    return this.#clienteFactory(apiToken).listarBoards(pagina);
+  }
+
+  /** Un board por id con el token dado; null si no existe o el usuario del token no lo ve. */
+  async obtenerBoard(apiToken: string, boardId: string): Promise<BoardMonday | null> {
+    return this.#clienteFactory(apiToken).obtenerBoard(boardId);
   }
 
   /** Lista las columnas de un board (para mapear teléfono y variables). */

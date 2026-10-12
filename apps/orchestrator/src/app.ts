@@ -820,10 +820,69 @@ export function crearApp(
       return;
     }
     try {
-      const boards = await opciones.monday.listarBoards(apiToken);
-      res.json({ ok: true, boards });
+      const pagina = await opciones.monday.listarBoards(apiToken, 1);
+      res.json({ ok: true, boards: pagina.boards, pagina: pagina.pagina, hayMas: pagina.hayMas });
     } catch (err: any) {
       res.status(502).json({ ok: false, error: err?.message ?? "monday rechazó el token" });
+    }
+  });
+
+  // Páginas siguientes de boards (cuentas con muchos tableros): carga por demanda.
+  tenantRouter.post("/conectores/monday/boards", async (req, res) => {
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    const { apiToken, pagina } = req.body ?? {};
+    if (typeof apiToken !== "string" || !apiToken) {
+      res.status(400).json({ error: "se requiere apiToken" });
+      return;
+    }
+    const p = Number.isInteger(pagina) && pagina >= 1 ? pagina : 1;
+    try {
+      res.json(await opciones.monday.listarBoards(apiToken, p));
+    } catch (err: any) {
+      res.status(502).json({ error: err?.message ?? "monday rechazó la consulta" });
+    }
+  });
+
+  /**
+   * Un board por id: salida de emergencia cuando la lista no lo trae. El id
+   * NO salta permisos: si el usuario del token no es miembro de un tablero
+   * privado, monday no lo devuelve y aquí se dice en claro qué hacer.
+   */
+  const MENSAJE_BOARD_SIN_ACCESO = "monday no devolvió ese tablero. Puede ser privado: el usuario cuyo token conectaste debe ser miembro de ese tablero (en monday, abre el tablero → Invitar y agrégalo), o el ID no existe. El ID no salta permisos.";
+  tenantRouter.post("/conectores/monday/board", async (req, res) => {
+    if (!opciones.monday) {
+      res.status(501).json({ error: "conector monday no disponible" });
+      return;
+    }
+    const { apiToken, boardId } = req.body ?? {};
+    if (typeof apiToken !== "string" || !apiToken) {
+      res.status(400).json({ error: "se requiere apiToken" });
+      return;
+    }
+    const id = typeof boardId === "string" ? boardId.trim() : "";
+    if (!/^\d{1,20}$/.test(id)) {
+      res.status(400).json({ error: "el ID del tablero son solo dígitos (está en la URL del tablero en monday, después de /boards/)" });
+      return;
+    }
+    try {
+      const board = await opciones.monday.obtenerBoard(apiToken, id);
+      if (!board) {
+        registrar("monday.board_sin_acceso", { tenant: req.tenantId, board: id }, "warn");
+        res.status(404).json({ error: MENSAJE_BOARD_SIN_ACCESO, motivo: "sin_acceso_o_inexistente" });
+        return;
+      }
+      res.json(board);
+    } catch (err: any) {
+      const m = String(err?.message ?? "");
+      if (/permission|unauthorized|not found|InvalidBoardId|ResourceNotFound/i.test(m)) {
+        registrar("monday.board_sin_acceso", { tenant: req.tenantId, board: id, error: m.slice(0, 200) }, "warn");
+        res.status(404).json({ error: MENSAJE_BOARD_SIN_ACCESO, motivo: "sin_acceso_o_inexistente", detalle: m.slice(0, 300) });
+        return;
+      }
+      res.status(502).json({ error: m || "monday rechazó la consulta" });
     }
   });
 
