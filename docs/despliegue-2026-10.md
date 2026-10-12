@@ -13,6 +13,7 @@ explícita, paso por paso, con la reversa leída antes.
 | Piezas nuevas que entran | — | Selector de tableros de monday (buscador, subelementos anidados, ID directo, carga por páginas); **webhook de monday endurecido**: item solo del tablero configurado, deduplicación de 10 min por item y plantilla, rechazos en bitácora con IP; campo de firma renombrado; sonda `scripts/monday-sonda.mjs` |
 | Variables nuevas | `GA4_*` ya estaban listadas | Ninguna más. `STRIPE_*`, `GOOGLE_*`, `CAUCE_PRECIOS_URL`, `GA4_*` siguen fuera de este corte |
 | Rutas nuevas desde v1 | — | `POST /conectores/monday/boards`, `POST /conectores/monday/board` (ambas con auth de tenant) |
+| **Regresión principal, SIGUE VIGENTE: entrantes con adjunto** | Identificada en v1 | **No se ha corregido en ningún commit.** Entró en `3285319` (24-sep) y llega igual a `89c740a`: una foto, audio, documento o sticker sin texto entra como mensaje con cuerpo vacío, se espeja al timeline de Bitrix como `📥 ` vacío, llega al Contact Center sin texto y puede disparar un mensaje de primer contacto. **Afecta a los clientes de Bitrix: Procesa y GeoSpectral, que se instala esta semana.** Peso completo en §1b y verificación propia en Paso 2 · 11. |
 | **Comportamiento que cambia para un cliente con monday ya conectado** | — | (1) Un item de un tablero distinto al configurado **ya no dispara**: queda `monday.rechazado motivo=item_fuera_del_tablero` y el fallo se ve en Salientes. (2) El mismo item no vuelve a disparar la misma plantilla dentro de 10 min (`motivo=duplicado`, solo bitácora). (3) `getItem` pide además `board { id }`: una llamada igual, un campo más. Ver §1b. |
 | Verificación añadida | — | Paso 2 · 9 y 10 (monday) y Paso 3 · 7 |
 | Reversa | igual | igual: `ee67555` sigue siendo el punto de vuelta; las ramas intermedias no se despliegan |
@@ -81,7 +82,7 @@ mensaje entrante y saliente; lo demás es ruta nueva que nadie llama.
 
 | Pieza | Qué cambia en su camino | Qué puede romperse | Cómo se nota |
 |---|---|---|---|
-| **Entrantes con adjunto** (`webhook.ts`) | Antes un audio, imagen, documento o sticker se descartaba. Ahora entra como mensaje con cuerpo vacío o con el caption. | (1) En el timeline de Bitrix aparece una línea `📥 ` vacía por cada foto o sticker sin texto. (2) Un disparador de primer contacto puede contestar a un sticker. (3) En el canal abierto, el mensaje llega al operador sin texto. El archivo **no** se guarda: el almacén de adjuntos no está conectado en `index.ts`, y aunque lo estuviera, la descarga va en `try/catch`. | Bitácora `entrante.guardado` con cuerpo vacío; líneas `📥 ` en Bitrix; `openlines.adjunto_no_soportado`. Riesgo medio de **ruido**, no de caída. Si molesta, se filtra en caliente (un `if` en `motor.ts`); no es reversa. |
+| **Entrantes con adjunto** (`webhook.ts`, desde `3285319`; vigente en `89c740a`) — **la regresión principal de este despliegue, y es de los clientes de Bitrix** | Antes un audio, imagen, documento o sticker se descartaba. Ahora entra como mensaje con cuerpo vacío o con el caption. | (1) En el timeline de Bitrix aparece una línea `📥 ` vacía por cada foto, audio o sticker sin texto: en una cuenta que recibe comprobantes y fotos todo el día (Procesa, GeoSpectral) es ruido constante donde trabaja el vendedor. (2) Un disparador de primer contacto puede contestar a un sticker o a una foto con el mensaje de bienvenida. (3) En el canal abierto, el mensaje llega al Contact Center con texto vacío; qué hace Bitrix con un mensaje vacío **no está verificado** (puede mostrarlo vacío o rechazarlo con error en bitácora). El archivo **no** se guarda: el almacén de adjuntos no está conectado en `index.ts`, y aunque lo estuviera, la descarga va en `try/catch`. | Bitácora `entrante.guardado` con cuerpo vacío; líneas `📥 ` en Bitrix; `openlines.adjunto_no_soportado` o un error de `openlines.entrante`. Riesgo **medio-alto de ruido en GeoSpectral la semana de su alta**, no de caída. Corrección pequeña (no construida, por instrucción): tratar el cuerpo vacío como "adjunto sin texto" en `motor.ts`: no disparar bots ni agente, espejar `📎 Adjunto (imagen/audio/documento) sin texto` en vez de `📥 ` vacío, y no mandar texto vacío al canal abierto. Medio día con pruebas. Decisión de Mau: entra antes del despliegue o se observa en producción con el Paso 2 · 11. |
 | **Cortacircuitos y filtro de línea propia** | Ya están en `ee67555`. No cambian. | Nada nuevo. | — |
 | **Ventana humana** | Sin cambio funcional desde `ee67555`. | Nada nuevo. | — |
 | **Suspensión** (`motor.ts`, `core`) | Rama nueva solo si `estado === "suspendido"`. | Si (a) está limpio, no se ejecuta. | `entrada.respuesta … suspendido` nunca debe aparecer para Procesa ni GeoSpectral. |
@@ -191,10 +192,12 @@ Verificación, en orden, cada una con su evidencia:
 | 8 | Trazabilidad | `GET /api/tenants/<digsol>/agentes/conversaciones` responde 200 (con token) |
 | 9 | Webhook de monday sigue vivo | Si hay un tenant con monday: disparar una automatización real sobre un item del tablero configurado → `entrada.monday` y `envio.enviado`; **sin** líneas `monday.rechazado` para ese item |
 | 10 | Endurecimiento | POST a `/webhooks/monday/<tenant>/<plantilla>` con `{"event":{"pulseId":"<item>","boardId":"999"}}` → 200 a monday y `monday.rechazado motivo=item_fuera_del_tablero ip=<tu ip>` en el journal; repetir el disparo legítimo del punto 9 dentro de 10 min → `motivo=duplicado` |
+| 11 | **Adjunto sin texto en una línea de Bitrix** | Mau manda una foto sin caption a una línea de Procesa (o a la de Digsol si tiene canal abierto). Observar: journal `entrante.guardado` con cuerpo vacío y qué sale de `openlines.*`; en Bitrix, qué aparece en el timeline y en el Contact Center. Si es ruido inaceptable, decidir ahí mismo: hotfix de medio día o reversa. |
 
 Si 1–5 fallan: reversa del orquestador (§4) de inmediato. Si 6–10 fallan:
 diagnosticar con el journal antes de revertir; nada de eso afecta a
-Procesa ni GeoSpectral.
+Procesa ni GeoSpectral. **El 11 sí afecta a los clientes de Bitrix**: es
+la decisión de ruido vs. hotfix que hay que tomar con la evidencia enfrente.
 
 ### Paso 3 · Plataforma → `ce883cb`
 
