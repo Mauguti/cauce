@@ -6,7 +6,7 @@ import { SesionNoCerrada, type GestorSesiones } from "./sesiones.ts";
 import { autenticar } from "./auth.ts";
 import type { Cripto } from "./cripto.ts";
 import type { ColaEnvios } from "./cola.ts";
-import type { ConectorMonday } from "./monday/conector.ts";
+import { EventoRechazado, type ConectorMonday } from "./monday/conector.ts";
 import type { ConectorBitrix } from "./bitrix/conector.ts";
 import type { EntidadBitrix } from "./bitrix/cliente.ts";
 import type { MotorEntrada } from "./entrada/motor.ts";
@@ -244,13 +244,19 @@ export function crearApp(
       res.status(501).json({ error: "conector monday no disponible" });
       return;
     }
+    // IP real detrás de Caddy (X-Forwarded-For); si no viene, la del socket.
+    const xff = req.headers["x-forwarded-for"];
+    const ip = (Array.isArray(xff) ? xff[0] : xff)?.split(",")[0]?.trim() || req.ip || null;
     const config = await repo.getConectorMonday(tenantId);
     if (!config) {
+      registrar("monday.rechazado", { tenant: tenantId, plantilla: plantillaId ?? "default", ip, motivo: "tenant_sin_conector" }, "warn");
       res.status(404).json({ error: "tenant sin conector monday" });
       return;
     }
-    // 2. Firma: JWT que monday envía en authorization.
+    // 2. Firma: JWT que monday envía en authorization (solo si el tenant
+    //    tiene secreto de app; el flujo de "pegar URL" no viene firmado).
     if (!opciones.monday.verificarFirma(config, req.headers.authorization)) {
+      registrar("monday.rechazado", { tenant: tenantId, plantilla: plantillaId ?? "default", ip, motivo: "firma_invalida" }, "warn");
       res.status(401).json({ error: "firma inválida" });
       return;
     }
@@ -260,10 +266,11 @@ export function crearApp(
     // que no debe hacer esperar a monday ni tumbar su reintento.
     res.status(200).json({ ok: true });
     opciones.monday
-      .procesarEvento(tenantId, req.body?.event, plantillaId)
-      .catch((err) =>
-        registrarError("entrada.monday", err, { tenant: tenantId, plantilla: plantillaId ?? null }),
-      );
+      .procesarEvento(tenantId, req.body?.event, plantillaId, { ip })
+      .catch((err) => {
+        if (err instanceof EventoRechazado) return; // ya quedó en monday.rechazado
+        registrarError("entrada.monday", err, { tenant: tenantId, plantilla: plantillaId ?? null, ip });
+      });
   },
   );
 

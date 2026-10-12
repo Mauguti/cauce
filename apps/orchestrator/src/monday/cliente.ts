@@ -16,6 +16,8 @@ export interface ColumnaItem {
 export interface ItemMonday {
   id: string;
   name: string;
+  /** Tablero al que pertenece el item, según la API (no según el evento). */
+  boardId: string | null;
   columnas: Record<string, ColumnaItem>;
 }
 
@@ -86,6 +88,7 @@ export class ClienteMonday {
          items (ids: $ids) {
            id
            name
+           board { id }
            column_values { id text value }
          }
        }`,
@@ -97,7 +100,7 @@ export class ClienteMonday {
     for (const c of item.column_values ?? []) {
       columnas[c.id] = { id: c.id, text: c.text ?? null, value: c.value ?? null };
     }
-    return { id: String(item.id), name: item.name, columnas };
+    return { id: String(item.id), name: item.name, boardId: item.board?.id !== undefined && item.board?.id !== null ? String(item.board.id) : null, columnas };
   }
 
   /**

@@ -8,12 +8,15 @@ import {
 } from "./conector.ts";
 import type { ItemMonday } from "./cliente.ts";
 import { Cripto } from "../cripto.ts";
+import { usarSalida } from "../log.ts";
+import { DEDUP_VENTANA_MS, EventoRechazado } from "./conector.ts";
 import { crearApp } from "../app.ts";
 import { RepositorioEnMemoria } from "../store.ts";
 
 const ITEM: ItemMonday = {
   id: "42",
   name: "Cliente Ejemplo",
+  boardId: "b1",
   columnas: {
     telefono: { id: "telefono", text: "+52 55 1234 5678", value: null },
     saldo: { id: "saldo", text: "$1,200", value: null },
@@ -40,7 +43,7 @@ describe("renderPlantilla", () => {
 // Cripto con llave fija de prueba (no depende del entorno).
 const cripto = new Cripto(Buffer.alloc(32, 7));
 
-function conectorConFake() {
+function conectorConFake(opciones: { ahora?: () => number; items?: Record<string, ItemMonday> } = {}) {
   const repo = new RepositorioEnMemoria({
     tenants: [
       { id: "demo", nombre: "Demo", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-06T00:00:00Z" },
@@ -51,7 +54,7 @@ function conectorConFake() {
   const updates: { itemId: string; cuerpo: string }[] = [];
   const tokensUsados: string[] = [];
   const cliente = {
-    getItem: async (id: string) => (id === "42" ? ITEM : null),
+    getItem: async (id: string) => opciones.items?.[id] ?? (id === "42" ? ITEM : null),
     crearUpdate: async (itemId: string, cuerpo: string) => {
       updates.push({ itemId, cuerpo });
       return "u1";
@@ -67,6 +70,7 @@ function conectorConFake() {
       tokensUsados.push(token);
       return cliente as any;
     },
+    ...(opciones.ahora ? { ahora: opciones.ahora } : {}),
   });
   return { repo, monday, encolados, updates, tokensUsados };
 }
@@ -145,7 +149,7 @@ describe("ConectorMonday.procesarEvento", () => {
     const { repo, monday, encolados, tokensUsados } = conectorConFake();
     await monday.guardarAlta("demo", ALTA);
 
-    const r = await monday.procesarEvento("demo", { pulseId: 42, boardId: 9 });
+    const r = await monday.procesarEvento("demo", { pulseId: 42, boardId: "b1" });
 
     expect(encolados[0]).toMatchObject({
       instanceId: "i1",
@@ -362,6 +366,100 @@ describe("POST /webhooks/monday/:tenantId (ruta)", () => {
       expect(res.status).toBe(200);
     } finally {
       cerrar();
+    }
+  });
+});
+
+describe("ConectorMonday · endurecimiento del webhook (la URL es lo único que lo protege)", () => {
+  const bitacora: string[] = [];
+  const capturar = () => { bitacora.length = 0; usarSalida((_n, l) => { bitacora.push(l); }); };
+
+  it("rechaza y registra con IP un evento cuyo boardId no es el configurado, sin llamar a la API", async () => {
+    capturar();
+    const { monday, encolados, tokensUsados } = conectorConFake();
+    await monday.guardarAlta("demo", ALTA);
+    await expect(monday.procesarEvento("demo", { pulseId: 42, boardId: 999 }, undefined, { ip: "203.0.113.9" })).rejects.toBeInstanceOf(EventoRechazado);
+    expect(encolados).toHaveLength(0);
+    expect(tokensUsados).toHaveLength(0);
+    const linea = bitacora.find((l) => l.includes("monday.rechazado"))!;
+    expect(linea).toContain("motivo=item_fuera_del_tablero");
+    expect(linea).toContain("ip=203.0.113.9");
+    expect(linea).toContain("item=42");
+    usarSalida(null);
+  });
+
+  it("rechaza cuando la API dice que el item es de otro tablero aunque el evento no traiga boardId, y lo deja visible en la UI", async () => {
+    capturar();
+    const ajeno: ItemMonday = { ...ITEM, id: "77", boardId: "otro" };
+    const { monday, encolados } = conectorConFake({ items: { "77": ajeno } });
+    await monday.guardarAlta("demo", ALTA);
+    await expect(monday.procesarEvento("demo", { pulseId: 77 }, undefined, { ip: "203.0.113.9" })).rejects.toThrow(/tablero otro/);
+    expect(encolados).toHaveLength(0);
+    expect(bitacora.some((l) => l.includes("monday.rechazado") && l.includes("motivo=item_fuera_del_tablero"))).toBe(true);
+    const reg = await monday.verRegistro("demo");
+    expect(reg.ultimoResultado?.ok).toBe(false);
+    expect((reg.ultimoResultado as any).error).toMatch(/tablero/);
+    usarSalida(null);
+  });
+
+  it("deduplica: el mismo item no dispara la misma plantilla dentro de la ventana; pasada la ventana sí; otra plantilla sí", async () => {
+    capturar();
+    let reloj = Date.parse("2026-10-12T12:00:00Z");
+    const { monday, encolados } = conectorConFake({ ahora: () => reloj });
+    await monday.guardarAlta("demo", ALTA);
+    await monday.guardarPlantillas("demo", [
+      { id: "default", nombre: "Principal", cuerpo: "P {{nombre}}" },
+      { id: "recor", nombre: "Recordatorio", cuerpo: "R {{nombre}}" },
+    ]);
+    await monday.procesarEvento("demo", { pulseId: 42 });
+    reloj += 60_000;
+    await expect(monday.procesarEvento("demo", { pulseId: 42 }, undefined, { ip: "198.51.100.1" })).rejects.toMatchObject({ motivo: "duplicado" });
+    expect(encolados).toHaveLength(1);
+    expect(bitacora.some((l) => l.includes("monday.rechazado") && l.includes("motivo=duplicado") && l.includes("ip=198.51.100.1"))).toBe(true);
+    // El duplicado no pisa el último resultado bueno de la UI.
+    expect((await monday.verRegistro("demo")).ultimoResultado?.ok).toBe(true);
+    // Otra plantilla para el mismo item sí sale.
+    await monday.procesarEvento("demo", { pulseId: 42 }, "recor");
+    expect(encolados).toHaveLength(2);
+    // Pasada la ventana, vuelve a salir.
+    reloj += DEDUP_VENTANA_MS;
+    await monday.procesarEvento("demo", { pulseId: 42 });
+    expect(encolados).toHaveLength(3);
+    usarSalida(null);
+  });
+
+  it("una ráfaga legítima de 100 items distintos se acepta completa: todo va a la cola, nada se rechaza", async () => {
+    const items: Record<string, ItemMonday> = {};
+    for (let i = 1; i <= 100; i++) items[String(i)] = { ...ITEM, id: String(i), columnas: { ...ITEM.columnas, telefono: { id: "telefono", text: `+52 55 1234 ${String(1000 + i)}`, value: null } } };
+    const { monday, encolados } = conectorConFake({ items });
+    await monday.guardarAlta("demo", ALTA);
+    await Promise.all(Object.keys(items).map((id) => monday.procesarEvento("demo", { pulseId: Number(id) })));
+    expect(encolados).toHaveLength(100);
+    expect(new Set(encolados.map((m: any) => m.telefono)).size).toBe(100);
+  });
+
+  it("por la ruta HTTP: 200 a monday, rechazo en bitácora con la IP de X-Forwarded-For; sin conector y firma inválida también se registran", async () => {
+    capturar();
+    const { repo, monday, encolados } = conectorConFake();
+    await monday.guardarAlta("demo", ALTA);
+    const server = crearApp(repo, undefined, { monday }).listen(0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const firma = `Bearer ${jwt.sign({ foo: 1 }, "secreto-firma", { algorithm: "HS256" })}`;
+      const res = await fetch(`${base}/webhooks/monday/demo`, { method: "POST", headers: { "content-type": "application/json", authorization: firma, "x-forwarded-for": "198.51.100.7, 10.0.0.1" }, body: JSON.stringify({ event: { pulseId: 42, boardId: 999 } }) });
+      expect(res.status).toBe(200);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(encolados).toHaveLength(0);
+      expect(bitacora.some((l) => l.includes("monday.rechazado") && l.includes("ip=198.51.100.7") && l.includes("motivo=item_fuera_del_tablero"))).toBe(true);
+      const sinFirma = await fetch(`${base}/webhooks/monday/demo`, { method: "POST", headers: { "content-type": "application/json", "x-forwarded-for": "198.51.100.8" }, body: JSON.stringify({ event: { pulseId: 42 } }) });
+      expect(sinFirma.status).toBe(401);
+      expect(bitacora.some((l) => l.includes("motivo=firma_invalida") && l.includes("ip=198.51.100.8"))).toBe(true);
+      const sinConector = await fetch(`${base}/webhooks/monday/nadie`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event: { pulseId: 1 } }) });
+      expect(sinConector.status).toBe(404);
+      expect(bitacora.some((l) => l.includes("motivo=tenant_sin_conector"))).toBe(true);
+    } finally {
+      server.close();
+      usarSalida(null);
     }
   });
 });

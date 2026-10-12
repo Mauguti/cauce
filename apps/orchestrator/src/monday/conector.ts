@@ -3,6 +3,7 @@ import type { FalloEnvio, Message, TenantId } from "@cauce/core";
 import type { ColaEnvios } from "../cola.ts";
 import type { Repositorio } from "../store.ts";
 import { Cripto, pista } from "../cripto.ts";
+import { registrar } from "../log.ts";
 import {
   PLANTILLA_DEFECTO_ID,
   elegirPlantilla,
@@ -15,6 +16,22 @@ import {
   type ResultadoPlantilla,
 } from "../conectores/plantillas.ts";
 import { ClienteMonday, type BoardMonday, type ColumnaBoard, type ItemMonday, type PaginaBoards } from "./cliente.ts";
+
+/**
+ * Ventana de deduplicación: el mismo item no vuelve a disparar la misma
+ * plantilla dentro de este tiempo. Un solo lugar para cambiarla.
+ */
+export const DEDUP_VENTANA_MS = 10 * 60_000;
+
+/** Rechazo de un evento de webhook: queda en bitácora con IP y motivo, no se dispara nada. */
+export class EventoRechazado extends Error {
+  readonly motivo: "item_fuera_del_tablero" | "duplicado" | "sin_item";
+  constructor(motivo: EventoRechazado["motivo"], detalle: string) {
+    super(detalle);
+    this.name = "EventoRechazado";
+    this.motivo = motivo;
+  }
+}
 import { variantesTelefono } from "../bitrix/cliente.ts";
 import type { ProspectoCrm } from "../bitrix/conector.ts";
 
@@ -97,6 +114,9 @@ export class ConectorMonday {
   readonly #cola: ColaEnvios;
   readonly #cripto: Cripto;
   readonly #clienteFactory: (token: string) => ClienteMonday;
+  readonly #ahora: () => number;
+  /** Disparos recientes: `${tenant}/${plantilla}/${item}` → epoch ms. */
+  #recientes = new Map<string, number>();
 
   constructor(opciones: {
     repo: Repositorio;
@@ -104,12 +124,14 @@ export class ConectorMonday {
     cripto?: Cripto;
     /** Inyectable para pruebas. */
     clienteFactory?: (token: string) => ClienteMonday;
+    ahora?: () => number;
   }) {
     this.#repo = opciones.repo;
     this.#cola = opciones.cola;
     this.#cripto = opciones.cripto ?? new Cripto();
     this.#clienteFactory =
       opciones.clienteFactory ?? ((token) => new ClienteMonday(token));
+    this.#ahora = opciones.ahora ?? (() => Date.now());
   }
 
   /**
@@ -265,9 +287,10 @@ export class ConectorMonday {
     tenantId: TenantId,
     evento: any,
     plantillaId?: string,
+    origen: { ip?: string | null } = {},
   ): Promise<ResultadoDisparo> {
     try {
-      const r = await this.#procesarEventoInterno(tenantId, evento, plantillaId);
+      const r = await this.#procesarEventoInterno(tenantId, evento, plantillaId, origen);
       const ok = {
         ok: true as const,
         itemId: r.itemId,
@@ -278,6 +301,13 @@ export class ConectorMonday {
       await this.#registrarDisparoPlantilla(tenantId, r.plantillaId, ok);
       return r;
     } catch (err: any) {
+      if (err instanceof EventoRechazado) {
+        // Rechazo: bitácora con IP y motivo. El duplicado no pisa el último
+        // resultado de la UI (sería ruido); el item fuera del tablero sí,
+        // porque el cliente debe verlo.
+        registrar("monday.rechazado", { tenant: tenantId, plantilla: plantillaId ?? "default", item: evento?.pulseId ?? evento?.itemId ?? null, ip: origen.ip ?? null, motivo: err.motivo, detalle: err.message }, "warn");
+        if (err.motivo === "duplicado") throw err;
+      }
       // El error queda visible en la UI (Salientes), no solo en logs.
       const fail = {
         ok: false as const,
@@ -294,10 +324,12 @@ export class ConectorMonday {
     tenantId: TenantId,
     evento: any,
     plantillaId?: string,
+    origen: { ip?: string | null } = {},
   ): Promise<ResultadoDisparo> {
+    void origen;
     const itemId = evento?.pulseId ?? evento?.itemId;
     if (itemId === undefined || itemId === null) {
-      throw new Error("evento de monday sin pulseId");
+      throw new EventoRechazado("sin_item", "evento de monday sin pulseId");
     }
     const doc = await this.#repo.getConectorMonday(tenantId);
     if (!doc) throw new Error("tenant sin conector monday configurado");
@@ -309,9 +341,32 @@ export class ConectorMonday {
       );
     }
 
+    // Endurecimiento (la URL es lo único que protege el webhook):
+    // 1. El item debe ser del tablero configurado. Primero lo que dice el
+    //    evento (barato, pero lo controla quien llama); después, lo que dice
+    //    la API del item, que es la verdad.
+    const boardEvento = evento?.boardId !== undefined && evento?.boardId !== null ? String(evento.boardId) : null;
+    if (boardEvento && boardEvento !== doc.boardId) {
+      throw new EventoRechazado("item_fuera_del_tablero", `el evento viene del tablero ${boardEvento}, no del configurado (${doc.boardId})`);
+    }
+    // 2. El mismo item no dispara la misma plantilla dos veces en la ventana.
+    const claveDedup = `${tenantId}/${plantilla.id}/${itemId}`;
+    const ahora = this.#ahora();
+    const previo = this.#recientes.get(claveDedup);
+    if (previo !== undefined && ahora - previo < DEDUP_VENTANA_MS) {
+      throw new EventoRechazado("duplicado", `el item ${itemId} ya disparó la plantilla ${plantilla.id} hace ${Math.round((ahora - previo) / 1000)} s (ventana ${DEDUP_VENTANA_MS / 60_000} min)`);
+    }
+    if (this.#recientes.size > 5_000) {
+      for (const [k, t] of this.#recientes) if (ahora - t >= DEDUP_VENTANA_MS) this.#recientes.delete(k);
+    }
+
     const cliente = this.#clienteFactory(this.#cripto.descifrar(doc.apiTokenCifrado));
     const item = await cliente.getItem(String(itemId));
     if (!item) throw new Error(`item ${itemId} no encontrado en monday`);
+    if (item.boardId && item.boardId !== doc.boardId) {
+      await this.#registrarFallido(tenantId, doc.instanceId, "—", "", "item_fuera_del_tablero", `El item "${item.name}" es del tablero ${item.boardId}, no del configurado (${doc.boardNombre || doc.boardId}). Solo se disparan items de ese tablero.`);
+      throw new EventoRechazado("item_fuera_del_tablero", `el item ${itemId} es del tablero ${item.boardId}, no del configurado (${doc.boardId})`);
+    }
 
     const telefonoTexto = item.columnas[doc.columnaTelefono]?.text ?? "";
     const telefono = soloDigitos(telefonoTexto);
@@ -353,7 +408,11 @@ export class ConectorMonday {
       externalId: null,
       timestamp: new Date().toISOString(),
     };
+    // El ritmo lo pone la cola de envíos (por línea: intervalo + jitter); aquí
+    // solo se encola, nunca se rechaza por volumen: 100 recordatorios legítimos
+    // salen todos, espaciados.
     await this.#cola.encolar(mensaje);
+    this.#recientes.set(claveDedup, this.#ahora());
     await this.#repo.vincularMonday(
       tenantId,
       doc.instanceId,

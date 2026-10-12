@@ -807,6 +807,7 @@ export type FalloEnvio =
   | "telefono_vacio"
   | "telefono_invalido"
   | "item_incompleto"
+  | "item_fuera_del_tablero"
   | "transporte_rechazo"
   | "desconocido";
 
