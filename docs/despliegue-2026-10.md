@@ -300,3 +300,32 @@ Anotado al rehacer el plan, sin arreglar:
 - La sonda `scripts/monday-sonda.mjs` y las tres verificaciones del
   selector contra monday real siguen pendientes de un token de prueba y de
   un tablero privado creado por otro usuario.
+
+## 6. Después del despliegue (13-oct-2026): qué quedó sin verificar
+
+Desplegado `d82e39c` el 12-oct por la noche y `ce883cb` en la plataforma.
+Verificado por Mau: servicio activo, dos sesiones rehidratadas en
+`connected`, `/health` con los campos nuevos, un entrante completo hasta
+`openlines.entrante resultado=ok` con chat y sesión en Bitrix,
+`openlines.token_renovado`, y los cuatro avisos de apagado esperados
+(Google, Stripe, precios, GA4). `/health` decía `ee67555` por una
+`CAUCE_VERSION` olvidada en `/etc/factory.env`; corregido en código en
+`c7a2d35` (pendiente de subir) y, mientras, reporta `d82e39c+`.
+
+Sin verificar, anotado:
+
+- **Santiago contestando en producción.** Había ventana humana activa y el
+  agente cedió el turno (correcto), pero no prueba que conteste. Pendiente
+  con otro número.
+- **La foto sin texto** desde un número con historial (Paso 2 · 11): el
+  arreglo de `d82e39c` no se ha visto funcionar en producción ni se sabe
+  cómo pinta Bitrix el texto `📎 Adjunto (imagen) sin texto`.
+- **Trazabilidad → Agentes** en la plataforma publicada: no se abrió con
+  sesión real tras publicar `ce883cb`.
+- **El selector de tableros y el webhook endurecido contra monday real**:
+  ni `boardIds` en settings, ni el mensaje del tablero privado, ni un
+  rechazo `monday.rechazado` real. La sonda `scripts/monday-sonda.mjs` y
+  el token de prueba siguen pendientes.
+- **Billing y Trazabilidad en la plataforma** contra el orquestador nuevo:
+  solo vistos en build local.
+- **El reinicio del sistema de la EC2** (ventana aparte, no durante una prueba).
