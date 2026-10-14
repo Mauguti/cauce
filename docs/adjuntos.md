@@ -1,5 +1,34 @@
 # Recepción de adjuntos: estimado (preliminar, 15-sep-2026)
 
+> ## Estado real al 14-oct-2026: construido A LA MITAD, no "pendiente de sondas"
+>
+> **Lo que funciona en producción (`d82e39c`):** un entrante con adjunto
+> entra como mensaje con sus tipos (`imagen`, `audio`, `nota de voz`,
+> `video`, `documento`, `sticker`); si trae texto se trata como texto; si
+> no, no dispara bots ni agente, no cuenta como primer contacto y se
+> espeja al CRM y al Contact Center como `📎 Adjunto (…) sin texto`.
+>
+> **Lo que NO funciona: el archivo se pierde.** El almacén
+> (`adjuntos/almacen.ts`), la descarga desde Evolution, la URL firmada y el
+> barrido de retención (`adjuntos/barrido.ts`) existen en código pero
+> **no están conectados en `index.ts`**: nadie construye el almacén, así
+> que la descarga nunca corre y el barrido nunca se programa. Ninguna
+> variable lo enciende; `CAUCE_ADJUNTOS_DIR` solo fija la carpeta.
+>
+> **Requisitos para encenderlo en el corte siguiente, en este orden, no
+> negociables:**
+> 1. **La descarga del archivo sale del camino del 200 a Evolution.** Hoy
+>    el bucle de descarga está en el handler del webhook antes de
+>    responder; una descarga lenta demora el 200 y Evolution reintenta:
+>    mensaje duplicado a un cliente de paga. Sin esto no se enciende nada.
+> 2. **El barrido de retención conectado y corriendo** (job programado,
+>    línea `adjuntos.barrido` en bitácora) antes de guardar el primer archivo.
+> 3. **La carpeta creada con permisos para `ubuntu`, después del
+>    redimensionado a `t3.large`.** No en la `t3.small`.
+>
+> Las cuatro sondas siguen pendientes y afectan al estimado de la
+> **salida** (Bitrix → WhatsApp) y al audio, no a lo de arriba.
+
 Reglas ya decididas, no se rediscuten: retención Básico 30 días · Estándar
 6 meses · Pro 12 meses; al vencer se borra el archivo y el mensaje queda
 con "archivo expirado"; barrido diario con línea en bitácora (cuántos y
