@@ -404,11 +404,30 @@ export function crearApp(
       registrar("entrante.adjunto_crudo", { tenant: tenantId, instancia: instanceId, tipo: tipoEntrante, muestra: resumirCrudo(req.body?.data?.message) });
     }
     const mensaje = normalizarEntrante(tenantId!, instanceId!, req.body);
-    if (mensaje) {
-      // Descargar y guardar adjuntos si el almacén está disponible.
-      const adjuntosEntrantes = extraerAdjuntosEntrantes(req.body?.data?.message ?? {});
+    if (!mensaje) {
+      res.status(200).json({ ok: true });
+      return;
+    }
+    // 1. Guardar y responder. El mensaje queda persistido ANTES del 200 (si
+    //    el proceso cae aquí, Evolution reintenta y no se pierde nada).
+    await repo.saveMessage(mensaje);
+    registrar("entrante.guardado", {
+      tenant: tenantId, instancia: instanceId, mensaje: mensaje.id,
+      telefono: enmascararTelefono(mensaje.telefono),
+    });
+    res.status(200).json({ ok: true });
+
+    // 2. Todo lo demás, DESPUÉS del 200: descargar el adjunto si hay almacén,
+    //    espejar al canal abierto y correr el motor. Un reintento de Evolution
+    //    por un 200 tardío es un mensaje duplicado a un cliente de paga; por
+    //    eso la descarga (hasta 20 MB por la API de Evolution) nunca va antes
+    //    de responder. Requisito 1 de docs/adjuntos.md.
+    const nombre = typeof req.body?.data?.pushName === "string" ? req.body.data.pushName : null;
+    const adjuntosEntrantes = extraerAdjuntosEntrantes(req.body?.data?.message ?? {});
+    const messageKey = req.body?.data?.key;
+    const atribucion = extraerAtribucion(req.body);
+    void (async () => {
       if (adjuntosEntrantes.length > 0 && opciones.almacenAdjuntos && sesion?.transport?.downloadMedia) {
-        const messageKey = req.body?.data?.key;
         for (const ae of adjuntosEntrantes) {
           // Si el tamaño reportado excede el tope, no descargar.
           if (ae.tamano && ae.tamano > ADJUNTO_MAX_BYTES) {
@@ -425,42 +444,31 @@ export function crearApp(
               registrar("adjuntos.descarga_fallida", { tenant: tenantId, instancia: instanceId, tipo: ae.tipoMensaje }, "warn");
               continue;
             }
-            const nombre = ae.nombre ?? (ae.esNotaDeVoz ? "nota-de-voz.ogg" : `adjunto${extensionRapida(ae.tipoMime)}`);
-            const adjunto = await opciones.almacenAdjuntos.guardar(tenantId, instanceId, mensaje.id, contenido, { nombre, tipoMime: ae.tipoMime });
-            if (adjunto) {
-              mensaje.adjuntos = [...(mensaje.adjuntos ?? []), adjunto];
-            }
+            const nombreArchivo = ae.nombre ?? (ae.esNotaDeVoz ? "nota-de-voz.ogg" : `adjunto${extensionRapida(ae.tipoMime)}`);
+            const adjunto = await opciones.almacenAdjuntos.guardar(tenantId!, instanceId!, mensaje.id, contenido, { nombre: nombreArchivo, tipoMime: ae.tipoMime });
+            if (adjunto) mensaje.adjuntos = [...(mensaje.adjuntos ?? []), adjunto];
           } catch (err) {
             registrarError("adjuntos.error_descarga", err, { tenant: tenantId, instancia: instanceId, tipo: ae.tipoMensaje });
           }
         }
+        if (mensaje.adjuntos?.length) {
+          await repo.saveMessage(mensaje);
+          registrar("adjuntos.guardados", { tenant: tenantId, instancia: instanceId, mensaje: mensaje.id, archivos: mensaje.adjuntos.length });
+        }
       }
-      await repo.saveMessage(mensaje);
-      registrar("entrante.guardado", {
-        tenant: tenantId, instancia: instanceId, mensaje: mensaje.id,
-        telefono: enmascararTelefono(mensaje.telefono),
-      });
-      // Nombre del contacto (pushName) para dar contexto en el registro.
-      const nombre =
-        typeof req.body?.data?.pushName === "string"
-          ? req.body.data.pushName
-          : null;
       // Canal abierto: el entrante también va al Contact Center de Bitrix si
-      // esta línea está conectada a uno. Best-effort; nunca frena el 200.
+      // esta línea está conectada a uno. Best-effort.
       if (opciones.openlines) {
-        opciones.openlines
+        await opciones.openlines
           .entrante(tenantId!, instanceId!, mensaje, nombre)
           .catch((err) => registrarError("openlines.entrante", err, { tenant: tenantId, instancia: instanceId, mensaje: mensaje.id }));
       }
       if (opciones.motorEntrada) {
-        opciones.motorEntrada
-          .procesar(tenantId!, instanceId!, mensaje, nombre, extraerAtribucion(req.body))
-          .catch((err) =>
-            registrarError("entrada.motor", err, { tenant: tenantId, instancia: instanceId, mensaje: mensaje.id }),
-          );
+        await opciones.motorEntrada
+          .procesar(tenantId!, instanceId!, mensaje, nombre, atribucion)
+          .catch((err) => registrarError("entrada.motor", err, { tenant: tenantId, instancia: instanceId, mensaje: mensaje.id }));
       }
-    }
-    res.status(200).json({ ok: true });
+    })().catch((err) => registrarError("entrada.posterior", err, { tenant: tenantId, instancia: instanceId, mensaje: mensaje.id }));
   });
 
   // Alta autoservicio: la consola llama tras el login con el ID token de

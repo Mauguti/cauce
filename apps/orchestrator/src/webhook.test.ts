@@ -4,6 +4,10 @@ import type { Message } from "@cauce/core";
 import { crearApp } from "./app.ts";
 import { RepositorioEnMemoria } from "./store.ts";
 import { normalizarActualizacion, normalizarEntrante } from "./webhook.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AlmacenAdjuntos } from "./adjuntos/almacen.ts";
 import type { GestorSesiones } from "./sesiones.ts";
 
 const PAYLOAD_UPSERT = {
@@ -243,6 +247,50 @@ describe("POST /webhooks/:tenantId/:instanceId", () => {
       expect(m.confirmadoEn).toBe(primera); // no se reescribió con cada acuse
     } finally {
       cerrar();
+    }
+  });
+});
+
+describe("POST /webhooks · la descarga del adjunto va DESPUÉS del 200 (requisito 1 de docs/adjuntos.md)", () => {
+  it("responde a Evolution en milisegundos aunque la descarga tarde; el mensaje queda guardado antes del 200 y el archivo se agrega después", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "adj-"));
+    const repo = new RepositorioEnMemoria({
+      tenants: [{ id: "a", nombre: "A", plan: "estandar", estado: "activo", apiKeyHash: "x".repeat(64), creadoEn: "2026-09-05T00:00:00Z" }],
+      instances: [{ id: "i1", tenantId: "a", transportType: "evolution", contenedorId: "c1", numero: null, estado: "connected", ultimoHeartbeat: null }],
+    });
+    let descargaIniciada = 0;
+    const transport = {
+      downloadMedia: async () => { descargaIniciada = Date.now(); await new Promise((r) => setTimeout(r, 400)); return Buffer.from("imagen-falsa"); },
+    };
+    const gestor = { obtener: (id: string) => (id === "i1" ? { transport, contenedorId: "c1", baseUrl: "", webhookToken: "secreto-i1" } : null) } as unknown as GestorSesiones;
+    const almacen = new AlmacenAdjuntos({ directorio: tempDir, llave: Buffer.alloc(32, 7) });
+    const server = crearApp(repo, gestor, { almacenAdjuntos: almacen }).listen(0);
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const inicio = Date.now();
+      const res = await fetch(`${base}/webhooks/a/i1?token=secreto-i1`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ event: "messages.upsert", data: { key: { remoteJid: "5215587654321@s.whatsapp.net", fromMe: false, id: "IMG1" }, messageType: "imageMessage", message: { imageMessage: { mimetype: "image/jpeg", fileLength: 1234 } }, messageTimestamp: 1760400000 } }),
+      });
+      const tardo = Date.now() - inicio;
+      expect(res.status).toBe(200);
+      expect(tardo).toBeLessThan(300); // la descarga de 400 ms no retuvo el 200
+      // Ya guardado al responder, sin archivo todavía.
+      const guardados = await repo.listMessages("a", "i1");
+      expect(guardados).toHaveLength(1);
+      expect(guardados[0]!.tiposAdjunto).toEqual(["imagen"]);
+      expect(guardados[0]!.adjuntos ?? []).toHaveLength(0);
+      // Después de la descarga, el mismo mensaje tiene el archivo.
+      await new Promise((r) => setTimeout(r, 700));
+      expect(descargaIniciada).toBeGreaterThan(0);
+      const despues = await repo.listMessages("a", "i1");
+      expect(despues).toHaveLength(1);
+      expect(despues[0]!.adjuntos).toHaveLength(1);
+      expect(despues[0]!.adjuntos![0]!.tipoMime).toBe("image/jpeg");
+    } finally {
+      server.close();
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 });
