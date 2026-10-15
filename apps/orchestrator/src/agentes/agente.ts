@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { idConversacion, type AgenteConfig, type Conocimiento, type Conversacion, type HerramientaWebhook, type InstanceId, type Message, type Tenant, type TenantId } from "@cauce/core";
+import { idConversacion, telefonoCanonico, type AgenteConfig, type Conocimiento, type Conversacion, type HerramientaWebhook, type InstanceId, type Message, type Tenant, type TenantId } from "@cauce/core";
 import type { Repositorio } from "../store.ts";
 import type { Cripto } from "../cripto.ts";
 import { cronometro, enmascararTelefono, registrar, registrarError } from "../log.ts";
@@ -197,7 +197,7 @@ export class Agente {
       registrar("agente.sin_proveedor", { tenant: tenantId, agente: cfg.nombre, proveedor: cfg.proveedor }, "warn");
       return SIN_RESPUESTA;
     }
-    const telefono = mensaje.telefono.replace(/[^\d]/g, "");
+    const telefono = telefonoCanonico(mensaje.telefono);
     const base = { tenant: tenantId, agente: cfg.nombre, instancia: instanceId, telefono: enmascararTelefono(mensaje.telefono), mensaje: mensaje.id };
 
     const conocimiento = (await this.#repo.getConocimiento(tenantId)) ?? {};

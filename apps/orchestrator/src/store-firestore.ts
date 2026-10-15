@@ -14,6 +14,8 @@ import {
   type PersonaDirectorio,
   type ConectorGoogleDoc,
   type CitaPendiente,
+  telefonoCanonico,
+  formasEquivalentes,
 } from "@cauce/core";
 import { variantesNumero, type Repositorio } from "./store.ts";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
@@ -155,14 +157,14 @@ export class RepositorioFirestore implements Repositorio {
     return snap.docs.map((d) => d.data() as PersonaDirectorio).sort((a, b) => a.nombre.localeCompare(b.nombre));
   }
   async getPersonaDirectorio(tenantId: TenantId, telefono: string): Promise<PersonaDirectorio | null> {
-    const doc = await this.#db.doc(rutas.persona(tenantId, telefono.replace(/[^\d]/g, ""))).get();
+    const doc = await this.#db.doc(rutas.persona(tenantId, telefono)).get();
     return doc.exists ? (doc.data() as PersonaDirectorio) : null;
   }
   async savePersonaDirectorio(tenantId: TenantId, persona: PersonaDirectorio): Promise<void> {
-    await this.#db.doc(rutas.persona(tenantId, persona.telefono)).set(persona);
+    await this.#db.doc(rutas.persona(tenantId, persona.telefono)).set({ ...persona, telefono: telefonoCanonico(persona.telefono) });
   }
   async deletePersonaDirectorio(tenantId: TenantId, telefono: string): Promise<void> {
-    await this.#db.doc(rutas.persona(tenantId, telefono.replace(/[^\d]/g, ""))).delete();
+    await this.#db.doc(rutas.persona(tenantId, telefono)).delete();
   }
   async getConectorGoogle(tenantId: TenantId): Promise<ConectorGoogleDoc | null> {
     const doc = await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/google`).get();
@@ -175,7 +177,7 @@ export class RepositorioFirestore implements Repositorio {
     await this.#db.doc(`${rutas.tenant(tenantId)}/conectores/google`).delete();
   }
   async marcarCitaPendiente(tenantId: TenantId, instanceId: InstanceId, telefono: string, pendiente: CitaPendiente | null): Promise<void> {
-    await this.#db.doc(rutas.conversacion(tenantId, instanceId, telefono)).set({ tenantId, instanceId, telefono, citaPendiente: pendiente }, { merge: true });
+    await this.#db.doc(rutas.conversacion(tenantId, instanceId, telefono)).set({ tenantId, instanceId, telefono: telefonoCanonico(telefono), citaPendiente: pendiente }, { merge: true });
   }
   async reservarFranja(tenantId: TenantId, calendarioId: string, inicio: string, duenio: string, hastaIso: string): Promise<boolean> {
     const ref = this.#db.doc(`${rutas.reservas(tenantId)}/${encodeURIComponent(`${calendarioId}|${inicio}`)}`);
@@ -220,7 +222,7 @@ export class RepositorioFirestore implements Repositorio {
   async marcarAtribucion(tenantId: TenantId, instanceId: InstanceId, telefono: string, atribucion: Atribucion): Promise<void> {
     await this.#db
       .doc(rutas.conversacion(tenantId, instanceId, telefono))
-      .set({ tenantId, instanceId, telefono, atribucion }, { merge: true });
+      .set({ tenantId, instanceId, telefono: telefonoCanonico(telefono), atribucion }, { merge: true });
   }
 
   async buscarInstanciaPorNumero(telefono: string): Promise<{ tenantId: TenantId; instanceId: InstanceId } | null> {
@@ -240,15 +242,15 @@ export class RepositorioFirestore implements Repositorio {
       const snap = await tx.get(ref);
       const previa = snap.exists ? (snap.data() as Conversacion) : null;
       const autoRespuestas = [...(previa?.autoRespuestas ?? []), en].slice(-maxGuardadas);
-      tx.set(ref, { tenantId, instanceId, telefono, autoRespuestas, ultimaAutoRespuesta: texto }, { merge: true });
-      return { ...(previa ?? { tenantId, instanceId, telefono, primerContactoEn: null, ultimoEntranteEn: null, mondayItemId: null }), autoRespuestas, ultimaAutoRespuesta: texto } as Conversacion;
+      tx.set(ref, { tenantId, instanceId, telefono: telefonoCanonico(telefono), autoRespuestas, ultimaAutoRespuesta: texto }, { merge: true });
+      return { ...(previa ?? { tenantId, instanceId, telefono: telefonoCanonico(telefono), primerContactoEn: null, ultimoEntranteEn: null, mondayItemId: null }), autoRespuestas, ultimaAutoRespuesta: texto } as Conversacion;
     });
   }
 
   async pausarAutomatico(tenantId: TenantId, instanceId: InstanceId, telefono: string, datos: { hasta: string; motivo: string; conteo: number }): Promise<void> {
     await this.#db
       .doc(rutas.conversacion(tenantId, instanceId, telefono))
-      .set({ tenantId, instanceId, telefono, autoPausadaHasta: datos.hasta, cortacircuitos: { en: new Date().toISOString(), motivo: datos.motivo, conteo: datos.conteo } }, { merge: true });
+      .set({ tenantId, instanceId, telefono: telefonoCanonico(telefono), autoPausadaHasta: datos.hasta, cortacircuitos: { en: new Date().toISOString(), motivo: datos.motivo, conteo: datos.conteo } }, { merge: true });
   }
 
   /** Upsert por id: el ciclo de la cola reescribe el mismo mensaje. */
@@ -299,11 +301,12 @@ export class RepositorioFirestore implements Repositorio {
   async listMessagesDeConversacion(tenantId: TenantId, instanceId: InstanceId, telefono: string, limite: number): Promise<Message[]> {
     // Dos igualdades: Firestore las sirve fusionando índices de campo único.
     // El orden lo hacemos aquí para no exigir índice compuesto.
-    const digitos = telefono.replace(/[^\d]/g, "");
+    // Los mensajes guardan el teléfono como vino (+52… en salientes, +521… en entrantes): se piden todas las formas equivalentes.
+    const formas = formasEquivalentes(telefono).map((d) => `+${d}`);
     const snap = await this.#db
       .collection(rutas.messages(tenantId))
       .where("instanceId", "==", instanceId)
-      .where("telefono", "==", `+${digitos}`)
+      .where("telefono", "in", formas)
       .get();
     return snap.docs
       .map((d) => d.data() as Message)
@@ -428,7 +431,7 @@ export class RepositorioFirestore implements Repositorio {
   ): Promise<void> {
     await this.#db
       .doc(rutas.conversacion(tenantId, instanceId, telefono))
-      .set({ tenantId, instanceId, telefono, bitrixOpenLine: datos }, { merge: true });
+      .set({ tenantId, instanceId, telefono: telefonoCanonico(telefono), bitrixOpenLine: datos }, { merge: true });
   }
 
   async marcarHumana(
@@ -439,19 +442,19 @@ export class RepositorioFirestore implements Repositorio {
   ): Promise<void> {
     await this.#db
       .doc(rutas.conversacion(tenantId, instanceId, telefono))
-      .set({ tenantId, instanceId, telefono, humanaHasta: hasta, ...(hasta ? { autoPausadaHasta: null, autoRespuestas: [] } : {}) }, { merge: true });
+      .set({ tenantId, instanceId, telefono: telefonoCanonico(telefono), humanaHasta: hasta, ...(hasta ? { autoPausadaHasta: null, autoRespuestas: [] } : {}) }, { merge: true });
   }
 
   async marcarTraspaso(tenantId: TenantId, instanceId: InstanceId, telefono: string, traspaso: NonNullable<Conversacion["traspaso"]>): Promise<void> {
     await this.#db
       .doc(rutas.conversacion(tenantId, instanceId, telefono))
-      .set({ tenantId, instanceId, telefono, traspaso }, { merge: true });
+      .set({ tenantId, instanceId, telefono: telefonoCanonico(telefono), traspaso }, { merge: true });
   }
 
   async marcarAvisoSuspension(tenantId: TenantId, instanceId: InstanceId, telefono: string, en: string): Promise<void> {
     await this.#db
       .doc(rutas.conversacion(tenantId, instanceId, telefono))
-      .set({ tenantId, instanceId, telefono, avisoSuspensionEn: en }, { merge: true });
+      .set({ tenantId, instanceId, telefono: telefonoCanonico(telefono), avisoSuspensionEn: en }, { merge: true });
   }
 
   async getConectorBitrix(tenantId: TenantId): Promise<ConectorBitrixDoc | null> {
@@ -493,7 +496,7 @@ export class RepositorioFirestore implements Repositorio {
   ): Promise<void> {
     await this.#db
       .doc(rutas.conversacion(tenantId, instanceId, telefono))
-      .set({ tenantId, instanceId, telefono, bitrixEntidad: { tipo: entidadTipo, id: entidadId } }, { merge: true });
+      .set({ tenantId, instanceId, telefono: telefonoCanonico(telefono), bitrixEntidad: { tipo: entidadTipo, id: entidadId } }, { merge: true });
   }
 
   async getConversacion(
@@ -514,7 +517,7 @@ export class RepositorioFirestore implements Repositorio {
     timestamp: string,
     nombre?: string | null,
     opciones: { cuentaPrimerContacto?: boolean } = {},
-  ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }> {
+  ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean; esPrimerEntrante: boolean }> {
     const ref = this.#db.doc(
       rutas.conversacion(tenantId, instanceId, telefono),
     );
@@ -525,7 +528,9 @@ export class RepositorioFirestore implements Repositorio {
     return this.#db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const previa = snap.exists ? (snap.data() as Conversacion) : null;
-      const esPrimerContacto = cuenta && (!previa || previa.primerContactoEn === null);
+      const esPrimerEntrante = cuenta && (!previa || previa.primerContactoEn === null);
+      // Primer contacto = nunca hubo conversación; si el CRM ya le escribió, su respuesta no lo es.
+      const esPrimerContacto = esPrimerEntrante && !(previa?.mondayItemId || previa?.bitrixEntidad);
       // Se conserva TODO lo previo (ventana humana, vínculo con el chat de
       // Bitrix, lo que se agregue después) y solo se actualiza lo del
       // entrante. Antes se reconstruía el doc a mano y cada mensaje borraba
@@ -535,7 +540,7 @@ export class RepositorioFirestore implements Repositorio {
         ...(previa ?? {}),
         tenantId,
         instanceId,
-        telefono,
+        telefono: telefonoCanonico(telefono),
         nombre: nombre?.trim() || previa?.nombre || null,
         primerContactoEn: previa?.primerContactoEn ?? (cuenta ? timestamp : null),
         ultimoEntranteEn: timestamp,
@@ -543,7 +548,7 @@ export class RepositorioFirestore implements Repositorio {
         bitrixEntidad: previa?.bitrixEntidad ?? null,
       };
       tx.set(ref, conversacion);
-      return { conversacion, esPrimerContacto };
+      return { conversacion, esPrimerContacto, esPrimerEntrante };
     });
   }
 
@@ -568,7 +573,7 @@ export class RepositorioFirestore implements Repositorio {
     await this.#db
       .doc(rutas.conversacion(tenantId, instanceId, telefono))
       .set(
-        { tenantId, instanceId, telefono, mondayItemId: itemId },
+        { tenantId, instanceId, telefono: telefonoCanonico(telefono), mondayItemId: itemId },
         { merge: true },
       );
   }

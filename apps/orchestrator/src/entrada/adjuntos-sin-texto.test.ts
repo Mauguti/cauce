@@ -97,8 +97,8 @@ describe("adjunto sin texto", () => {
 
   it("un adjunto CON texto (caption) se comporta como hoy: dispara por palabra clave y se espeja como texto", async () => {
     const c = armar();
-    await c.repo.vincularBitrix("t1", "A", TEL, "deal", "77");
     await c.motor.procesar("t1", "A", msg("hola"), "Laura"); // consume la bienvenida
+    await c.repo.vincularBitrix("t1", "A", TEL, "deal", "77");
     await c.motor.procesar("t1", "A", msg("¿cuál es el precio?", ["imagen"]), "Laura");
     expect(c.enviados.map((e) => e.cuerpo)).toEqual(["¡Hola! Gracias por escribir.", "Aquí los precios."]);
     expect(c.publicados.at(-1)).toEqual({ id: "77", texto: "📥 ¿cuál es el precio?" });

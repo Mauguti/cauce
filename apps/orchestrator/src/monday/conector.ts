@@ -369,7 +369,7 @@ export class ConectorMonday {
     }
 
     const telefonoTexto = item.columnas[doc.columnaTelefono]?.text ?? "";
-    const telefono = soloDigitos(telefonoTexto);
+    const telefono = soloDigitos(telefonoTexto, (await this.#repo.getTenant(tenantId))?.pais);
     if (!telefono) {
       await this.#registrarFallido(
         tenantId,

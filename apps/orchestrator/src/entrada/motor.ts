@@ -1,5 +1,5 @@
 import type { Atribucion, InstanceId, Message, MessageOrigen, TenantId } from "@cauce/core";
-import { tieneCapacidad, type Capacidad, esAdjuntoSinTexto, etiquetaAdjuntos, textoAdjuntoSinTexto } from "@cauce/core";
+import { tieneCapacidad, type Capacidad, esAdjuntoSinTexto, etiquetaAdjuntos, textoAdjuntoSinTexto, telefonoCanonico } from "@cauce/core";
 import { enmascararTelefono, registrar, registrarCadaMs } from "../log.ts";
 import type { ConectorOpenlines } from "../bitrix/openlines/conector.ts";
 import type { Repositorio } from "../store.ts";
@@ -152,7 +152,8 @@ export class MotorEntrada {
     nombre?: string | null,
     atribucion?: Atribucion | null,
   ): Promise<void> {
-    const telefono = mensaje.telefono.replace(/[^\d]/g, "");
+    // Llave de conversación: el teléfono canónico, venga como venga (+52 del CRM, +521 de WhatsApp).
+    const telefono = telefonoCanonico(mensaje.telefono);
     // Adjunto sin texto (foto, audio, sticker…): es tráfico real y se
     // registra, pero NO es una pregunta: no dispara bots ni agente, no
     // consume el primer contacto (un sticker no puede provocar una
@@ -162,7 +163,7 @@ export class MotorEntrada {
     // 1. Conversación: registro atómico; decide primer contacto sin carrera.
     //    Guarda el nombre del contacto (pushName) para dar contexto al
     //    registro en vez del número crudo.
-    const { conversacion, esPrimerContacto } = await this.#repo.registrarEntrante(
+    const { conversacion, esPrimerContacto, esPrimerEntrante } = await this.#repo.registrarEntrante(
       tenantId,
       instanceId,
       telefono,
@@ -174,7 +175,8 @@ export class MotorEntrada {
     // 1b. Atribución de campaña: SOLO al primer contacto, y explícita aunque
     //     sea "sin atribuir". No se reconstruye hacia atrás: es capa base
     //     del plan de conexión, disponible para todos los planes.
-    if (esPrimerContacto && atribucion) {
+    // La atribución se captura al primer ENTRANTE, aunque el CRM ya le haya escrito.
+    if (esPrimerEntrante && atribucion) {
       await this.#repo.marcarAtribucion(tenantId, instanceId, telefono, atribucion);
       registrar("entrada.atribucion", {
         tenant: tenantId, instancia: instanceId, telefono: enmascararTelefono(mensaje.telefono), estado: atribucion.estado,
@@ -319,7 +321,7 @@ export class MotorEntrada {
     if (!puede("entrantes")) return;
     const texto = sinTexto ? textoAdjuntoSinTexto(mensaje) : `📥 ${mensaje.cuerpo}`;
     // Al primer contacto con registro ya vinculado, el origen va al CRM: visible donde trabaja el vendedor.
-    const origenCrm = esPrimerContacto && atribucion ? `📣 Origen: ${atribucion.estado === "atribuida" ? atribucion.origen ?? "campaña" : "sin atribuir"}` : null;
+    const origenCrm = esPrimerEntrante && atribucion ? `📣 Origen: ${atribucion.estado === "atribuida" ? atribucion.origen ?? "campaña" : "sin atribuir"}` : null;
     if (this.#monday && conversacion.mondayItemId && origenCrm) {
       await this.#monday.publicarEnItem(tenantId, conversacion.mondayItemId, origenCrm);
     }

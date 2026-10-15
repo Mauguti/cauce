@@ -13,6 +13,7 @@ import type {
   Tenant,
   TenantId,
 } from "@cauce/core";
+import { telefonoCanonico } from "@cauce/core";
 import type { ConectorMondayDoc, RegistroMonday } from "./monday/conector.ts";
 import type { OpenlinesBitrixDoc } from "./bitrix/openlines/tipos.ts";
 import type { ConectorBitrixDoc } from "./bitrix/conector.ts";
@@ -132,7 +133,13 @@ export interface Repositorio {
     nombre?: string | null,
     /** `cuentaPrimerContacto: false` (adjunto sin texto): se registra el tráfico pero no se consume el primer contacto. */
     opciones?: { cuentaPrimerContacto?: boolean },
-  ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }>;
+  ): Promise<{
+    conversacion: Conversacion;
+    /** Nunca hubo conversación: ni entrantes ni salientes del CRM. Decide bienvenida y bots de primer contacto. */
+    esPrimerContacto: boolean;
+    /** Primer mensaje ENTRANTE de este contacto, aunque el CRM ya le hubiera escrito. Decide la captura de atribución. */
+    esPrimerEntrante: boolean;
+  }>;
   /** Todas las conversaciones del tenant (para dar contexto al registro). */
   listConversaciones(tenantId: TenantId): Promise<Conversacion[]>;
   /** Fija (merge) el item de monday vinculado a la conversación. */
@@ -293,9 +300,9 @@ export class RepositorioEnMemoria implements Repositorio {
   }
 
   async listMessagesDeConversacion(tenantId: TenantId, instanceId: InstanceId, telefono: string, limite: number): Promise<Message[]> {
-    const digitos = telefono.replace(/[^\d]/g, "");
+    const canon = telefonoCanonico(telefono);
     return (this.#messages.get(tenantId) ?? [])
-      .filter((m) => m.instanceId === instanceId && m.telefono.replace(/[^\d]/g, "") === digitos)
+      .filter((m) => m.instanceId === instanceId && telefonoCanonico(m.telefono) === canon)
       .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
       .slice(-limite);
   }
@@ -427,7 +434,7 @@ export class RepositorioEnMemoria implements Repositorio {
       ...(previa ?? {}),
       tenantId,
       instanceId,
-      telefono,
+      telefono: telefonoCanonico(telefono),
       ...cambios,
     });
   }
@@ -467,13 +474,13 @@ export class RepositorioEnMemoria implements Repositorio {
     return [...this.#directorio.entries()].filter(([k]) => k.startsWith(`${tenantId}/`)).map(([, p]) => p).sort((a, b) => a.nombre.localeCompare(b.nombre));
   }
   async getPersonaDirectorio(tenantId: TenantId, telefono: string): Promise<PersonaDirectorio | null> {
-    return this.#directorio.get(`${tenantId}/${telefono.replace(/[^\d]/g, "")}`) ?? null;
+    return this.#directorio.get(`${tenantId}/${telefonoCanonico(telefono)}`) ?? null;
   }
   async savePersonaDirectorio(tenantId: TenantId, persona: PersonaDirectorio): Promise<void> {
-    this.#directorio.set(`${tenantId}/${persona.telefono}`, persona);
+    this.#directorio.set(`${tenantId}/${telefonoCanonico(persona.telefono)}`, { ...persona, telefono: telefonoCanonico(persona.telefono) });
   }
   async deletePersonaDirectorio(tenantId: TenantId, telefono: string): Promise<void> {
-    this.#directorio.delete(`${tenantId}/${telefono.replace(/[^\d]/g, "")}`);
+    this.#directorio.delete(`${tenantId}/${telefonoCanonico(telefono)}`);
   }
   async getConectorGoogle(tenantId: TenantId): Promise<ConectorGoogleDoc | null> {
     return this.#google.get(tenantId) ?? null;
@@ -540,7 +547,7 @@ export class RepositorioEnMemoria implements Repositorio {
   }
 
   #claveConv(t: TenantId, i: InstanceId, tel: string): string {
-    return `${t}/${i}/${tel}`;
+    return `${t}/${i}/${telefonoCanonico(tel)}`;
   }
 
   async getConversacion(
@@ -561,13 +568,16 @@ export class RepositorioEnMemoria implements Repositorio {
     timestamp: string,
     nombre?: string | null,
     opciones: { cuentaPrimerContacto?: boolean } = {},
-  ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean }> {
+  ): Promise<{ conversacion: Conversacion; esPrimerContacto: boolean; esPrimerEntrante: boolean }> {
     // Sin `await` entre lectura y escritura: en el modelo de un solo hilo
     // de JS esto es atómico frente a otras llamadas concurrentes.
     const clave = this.#claveConv(tenantId, instanceId, telefono);
     const previa = this.#conversaciones.get(clave);
     const cuenta = opciones.cuentaPrimerContacto !== false;
-    const esPrimerContacto = cuenta && (!previa || previa.primerContactoEn === null);
+    const esPrimerEntrante = cuenta && (!previa || previa.primerContactoEn === null);
+    // Primer contacto = nunca hubo conversación. Si el CRM ya le escribió
+    // (vínculo a item o entidad), su respuesta NO es primer contacto.
+    const esPrimerContacto = esPrimerEntrante && !(previa?.mondayItemId || previa?.bitrixEntidad);
     // ÚNICO camino de escritura: fusionar. Dos bugs de la misma familia
     // salieron de reconstruir el documento a mano (se perdían humanaHasta,
     // bitrixOpenLine, traspaso); ya no hay segundo camino.
@@ -577,7 +587,7 @@ export class RepositorioEnMemoria implements Repositorio {
       ultimoEntranteEn: timestamp,
     });
     const conversacion = this.#conversaciones.get(clave)!;
-    return { conversacion, esPrimerContacto };
+    return { conversacion, esPrimerContacto, esPrimerEntrante };
   }
 
   async listConversaciones(tenantId: TenantId): Promise<Conversacion[]> {

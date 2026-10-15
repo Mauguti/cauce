@@ -1,3 +1,4 @@
+import { PAIS_DEFAULT, completarLada } from "@cauce/core";
 /**
  * Piezas compartidas por todos los conectores de CRM (monday, Bitrix24…):
  * el modelo de plantillas salientes, su render y su selección. Cada
@@ -92,9 +93,14 @@ export function fusionarPlantillas(
   }));
 }
 
-/** Normaliza un teléfono a solo dígitos (E.164 sin '+'). */
-export function soloDigitos(telefono: string): string {
-  return telefono.replace(/[^\d]/g, "");
+/**
+ * Teléfono de un registro del CRM listo para enviar: dígitos E.164 sin '+'
+ * tal como el CRM lo guardó, completando la lada con el país del tenant
+ * cuando falte. El mensaje se guarda así ("como vino"); la llave de la
+ * conversación es aparte y canónica (telefonoCanonico). Vacío sin dígitos.
+ */
+export function soloDigitos(telefono: string, pais?: string): string {
+  return completarLada(telefono, pais ?? PAIS_DEFAULT);
 }
 
 /**

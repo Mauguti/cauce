@@ -8,6 +8,7 @@ import {
   type MessageOrigen,
   type TenantId,
   textoAdjuntoSinTexto,
+  telefonoCanonico,
 } from "@cauce/core";
 import type { Repositorio } from "../../store.ts";
 import type { ColaEnvios } from "../../cola.ts";
@@ -683,7 +684,7 @@ export class ConectorOpenlines {
     if (!doc.tokensCifrados) return omitir("app no instalada en el portal");
     const lineId = lineaDe(doc, instanceId);
     if (lineId === null) return omitir("número sin línea abierta asignada");
-    const telefono = mensaje.telefono.replace(/[^\d]/g, "");
+    const telefono = telefonoCanonico(mensaje.telefono);
     const chatId = chatExterno(instanceId, telefono);
     const nombreLinea = (await this.#repo.getInstance(tenantId, instanceId))?.nombre ?? null;
     try {
@@ -737,7 +738,7 @@ export class ConectorOpenlines {
   async #escribirComoBot(tenantId: TenantId, instanceId: InstanceId, telefono: string, texto: string, evento: string): Promise<boolean> {
     const doc = await this.#doc(tenantId);
     if (!doc?.tokensCifrados || doc.botId === null || lineaDe(doc, instanceId) === null) return false;
-    const conv = await this.#repo.getConversacion(tenantId, instanceId, telefono.replace(/[^\d]/g, ""));
+    const conv = await this.#repo.getConversacion(tenantId, instanceId, telefonoCanonico(telefono));
     const imChatId = conv?.bitrixOpenLine?.chatId ? Number(conv.bitrixOpenLine.chatId) : null;
     if (!imChatId) return false;
     // Primero el método de chatbots de Open Channels; si Bitrix lo rechaza,

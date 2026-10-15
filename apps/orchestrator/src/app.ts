@@ -18,7 +18,7 @@ import { resumirTrazabilidad } from "./agentes/trazabilidad.ts";
 import { calcularBolsa, estadoEnergia, gastoMesMxn } from "./agentes/energia.ts";
 import { ErrorGoogle, type GoogleReal } from "./google/calendario.ts";
 import { agendaDe, MODO_CLIENTE_HORAS } from "./agentes/citas.ts";
-import type { PersonaDirectorio } from "@cauce/core";
+import { telefonoCanonico, type PersonaDirectorio } from "@cauce/core";
 import {
   churnReciente, limitesTenant, pruebaVigente, capacidadesTenant, tieneCapacidad,
   mensajeRequierePlan, soloLectura, planDe, normalizarPlan, esPlanConocido, esSubida,
@@ -1123,7 +1123,8 @@ export function crearApp(
   });
   tenantRouter.put("/directorio", async (req, res) => {
     const b = req.body ?? {};
-    const telefono = typeof b.telefono === "string" ? b.telefono.replace(/[^\d]/g, "") : "";
+    const pais = (await repo.getTenant(req.tenantId!))?.pais;
+    const telefono = typeof b.telefono === "string" ? telefonoCanonico(b.telefono, pais) : "";
     if (telefono.length < 10 || telefono.length > 15) { res.status(400).json({ error: "telefono debe tener entre 10 y 15 dígitos, con lada de país" }); return; }
     if (typeof b.nombre !== "string" || !b.nombre.trim()) { res.status(400).json({ error: "nombre requerido" }); return; }
     if (!ROLES.has(b.rol)) { res.status(400).json({ error: "rol debe ser dueno, profesional o recepcion" }); return; }
@@ -1140,7 +1141,7 @@ export function crearApp(
     res.status(previa ? 200 : 201).json(publicaPersona(persona));
   });
   tenantRouter.delete("/directorio/:telefono", async (req, res) => {
-    const telefono = String(req.params.telefono).replace(/[^\d]/g, "");
+    const telefono = telefonoCanonico(String(req.params.telefono), (await repo.getTenant(req.tenantId!))?.pais);
     const previa = await repo.getPersonaDirectorio(req.tenantId!, telefono);
     if (!previa) { res.status(404).json({ error: "no está en el directorio" }); return; }
     await repo.deletePersonaDirectorio(req.tenantId!, telefono);
@@ -1149,7 +1150,7 @@ export function crearApp(
   });
   /** Modo cliente desde la plataforma (el mismo que el comando "modo cliente" por chat). */
   tenantRouter.post("/directorio/:telefono/modo-cliente", async (req, res) => {
-    const telefono = String(req.params.telefono).replace(/[^\d]/g, "");
+    const telefono = telefonoCanonico(String(req.params.telefono), (await repo.getTenant(req.tenantId!))?.pais);
     const previa = await repo.getPersonaDirectorio(req.tenantId!, telefono);
     if (!previa) { res.status(404).json({ error: "no está en el directorio" }); return; }
     const activar = req.body?.activar !== false;

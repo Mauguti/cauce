@@ -87,6 +87,8 @@ export function esPlanConocido(plan: string): plan is TenantPlan {
 export interface Tenant {
   id: TenantId;
   nombre: string;
+  /** País ISO-2 del tenant (default "MX"): decide cómo se completan y canonizan los teléfonos sin lada. */
+  pais?: string;
   plan: TenantPlan;
   estado: TenantEstado;
   /**
@@ -253,14 +255,92 @@ export interface RegistroConsumo {
   conversacionId?: string;
 }
 
+// ── Teléfono canónico ───────────────────────────────────────────────────────
+//
+// La llave de una conversación es el teléfono CANÓNICO, no el que trajo el
+// mensaje. Decidido el 15-oct-2026 tras ver que los salientes del CRM
+// llegaban como 52+10 dígitos y los entrantes de WhatsApp como 521+10 (el
+// JID mexicano), partiendo cada contacto en dos conversaciones. La forma
+// canónica es la del JID de WhatsApp, porque los chats del Contact Center
+// de Bitrix ya usan esa forma y no los controlamos.
+//
+// La regla es POR PAÍS: hoy solo México tiene una (el "1" de móvil tras el
+// 52). Un número de otro país se deja tal cual; nunca se le mete un 1.
+
+export const PAIS_DEFAULT = "MX";
+
+interface ReglaPais {
+  codigo: string;
+  /** Dígitos del número nacional. */
+  nacional: number;
+  /** Forma del JID de WhatsApp a partir de código + nacional. */
+  jid?: (nacional: string) => string;
+  /** Normaliza variantes del mismo país (p. ej. quitar el "1" de móvil para comparar). */
+  nacionalDe?: (digitos: string) => string | null;
+}
+
+const REGLAS_PAIS: Record<string, ReglaPais> = {
+  MX: {
+    codigo: "52",
+    nacional: 10,
+    // WhatsApp identifica los móviles mexicanos como 52 + 1 + 10 dígitos.
+    jid: (n) => `521${n}`,
+    nacionalDe: (d) => (d.length === 13 && d.startsWith("521") ? d.slice(3) : d.length === 12 && d.startsWith("52") ? d.slice(2) : null),
+  },
+  US: { codigo: "1", nacional: 10 },
+};
+
+/**
+ * Teléfono canónico: dígitos E.164 sin '+', en la forma del JID de
+ * WhatsApp del país. `pais` solo se usa cuando el número viene sin lada
+ * (longitud del nacional); un número con lada se interpreta por su lada.
+ * Países sin regla: dígitos tal cual.
+ */
+/**
+ * Dígitos E.164 sin '+', completando la lada con la del país cuando el
+ * número viene sin ella (p. ej. "442 123 4567" con MX → "524421234567").
+ * NO cambia la forma (no mete el "1" de móvil): es lo que se guarda en el
+ * mensaje "como vino". Vacío si no hay dígitos.
+ */
+export function completarLada(telefono: string | null | undefined, pais: string = PAIS_DEFAULT): string {
+  let d = String(telefono ?? "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.startsWith("00")) d = d.slice(2);
+  const propia = REGLAS_PAIS[pais.toUpperCase()];
+  if (propia && d.length === propia.nacional && !d.startsWith(propia.codigo)) d = `${propia.codigo}${d}`;
+  return d;
+}
+
+export function telefonoCanonico(telefono: string | null | undefined, pais: string = PAIS_DEFAULT): string {
+  const d = completarLada(telefono, pais);
+  if (!d) return "";
+  for (const regla of Object.values(REGLAS_PAIS)) {
+    if (!d.startsWith(regla.codigo) || !regla.nacionalDe) continue;
+    const nacional = regla.nacionalDe(d);
+    if (nacional !== null && nacional.length === regla.nacional) return regla.jid ? regla.jid(nacional) : `${regla.codigo}${nacional}`;
+  }
+  return d;
+}
+
+/** Todas las formas (dígitos) que se guardan como mensaje y equivalen al mismo canónico: para consultar por igualdad. */
+export function formasEquivalentes(telefono: string, pais: string = PAIS_DEFAULT): string[] {
+  const canon = telefonoCanonico(telefono, pais);
+  const formas = new Set<string>([canon]);
+  for (const regla of Object.values(REGLAS_PAIS)) {
+    if (!regla.nacionalDe || !canon.startsWith(regla.codigo)) continue;
+    const nacional = regla.nacionalDe(canon);
+    if (nacional !== null) { formas.add(`${regla.codigo}${nacional}`); if (regla.jid) formas.add(regla.jid(nacional)); }
+  }
+  return [...formas];
+}
+
 /**
  * Id opaco y estable de una conversación (tenant + línea + teléfono). Sirve
  * para unir el ledger de consumo con la conversación sin guardar el
  * teléfono una segunda vez. Hash, no cifrado: no se puede volver al número.
  */
 export function idConversacion(tenantId: TenantId, instanceId: InstanceId, telefono: string): string {
-  const digitos = telefono.replace(/[^\d]/g, "");
-  return hashCorto(`${tenantId}/${instanceId}/${digitos}`);
+  return hashCorto(`${tenantId}/${instanceId}/${telefonoCanonico(telefono)}`);
 }
 
 /** FNV-1a de 64 bits en hex (sin dependencias de Node para que el core siga siendo isomorfo). */
@@ -954,13 +1034,14 @@ export const rutas = {
     `tenants/${tenantId}/messages/${messageId}`,
   conversaciones: (tenantId: TenantId, instanceId: InstanceId) =>
     `tenants/${tenantId}/instances/${instanceId}/conversaciones`,
+  /** La llave es el teléfono CANÓNICO (ver telefonoCanonico), venga como venga. */
   conversacion: (tenantId: TenantId, instanceId: InstanceId, telefono: string) =>
-    `tenants/${tenantId}/instances/${instanceId}/conversaciones/${telefono}`,
+    `tenants/${tenantId}/instances/${instanceId}/conversaciones/${telefonoCanonico(telefono)}`,
   /** Consumo de agentes por mes (YYYY-MM): agregado en el doc, llamadas en la subcolección. */
   consumoMes: (tenantId: TenantId, mes: string) => `tenants/${tenantId}/consumo/${mes}`,
   consumoLlamadas: (tenantId: TenantId, mes: string) => `tenants/${tenantId}/consumo/${mes}/llamadas`,
   directorio: (tenantId: TenantId) => `tenants/${tenantId}/directorio`,
-  persona: (tenantId: TenantId, telefono: string) => `tenants/${tenantId}/directorio/${telefono}`,
+  persona: (tenantId: TenantId, telefono: string) => `tenants/${tenantId}/directorio/${telefonoCanonico(telefono)}`,
   /** Candados de franja (anti-empalme entre conversaciones nuestras): doc id `calendarioId|inicioISO`. */
   reservas: (tenantId: TenantId) => `tenants/${tenantId}/reservas`,
   /** Ledger de pagos, append-only. */

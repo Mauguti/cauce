@@ -1,3 +1,4 @@
+import { telefonoCanonico } from "@cauce/core";
 /**
  * Canal abierto de Bitrix24 (Contact Center / Open Channels).
  *
@@ -153,8 +154,9 @@ export interface MensajeOperador {
 }
 
 /** chat.id externo estable por conversación: instancia + teléfono. */
+/** Id del chat en el Contact Center: línea + teléfono canónico (la forma del JID, que es la que Bitrix ya tiene). */
 export function chatExterno(instanceId: string, telefono: string): string {
-  return `${instanceId}:${telefono.replace(/[^\d]/g, "")}`;
+  return `${instanceId}:${telefonoCanonico(telefono)}`;
 }
 
 export function partirChatExterno(chatId: string): { instanceId: string; telefono: string } | null {

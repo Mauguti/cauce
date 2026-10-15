@@ -231,7 +231,7 @@ export class ConectorBitrix {
     if (!registro) throw new Error(`${doc.entidad} ${entidadId} no encontrado en Bitrix`);
 
     const telefonoTexto = valorCampo(registro.campos, doc.campoTelefono);
-    const telefono = soloDigitos(telefonoTexto);
+    const telefono = soloDigitos(telefonoTexto, (await this.#repo.getTenant(tenantId))?.pais);
     if (!telefono) {
       await this.#registrarFallido(
         tenantId, doc.instanceId, "—", "", "telefono_vacio",
